@@ -1,15 +1,14 @@
 package com.music;
 
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.ViewGroup;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.appcompat.app.AppCompatActivity;
-
-import com.chaquo.python.Python;
-import com.chaquo.python.android.AndroidPlatform;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -20,25 +19,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. Python runtime start karo
-        try {
-            if (!Python.isStarted()) {
-                Python.start(new AndroidPlatform(this));
-            }
-            // 2. Background thread me server chalao
-            new Thread(() -> {
-                try {
-                    Python py = Python.getInstance();
-                    py.getModule("server").callAttr("start_server");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }).start();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
-        // 3. Dynamic WebView setup
         webView = new WebView(this);
         webView.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -52,8 +32,23 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setAllowFileAccess(true);
         webSettings.setMediaPlaybackRequiresUserGesture(false);
 
+        // Native notification bridge
+        webView.addJavascriptInterface(new WebAppInterface(), "AndroidNativeBridge");
+
         webView.setWebViewClient(new WebViewClient());
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    public class WebAppInterface {
+        @JavascriptInterface
+        public void updateNotification(String title, String artist, String cover, boolean isPlaying) {
+            Intent intent = new Intent(MainActivity.this, MusicService.class);
+            intent.putExtra("title", title);
+            intent.putExtra("artist", artist);
+            intent.putExtra("cover", cover);
+            intent.putExtra("isPlaying", isPlaying);
+            startService(intent);
+        }
     }
 
     @Override
