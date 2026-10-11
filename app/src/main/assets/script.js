@@ -1,4 +1,4 @@
-/* VAULTIFY — Full Final Script */
+/* VAULTIFY — Full Final Script (No Firebase) */
 
 const CREATOR_ROOT_EMAIL = "akshat594kumar@gmail.com";
 let audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
@@ -55,12 +55,12 @@ window.addEventListener('DOMContentLoaded',async()=>{
   initAudioWakeLoop();syncLocalCatalog();verifyAuthGate();
   renderHomeRecentVault();renderHomeQueue();renderLibrary();renderSearchHistoryTags();
   setupAndroidMediaSession();setupTimelineDraggableEngine();
-  updateDynamicUserCounter();renderNotificationCenter();
+  renderNotificationCenter();
   initLiveSearchInputListener();initEmojiRunner();initEmojiPicker();
   checkPermissionsStatus();
   await renderRecommendedSection();
   setTimeout(()=>setEmojiMode(emojiMode),100);
-  checkBroadcastNotifications();renderWhatsNewBadge();
+  renderWhatsNewBadge();
   window.addEventListener('popstate',()=>{if(!handleSystemBackPress()){navigationHistory.pop();switchNavTab(navigationHistory[navigationHistory.length-1]||'home')}});
 });
 
@@ -93,7 +93,7 @@ setInterval(()=>{if(!isPlayingAudio)return;_lastSaveTick+=1000;if(_lastSaveTick>
 function showDownloadIndicator(text){const i=document.getElementById('downloadIndicator');if(!i)return;const t=document.getElementById('downloadText');if(t)t.innerText=text;i.classList.add('show')}
 function hideDownloadIndicator(){const i=document.getElementById('downloadIndicator');if(i)i.classList.remove('show')}
 
-window.onYouTubeIframeAPIReady=function(){try{ytPlayer=new YT.Player('ytEngineSlot',{height:'10',width:'10',videoId:'',playerVars:{autoplay:0,controls:0,playsinline:1},events:{onReady:()=>{ytPlayerReady=true},onStateChange:onYTStateChange}})}catch(e){}};
+window.onYouTubeIframeAPIReady=function(){try{ytPlayer=new YT.Player('ytEngineSlot',{height:'10',width:'10',videoId:'',playerVars:{autoplay:0,controls:0,playsinline:1,origin:'*'},events:{onReady:()=>{ytPlayerReady=true},onStateChange:onYTStateChange}})}catch(e){}};
 function onYTStateChange(e){if(e.data===YT.PlayerState.PLAYING)setVisualState(true);else if(e.data===YT.PlayerState.PAUSED)setVisualState(false);else if(e.data===YT.PlayerState.ENDED){if(isRepeat)playTrack(currentTrackIndex);else playNext()}}
 
 function setupAndroidMediaSession(){
@@ -146,7 +146,6 @@ window.handleNativeMediaAction=function(action){
   }
 };
 window.handleNativeSeek=function(positionMs){seekAudioTo(positionMs/1000)};
-
 window.onNativePermissionResult=function(){checkPermissionsStatus()};
 
 function checkPermissionsStatus(){
@@ -176,13 +175,11 @@ function handlePermissionBannerClick(){
   if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}
   else showToast('Open Profile > Permissions to enable');
 }
-
 function requestPermsFromNative(){
   if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}
   else showToast('Open app settings');
   setTimeout(checkPermissionsStatus,800);
 }
-
 function openAppSettingsNative(){
   if(window.AndroidNativeBridge&&window.AndroidNativeBridge.openAppSettings){window.AndroidNativeBridge.openAppSettings()}
   else showToast('Native settings not available');
@@ -306,7 +303,12 @@ async function searchAll(q){
 }
 
 async function fetchTrendingSongs(limit=10){
-  const queries=['trending hindi 2026','top hits india 2026','viral songs 2026','latest bollywood songs','punjabi hits 2026','arijit singh latest','atif aslam hits','new pakistani songs'];
+  const queries=[
+    'trending hindi songs 2026','top hits india 2026','viral songs 2026',
+    'latest bollywood songs','punjabi hits 2026','arijit singh latest',
+    'atif aslam hits','new pakistani songs 2026','arijit singh sad songs',
+    'trending pakistani songs','coke studio hits','best of 2026 songs'
+  ];
   const q=queries[Math.floor(Math.random()*queries.length)];
   const piped=await searchPiped(q);
   if(piped.length)return piped.slice(0,limit);
@@ -323,10 +325,6 @@ function extractYouTubeId(url){
 }
 function extractPlaylistId(url){
   const m=url.match(/[?&]list=([^"&?\s]+)/);
-  return m?m[1]:null;
-}
-function extractSpotifyTrackId(url){
-  const m=url.match(/spotify\.com\/track\/([a-zA-Z0-9]+)/);
   return m?m[1]:null;
 }
 
@@ -347,13 +345,22 @@ async function executeLiveSearch(isAuto=false){
   const ytId=extractYouTubeId(q);
   if(ytId){
     const meta=await getYouTubeVideoMeta(ytId);
-    if(meta){playSearchedTrackImmediately(encodeURIComponent(meta.id),encodeURIComponent(meta.title),encodeURIComponent(meta.artist),encodeURIComponent(meta.cover),'');l.style.display='none';return}
+    if(meta){
+      l.style.display='none';
+      playSearchedTrackImmediately(encodeURIComponent(meta.id),encodeURIComponent(meta.title),encodeURIComponent(meta.artist),encodeURIComponent(meta.cover),'');
+      return;
+    }
   }
   
   const plId=extractPlaylistId(q);
   if(plId){
     const pl=await fetchPlaylistItems(plId);
-    if(pl&&pl.length){showToast(`Loaded ${pl.length} playlist songs`);renderSearchResults(pl);l.style.display='none';return}
+    if(pl&&pl.length){
+      showToast(`Loaded ${pl.length} playlist songs`);
+      l.style.display='none';
+      renderSearchResults(pl);
+      return;
+    }
   }
   
   const allResults=await searchAll(q);
@@ -364,7 +371,7 @@ async function executeLiveSearch(isAuto=false){
     if(!isAuto)showToast(`✅ ${found.length} results`);
     setTimeout(renderRecommendedSection,2000);
   }else{
-    rc.innerHTML='<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila.</p>';
+    rc.innerHTML='<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila. Try different keywords.</p>';
   }
 }
 
@@ -483,7 +490,7 @@ async function playTrack(index,broadcast=true){
   if(!silentLoopStarted){silentLoop.play().catch(()=>{});silentLoopStarted=true}
   if(broadcast&&duoChannel)duoChannel.postMessage({type:'SYNC_PLAY',track});
   setTimeout(()=>preCacheNextTracks(index,2),10000);
-  setTimeout(()=>autoExtendQueue(track),12000);
+  setTimeout(()=>autoExtendQueue(track),10000);
   let streamUrl=null;
   if(track._directStream&&track._directStream.startsWith('http'))streamUrl=track._directStream;
   if(!streamUrl){const c=trackBlobCache.get(track.id);if(c&&c.startsWith('blob:'))streamUrl=c}
@@ -546,7 +553,7 @@ function fallbackToYouTubeBridge(vid){
     setTimeout(()=>{
       if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){
         ytPlayer.loadVideoById(vid);ytPlayer.playVideo();setVisualState(true);
-      }
+      }else showToast('❌ Play failed');
     },1500);
   }
 }
@@ -772,7 +779,7 @@ function sendSupportMail(){
   const body=`Name: ${n}\nEmail: ${e}\nUser: ${loggedInUser?.username||'guest'}\n\nProblem:\n${m}`;
   const mailtoUrl=`mailto:akshat594kumar@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   try{window.location.href=mailtoUrl;showToast('📧 Mail app khul raha hai')}
-  catch(err){navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(()=>showToast('✅ Email copied')).catch(()=>{const details=`To: akshat594kumar@gmail.com\n\n${body}`;const tm=document.createElement('div');tm.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999999;display:flex;align-items:center;justify-content:center;padding:20px;';tm.innerHTML=`<div style="background:#0d0317;border:1px solid var(--accent-neon);border-radius:20px;padding:20px;max-width:400px;width:100%;text-align:center;"><h3 style="color:var(--accent-neon);margin-bottom:12px;">Manual Email</h3><textarea style="width:100%;height:150px;background:#190529;border:1px solid var(--border);color:#fff;padding:8px;border-radius:8px;font-size:11px;" readonly>${details}</textarea><button onclick="this.closest('div[style]').remove();" style="margin-top:10px;width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer;">Close</button></div>`;document.body.appendChild(tm)})}
+  catch(err){navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(()=>showToast('✅ Email copied')).catch(()=>showToast('❌ Failed'))}
 }
 
 async function savePlaybackState(){
@@ -873,75 +880,6 @@ function createPlaylistAndAdd(){
 
 function isOwner(){return loggedInUser&&loggedInUser.email&&loggedInUser.email.toLowerCase()===CREATOR_ROOT_EMAIL.toLowerCase()}
 
-async function broadcastNotification(title,message){
-  if(!isOwner())return showToast('❌ Only owner can broadcast');
-  if(!title||!message)return showToast('Title aur message daalo');
-  const broadcast={title,message,timestamp:Date.now(),from:CREATOR_ROOT_EMAIL,id:'bc_'+Date.now()};
-  const allBroadcasts=JSON.parse(localStorage.getItem('vaultify_broadcasts')||'[]');
-  allBroadcasts.unshift(broadcast);
-  if(allBroadcasts.length>30)allBroadcasts.pop();
-  localStorage.setItem('vaultify_broadcasts',JSON.stringify(allBroadcasts));
-  localStorage.setItem('vaultify_latest_broadcast',JSON.stringify(broadcast));
-  if(duoChannel){try{duoChannel.postMessage({type:'GLOBAL_BROADCAST',broadcast})}catch(e){}}
-  const db=getUserDB();let sentCount=0;
-  for(const key in db){
-    const u=db[key];
-    if(!u.notifications)u.notifications=[];
-    u.notifications.unshift({title:'📢 '+title,message,time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),unread:true,from:'broadcast',icon:'fa-solid fa-bullhorn',iconColor:'#10b981'});
-    if(u.notifications.length>50)u.notifications.pop();
-    sentCount++;
-  }
-  saveUserDB(db);
-  pushNotification({title:'📢 Broadcast Sent',message:`Sent to ${sentCount} users`,icon:'fa-solid fa-bullhorn',iconColor:'#10b981'});
-  showToast(`✅ Broadcast sent to ${sentCount} users`);
-}
-
-function sendBroadcastFromForm(){
-  if(!isOwner())return showToast('❌ Only owner can broadcast');
-  const t=document.getElementById('bcTitle').value.trim();
-  const m=document.getElementById('bcMessage').value.trim();
-  if(!t||!m)return showToast('Title aur message dono daalo');
-  broadcastNotification(t,m);
-  document.getElementById('bcTitle').value='';
-  document.getElementById('bcMessage').value='';
-  closeModal('modalBroadcast');
-}
-
-function checkIncomingBroadcasts(){
-  const latest=localStorage.getItem('vaultify_latest_broadcast');
-  const lastSeen=localStorage.getItem('vaultify_last_seen_broadcast');
-  if(latest&&latest!==lastSeen){
-    try{
-      const bc=JSON.parse(latest);
-      if(!isOwner())pushNotification({title:'📢 '+bc.title,message:bc.message,icon:'fa-solid fa-bullhorn',iconColor:'#10b981'});
-      localStorage.setItem('vaultify_last_seen_broadcast',latest);
-    }catch(e){}
-  }
-  renderWhatsNewBadge();
-}
-function getBroadcastHistory(){return JSON.parse(localStorage.getItem('vaultify_broadcasts')||'[]')}
-function renderWhatsNewBadge(){
-  const history=getBroadcastHistory();
-  const lastSeen=localStorage.getItem('vaultify_whatsnew_seen');
-  const badge=document.getElementById('whatsNewBadge');
-  if(!badge)return;
-  const unread=history.filter(b=>!lastSeen||b.id!==lastSeen).length;
-  if(unread>0){badge.innerText=unread;badge.style.display='flex'}else{badge.style.display='none'}
-}
-function openWhatsNewModal(){
-  const history=getBroadcastHistory();
-  const container=document.getElementById('whatsNewList');
-  if(container){
-    if(history.length===0){container.innerHTML='<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:20px 0">No updates yet.</p>'}
-    else{
-      container.innerHTML=history.map(b=>`<div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:12px;padding:12px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div style="font-size:13px;font-weight:700;color:#10b981;display:flex;align-items:center;gap:6px"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(b.title)}</div><span style="font-size:10px;color:var(--text-sub)">${new Date(b.timestamp).toLocaleDateString()}</span></div><div style="font-size:11.5px;color:var(--text-sub);line-height:1.5">${escapeHtml(b.message)}</div></div>`).join('');
-    }
-  }
-  if(history.length>0)localStorage.setItem('vaultify_whatsnew_seen',history[0].id);
-  renderWhatsNewBadge();
-  openModal('modalWhatsNew');
-}
-
 function getStoredNotifications(){return JSON.parse(localStorage.getItem('vaultify_notifications_list')||'[]')}
 function pushNotification(n){
   const l=getStoredNotifications();
@@ -949,7 +887,6 @@ function pushNotification(n){
   if(l.length>60)l.pop();
   localStorage.setItem('vaultify_notifications_list',JSON.stringify(l));
   renderNotificationCenter();
-  if('Notification' in window&&Notification.permission==='granted'){try{new Notification(n.title||'Vaultify',{body:n.message||''})}catch(e){}}
 }
 function renderNotificationCenter(){
   const list=getStoredNotifications();
@@ -966,7 +903,6 @@ function openNotificationModal(){
   renderNotificationCenter();openModal('modalNotifications');
 }
 function clearAllNotifications(){localStorage.removeItem('vaultify_notifications_list');renderNotificationCenter();showToast("Cleared!")}
-function checkBroadcastNotifications(){setInterval(checkIncomingBroadcasts,5000);checkIncomingBroadcasts()}
 function syncLocalCatalog(){const c=JSON.parse(localStorage.getItem('vaultify_custom_tracks')||'[]');currentPlaylist=[...c]}
 
 const AUTH_ITERATIONS=100000,AUTH_SALT_BYTES=16,AUTH_KEY_BYTES=32;
@@ -1051,7 +987,7 @@ async function processAuthSubmission(){
       const db=getUserDB();db[found.key]=user;saveUserDB(db);
       loggedInUser=user;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
       showAuthSuccess("✅ Login successful!");
-      setTimeout(()=>{unlockApp();applyUserDataUI(loggedInUser);updateDynamicUserCounter();showToast(`Welcome back, ${loggedInUser.displayName||loggedInUser.username}!`);hideAuthAlerts()},500);
+      setTimeout(()=>{unlockApp();applyUserDataUI(loggedInUser);showToast(`Welcome back, ${loggedInUser.displayName||loggedInUser.username}!`);hideAuthAlerts()},500);
     }else{
       if(findUserByUsername(u)){showAuthError("❌ Username already taken.");return}
       if(findUserByEmail(e)){showAuthError("❌ This email is already registered.");return}
@@ -1062,32 +998,25 @@ async function processAuthSubmission(){
       const db=getUserDB();db[u]=newUser;saveUserDB(db);
       loggedInUser=newUser;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
       showAuthSuccess("✅ Account created!");
-      setTimeout(()=>{unlockApp();applyUserDataUI(loggedInUser);updateDynamicUserCounter();showToast(`Welcome, ${loggedInUser.displayName}!`);hideAuthAlerts()},600);
+      setTimeout(()=>{unlockApp();applyUserDataUI(loggedInUser);showToast(`Welcome, ${loggedInUser.displayName}!`);hideAuthAlerts()},600);
     }
   }catch(err){showAuthError("⚠️ Something went wrong.")}
   finally{submitBtn.innerText=originalText;submitBtn.disabled=false}
 }
 function applyUserDataUI(user){
   if(!user)return;
-  const certName=document.getElementById('certOwnerDisplayName');
-  const certHandle=document.getElementById('certOwnerHandle');
   const editName=document.getElementById('editDisplayName');
   const editBio=document.getElementById('editBio');
   const partnerCode=document.getElementById('myPartnerCodeDisplay');
   const avatar=document.getElementById('userAvatarImg');
-  if(certName)certName.innerText=user.displayName||user.username;
-  if(certHandle)certHandle.innerText='@'+user.username;
   if(editName)editName.value=user.displayName||user.username;
   if(editBio)editBio.value=user.bio||'';
   if(partnerCode)partnerCode.innerText=user.partnerCode||generatePartnerCode(user.username);
   if(avatar&&user.avatar)avatar.src=user.avatar;
-  updateDynamicUserCounter();
   syncUserPartnerCode();
   renderPartnerRequests();
   const chatBox=document.getElementById('activePartnerChat');
   if(chatBox){if(user.partnerUsername)chatBox.style.display='block';else chatBox.style.display='none'}
-  const creatorBox=document.getElementById('broadcastBox');
-  if(creatorBox){if(isOwner())creatorBox.style.display='block';else creatorBox.style.display='none'}
 }
 function openForgotPasswordFlow(){closeModal('modalAuthGate');openModal('modalForgotPass')}
 async function executePasswordReset(){
@@ -1135,12 +1064,6 @@ function saveProfileData(){
   applyUserDataUI(loggedInUser);showToast("Profile updated!");
 }
 function performAppLogout(){if(!confirm("Log out from this device?"))return;localStorage.removeItem('vaultify_active_user');location.reload()}
-function updateDynamicUserCounter(){
-  const db=JSON.parse(localStorage.getItem('vaultify_user_db')||'{}');
-  const c=Object.keys(db).length;
-  const el=document.getElementById('realUserCountDisplay');
-  if(el)el.innerText=`${c} User${c===1?'':'s'}`;
-}
 function generatePartnerCode(username){
   if(!username)return'VAULT-XXXXXX';
   let hash=0;
@@ -1201,13 +1124,10 @@ function sendPartnerRequest(targetUsername){
   if(!target.partnerRequests)target.partnerRequests=[];
   if(target.partnerRequests.some(r=>r.from===loggedInUser.username))return showToast("⏳ Request already sent");
   target.partnerRequests.push({from:loggedInUser.username,fromName:loggedInUser.displayName||loggedInUser.username,fromAvatar:loggedInUser.avatar||'',timestamp:Date.now(),status:'pending'});
-  db[targetUsername]=target;
-  saveUserDB(db);
+  db[targetUsername]=target;saveUserDB(db);
   if(!loggedInUser.partnerRequestsSent)loggedInUser.partnerRequestsSent=[];
   loggedInUser.partnerRequestsSent.push({to:targetUsername,timestamp:Date.now(),status:'pending'});
-  const myDb=getUserDB();
-  myDb[loggedInUser.username]=loggedInUser;
-  saveUserDB(myDb);
+  const myDb=getUserDB();myDb[loggedInUser.username]=loggedInUser;saveUserDB(myDb);
   localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
   if(duoChannel)duoChannel.postMessage({type:'PARTNER_REQUEST',from:loggedInUser.username,fromName:loggedInUser.displayName||loggedInUser.username,fromAvatar:loggedInUser.avatar||'',to:targetUsername});
   showToast(`✅ Request sent to ${target.displayName||target.username}`);
@@ -1215,24 +1135,16 @@ function sendPartnerRequest(targetUsername){
 function acceptPartnerRequest(fromUsername){
   if(!loggedInUser)return;
   const db=getUserDB();
-  const me=db[loggedInUser.username];
-  const from=db[fromUsername];
+  const me=db[loggedInUser.username];const from=db[fromUsername];
   if(!me||!from)return;
-  me.partnerUsername=fromUsername;
-  me.partnerDisplayName=from.displayName||from.username;
-  me.partnerAvatar=from.avatar||'';
+  me.partnerUsername=fromUsername;me.partnerDisplayName=from.displayName||from.username;me.partnerAvatar=from.avatar||'';
   me.partnerCode=me.partnerCode||generatePartnerCode(loggedInUser.username);
-  from.partnerUsername=loggedInUser.username;
-  from.partnerDisplayName=me.displayName||me.username;
-  from.partnerAvatar=me.avatar||'';
+  from.partnerUsername=loggedInUser.username;from.partnerDisplayName=me.displayName||me.username;from.partnerAvatar=me.avatar||'';
   from.partnerCode=from.partnerCode||generatePartnerCode(fromUsername);
   me.partnerRequests=(me.partnerRequests||[]).filter(r=>r.from!==fromUsername);
   from.partnerRequestsSent=(from.partnerRequestsSent||[]).filter(r=>r.to!==loggedInUser.username);
-  db[loggedInUser.username]=me;db[fromUsername]=from;
-  saveUserDB(db);
-  loggedInUser=me;
-  localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  pushNotification({title:'💕 Partner Connected',message:`${from.displayName||from.username} ke saath sync ready!`,icon:'fa-solid fa-heart',iconColor:'#ec4899'});
+  db[loggedInUser.username]=me;db[fromUsername]=from;saveUserDB(db);
+  loggedInUser=me;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
   showToast(`💕 Connected with ${from.displayName||from.username}`);
   renderPartnerRequests();syncUserPartnerCode();
   const chatBox=document.getElementById('activePartnerChat');
@@ -1241,15 +1153,11 @@ function acceptPartnerRequest(fromUsername){
 function declinePartnerRequest(fromUsername){
   if(!loggedInUser)return;
   const db=getUserDB();
-  const me=db[loggedInUser.username];
-  if(!me)return;
+  const me=db[loggedInUser.username];if(!me)return;
   me.partnerRequests=(me.partnerRequests||[]).filter(r=>r.from!==fromUsername);
-  db[loggedInUser.username]=me;
-  saveUserDB(db);
-  loggedInUser=me;
-  localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  renderPartnerRequests();
-  showToast('Request declined');
+  db[loggedInUser.username]=me;saveUserDB(db);
+  loggedInUser=me;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
+  renderPartnerRequests();showToast('Request declined');
 }
 function renderPartnerRequests(){
   const container=document.getElementById('partnerRequestsBox');
@@ -1275,10 +1183,7 @@ function sendDuoChatMessage(){
 }
 function handleDuoBroadcastMessage(e){
   const d=e.data;if(!d)return;
-  if(d.type==='GLOBAL_BROADCAST'&&d.broadcast){
-    if(!isOwner())pushNotification({title:'📢 '+d.broadcast.title,message:d.broadcast.message,icon:'fa-solid fa-bullhorn',iconColor:'#10b981'});
-    renderWhatsNewBadge();
-  }else if(d.type==='PARTNER_REQUEST'){
+  if(d.type==='PARTNER_REQUEST'){
     if(loggedInUser&&d.to===loggedInUser.username){
       pushNotification({title:'💕 Partner Request',message:`${d.fromName} wants to sync`,icon:'fa-solid fa-heart',iconColor:'#ec4899'});
       renderPartnerRequests();
@@ -1345,7 +1250,5 @@ Object.assign(window,{
   renderPartnerRequests,generatePartnerCode,copyPartnerCode,
   onNativePlay,onNativePause,onNativeNext,onNativePrev,
   handleNativeMediaAction,handleNativeSeek,
-  broadcastNotification,openWhatsNewModal,checkIncomingBroadcasts,getBroadcastHistory,
-  renderWhatsNewBadge,sendBroadcastFromForm,fetchTrendingSongs,
   requestPermsFromNative,openAppSettingsNative,handlePermissionBannerClick
 });
