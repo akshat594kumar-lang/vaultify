@@ -308,13 +308,13 @@ document.addEventListener('DOMContentLoaded', function() {
     <div class="card-popup" style="max-width:360px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-size:15px">Master EQ</h3><i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalEqualizer')"></i></div>
       <div style="display:flex;justify-content:space-around;margin-bottom:12px">
-        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="4" id="eq60" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">60Hz</label></div>
-        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="2" id="eq230" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">230Hz</label></div>
+        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="0" id="eq60" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">60Hz</label></div>
+        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="0" id="eq230" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">230Hz</label></div>
         <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="0" id="eq910" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">910Hz</label></div>
-        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="3" id="eq4k" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">4kHz</label></div>
-        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="5" id="eq14k" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">14kHz</label></div>
+        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="0" id="eq4k" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">4kHz</label></div>
+        <div style="display:flex;flex-direction:column;align-items:center"><input type="range" min="-12" max="12" value="0" id="eq14k" style="-webkit-appearance:slider-vertical;height:70px;width:6px;background:transparent" /><label style="font-size:9px;color:var(--text-sub);margin-top:4px">14kHz</label></div>
       </div>
-      <div style="display:flex;gap:8px"><button class="submit-btn" style="background:rgba(255,255,255,.1);color:#fff" onclick="resetEqSliders()">Reset</button><button class="submit-btn" onclick="closeModal('modalEqualizer');showToast('EQ Applied')">Save</button></div>
+      <div style="display:flex;gap:8px"><button class="submit-btn" style="background:rgba(255,255,255,.1);color:#fff" onclick="resetEqSliders()">Reset</button><button class="submit-btn" onclick="applyEqNow()">Apply</button></div>
     </div>
   </div>
 
