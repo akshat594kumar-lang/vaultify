@@ -9,7 +9,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
@@ -49,7 +48,27 @@ public class MusicService extends Service {
         super.onCreate();
         createChannel();
         MainActivity.setMusicService(this);
-        loadDefaultCover();
+        // Load default cover from mipmap (guaranteed to exist)
+        try {
+            defaultCover = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
+            if (defaultCover == null) {
+                defaultCover = BitmapFactory.decodeResource(getResources(), R.drawable.ic_launcher_background);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        
+        // Try to load vaultify.png from assets (better quality)
+        try {
+            InputStream is = getAssets().open("vaultify.png");
+            Bitmap assetLogo = BitmapFactory.decodeStream(is);
+            is.close();
+            if (assetLogo != null) {
+                defaultCover = assetLogo;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         controlReceiver = new BroadcastReceiver() {
             @Override
@@ -65,7 +84,7 @@ public class MusicService extends Service {
                 }
                 if (jsAction != null) {
                     MainActivity.callJs(jsAction);
-                    mainHandler.postDelayed(() -> updateNotification(), 250);
+                    mainHandler.postDelayed(() -> updateNotification(), 300);
                 }
             }
         };
@@ -78,17 +97,6 @@ public class MusicService extends Service {
             registerReceiver(controlReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(controlReceiver, filter);
-        }
-    }
-
-    private void loadDefaultCover() {
-        try {
-            AssetManager am = getAssets();
-            InputStream is = am.open("vaultify.png");
-            defaultCover = BitmapFactory.decodeStream(is);
-            is.close();
-        } catch (Exception e) {
-            defaultCover = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
         }
     }
 
@@ -112,29 +120,40 @@ public class MusicService extends Service {
     }
 
     private void loadCoverImage(String url) {
-        if (url == null || url.isEmpty() || !url.startsWith("http")) {
+        if (url == null || url.isEmpty()) {
             updateNotification();
             return;
         }
+        
+        // If it's a local file or vaultify.png, use default
+        if (!url.startsWith("http")) {
+            updateNotification();
+            return;
+        }
+        
         imageExecutor.execute(() -> {
             Bitmap bmp = null;
             try {
                 URL imageUrl = new URL(url);
                 HttpURLConnection conn = (HttpURLConnection) imageUrl.openConnection();
                 conn.setDoInput(true);
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setConnectTimeout(6000);
+                conn.setReadTimeout(6000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36");
                 conn.connect();
                 InputStream input = conn.getInputStream();
                 bmp = BitmapFactory.decodeStream(input);
                 input.close();
+                conn.disconnect();
             } catch (Exception e) {
                 e.printStackTrace();
             }
             final Bitmap finalBmp = bmp;
             mainHandler.post(() -> {
-                if (finalBmp != null) currentCover = finalBmp;
+                if (finalBmp != null) {
+                    currentCover = finalBmp;
+                }
                 updateNotification();
             });
         });
@@ -152,10 +171,21 @@ public class MusicService extends Service {
         PendingIntent nextPI = PendingIntent.getBroadcast(this, 3, new Intent(ACTION_NEXT).setPackage(getPackageName()), flagsPI);
         PendingIntent prevPI = PendingIntent.getBroadcast(this, 4, new Intent(ACTION_PREV).setPackage(getPackageName()), flagsPI);
 
+        // Pick the best cover available
+        Bitmap displayCover;
+        if (currentCover != null) {
+            displayCover = currentCover;
+        } else if (defaultCover != null) {
+            displayCover = defaultCover;
+        } else {
+            displayCover = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
+        }
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(currentTitle)
                 .setContentText(currentArtist)
                 .setSmallIcon(R.mipmap.ic_launcher)
+                .setLargeIcon(displayCover)
                 .setContentIntent(contentPI)
                 .setOngoing(isPlaying)
                 .setOnlyAlertOnce(true)
@@ -171,12 +201,6 @@ public class MusicService extends Service {
 
         MediaStyle style = new MediaStyle().setShowActionsInCompactView(0, 1, 2);
         builder.setStyle(style);
-
-        Bitmap bm;
-        if (currentCover != null) bm = currentCover;
-        else if (defaultCover != null) bm = defaultCover;
-        else bm = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
-        if (bm != null) builder.setLargeIcon(bm);
 
         Notification notification = builder.build();
         startForeground(NOTIF_ID, notification);
