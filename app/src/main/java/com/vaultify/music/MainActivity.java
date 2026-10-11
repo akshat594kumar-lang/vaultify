@@ -1,7 +1,8 @@
-package com.music;
+package com.vaultify.music;
 
 import android.annotation.SuppressLint;
 import android.os.Bundle;
+import android.view.ViewGroup;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -18,9 +19,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
 
-        // Background thread me local Python Flask server run karo
+        // 1. Background thread me local Python Flask server run karo
         new Thread(() -> {
             try {
                 if (!Python.isStarted()) {
@@ -33,7 +33,15 @@ public class MainActivity extends AppCompatActivity {
             }
         }).start();
 
-        webView = findViewById(R.id.webview);
+        // 2. WebView dynamically create karo (kisi XML ID par depend nahi karega)
+        webView = new WebView(this);
+        webView.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        setContentView(webView);
+
+        // 3. WebView configuration
         WebSettings webSettings = webView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
