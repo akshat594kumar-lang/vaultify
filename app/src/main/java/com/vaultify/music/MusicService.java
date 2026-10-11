@@ -10,13 +10,13 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
-import android.support.v4.media.MediaMetadataCompat;
-import android.support.v4.media.session.MediaSessionCompat;
-import android.support.v4.media.session.PlaybackStateCompat;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import androidx.media.app.NotificationCompat.MediaStyle;
+
+import android.support.v4.media.MediaMetadataCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -35,6 +35,7 @@ public class MusicService extends Service {
     private boolean isPlaying = false;
     private long currentPosition = 0;
     private long totalDuration = 0;
+    private boolean foregroundStarted = false;
 
     @Override
     public void onCreate() {
@@ -44,21 +45,17 @@ public class MusicService extends Service {
         mediaSession = new MediaSessionCompat(this, "VaultifySession");
         mediaSession.setCallback(new MediaSessionCompat.Callback() {
             @Override
-            public void onPlay() {
-                sendBroadcastToWebView("PLAY");
-            }
+            public void onPlay() { sendAction("PLAY"); }
+
             @Override
-            public void onPause() {
-                sendBroadcastToWebView("PAUSE");
-            }
+            public void onPause() { sendAction("PAUSE"); }
+
             @Override
-            public void onSkipToNext() {
-                sendBroadcastToWebView("NEXT");
-            }
+            public void onSkipToNext() { sendAction("NEXT"); }
+
             @Override
-            public void onSkipToPrevious() {
-                sendBroadcastToWebView("PREV");
-            }
+            public void onSkipToPrevious() { sendAction("PREV"); }
+
             @Override
             public void onSeekTo(long pos) {
                 Intent intent = new Intent("VAULTIFY_SEEK");
@@ -67,18 +64,30 @@ public class MusicService extends Service {
             }
         });
         mediaSession.setActive(true);
+
+        // Initial notification (foreground requirement)
+        buildAndShowNotification();
+    }
+
+    private void sendAction(String action) {
+        Intent intent = new Intent("VAULTIFY_MEDIA_ACTION");
+        intent.putExtra("action", action);
+        sendBroadcast(intent);
     }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                "Vaultify Playback",
-                NotificationManager.IMPORTANCE_LOW
+                    CHANNEL_ID,
+                    "Vaultify Playback",
+                    NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("Music playback controls");
             channel.setShowBadge(false);
             channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+            channel.enableLights(false);
+            channel.enableVibration(false);
+            channel.setSound(null, null);
 
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) {
@@ -87,25 +96,50 @@ public class MusicService extends Service {
         }
     }
 
-    private void sendBroadcastToWebView(String action) {
-        Intent intent = new Intent("VAULTIFY_MEDIA_ACTION");
-        intent.putExtra("action", action);
-        sendBroadcast(intent);
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) {
+            String action = intent.getAction();
+            if ("UPDATE_NOTIFICATION".equals(action)) {
+                updateNotification(
+                        intent.getStringExtra("title"),
+                        intent.getStringExtra("artist"),
+                        intent.getStringExtra("cover"),
+                        intent.getBooleanExtra("playing", false)
+                );
+            } else if ("UPDATE_PROGRESS".equals(action)) {
+                updateProgress(
+                        intent.getLongExtra("position", 0),
+                        intent.getLongExtra("duration", 0)
+                );
+            } else if ("STOP_NOTIFICATION".equals(action)) {
+                stopForeground(true);
+                foregroundStarted = false;
+                NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (manager != null) {
+                    manager.cancel(NOTIFICATION_ID);
+                }
+                stopSelf();
+            } else {
+                // Service started without action — show initial notification
+                buildAndShowNotification();
+            }
+        }
+        return START_STICKY;
     }
 
     public void updateNotification(String title, String artist, String artworkUrl, boolean playing) {
-        this.currentTitle = title != null ? title : "Vaultify Pro";
-        this.currentArtist = artist != null ? artist : "Ready to play";
+        this.currentTitle = (title != null && !title.isEmpty()) ? title : "Vaultify Pro";
+        this.currentArtist = (artist != null && !artist.isEmpty()) ? artist : "Ready to play";
         this.isPlaying = playing;
 
-        // Artwork load karo background thread pe
         if (artworkUrl != null && !artworkUrl.isEmpty()) {
             new Thread(() -> {
                 Bitmap bmp = loadBitmapFromUrl(artworkUrl);
                 if (bmp != null) {
                     currentArtwork = bmp;
-                    buildAndShowNotification();
                 }
+                buildAndShowNotification();
             }).start();
         } else {
             buildAndShowNotification();
@@ -115,95 +149,120 @@ public class MusicService extends Service {
     public void updateProgress(long positionMs, long durationMs) {
         this.currentPosition = positionMs;
         this.totalDuration = durationMs;
-        // Notification ko rebuild mat karo har second — expensive hai
-        // Sirf MediaSession ka playback state update karo
+
         if (mediaSession != null) {
             PlaybackStateCompat state = new PlaybackStateCompat.Builder()
-                .setActions(PlaybackStateCompat.ACTION_PLAY |
-                           PlaybackStateCompat.ACTION_PAUSE |
-                           PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
-                           PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
-                           PlaybackStateCompat.ACTION_SEEK_TO)
-                .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
-                          positionMs, 1.0f)
-                .build();
+                    .setActions(PlaybackStateCompat.ACTION_PLAY |
+                            PlaybackStateCompat.ACTION_PAUSE |
+                            PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
+                            PlaybackStateCompat.ACTION_SEEK_TO)
+                    .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
+                            positionMs, 1.0f)
+                    .build();
             mediaSession.setPlaybackState(state);
         }
     }
 
     private void buildAndShowNotification() {
-        // Content intent — tap karne pe app khule
+        // Content intent
         Intent contentIntent = new Intent(this, MainActivity.class);
-        contentIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent contentPending = PendingIntent.getActivity(
-            this, 0, contentIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
+        contentIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            piFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        PendingIntent contentPending = PendingIntent.getActivity(this, 0, contentIntent, piFlags);
 
         // Prev
         PendingIntent prevPending = PendingIntent.getBroadcast(
-            this, 1,
-            new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "PREV"),
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this, 1,
+                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "PREV"),
+                piFlags
         );
 
         // Play/Pause
         int playPauseIcon = isPlaying
-            ? android.R.drawable.ic_media_pause
-            : android.R.drawable.ic_media_play;
+                ? android.R.drawable.ic_media_pause
+                : android.R.drawable.ic_media_play;
         String playPauseAction = isPlaying ? "PAUSE" : "PLAY";
         PendingIntent playPausePending = PendingIntent.getBroadcast(
-            this, 2,
-            new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", playPauseAction),
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this, 2,
+                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", playPauseAction),
+                piFlags
         );
 
         // Next
         PendingIntent nextPending = PendingIntent.getBroadcast(
-            this, 3,
-            new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "NEXT"),
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this, 3,
+                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "NEXT"),
+                piFlags
         );
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(currentTitle)
-            .setContentText(currentArtist)
-            .setContentIntent(contentPending)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .addAction(android.R.drawable.ic_media_previous, "Previous", prevPending)
-            .addAction(playPauseIcon, isPlaying ? "Pause" : "Play", playPausePending)
-            .addAction(android.R.drawable.ic_media_next, "Next", nextPending)
-            .setStyle(new MediaStyle()
-                .setMediaSession(mediaSession.getSessionToken())
-                .setShowActionsInCompactView(0, 1, 2)
-            );
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(currentTitle)
+                .setContentText(currentArtist)
+                .setContentIntent(contentPending)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setOngoing(isPlaying)
+                .setSilent(true)
+                .addAction(android.R.drawable.ic_media_previous, "Previous", prevPending)
+                .addAction(playPauseIcon, isPlaying ? "Pause" : "Play", playPausePending)
+                .addAction(android.R.drawable.ic_media_next, "Next", nextPending);
+
+        // MediaStyle if available
+        try {
+            androidx.media.app.NotificationCompat.MediaStyle style =
+                    new androidx.media.app.NotificationCompat.MediaStyle()
+                            .setMediaSession(mediaSession.getSessionToken())
+                            .setShowActionsInCompactView(0, 1, 2);
+            builder.setStyle(style);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         if (currentArtwork != null) {
             builder.setLargeIcon(currentArtwork);
         } else {
-            builder.setLargeIcon(BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher));
+            try {
+                builder.setLargeIcon(BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher));
+            } catch (Exception e) {}
         }
 
         Notification notification = builder.build();
 
         if (mediaSession != null) {
             mediaSession.setMetadata(new MediaMetadataCompat.Builder()
-                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
-                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
-                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, totalDuration)
-                .build());
+                    .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, totalDuration)
+                    .build());
+
+            PlaybackStateCompat state = new PlaybackStateCompat.Builder()
+                    .setActions(PlaybackStateCompat.ACTION_PLAY |
+                            PlaybackStateCompat.ACTION_PAUSE |
+                            PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
+                            PlaybackStateCompat.ACTION_SEEK_TO)
+                    .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
+                            currentPosition, 1.0f)
+                    .build();
+            mediaSession.setPlaybackState(state);
         }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
-            manager.notify(NOTIFICATION_ID, notification);
+            if (!foregroundStarted) {
+                startForeground(NOTIFICATION_ID, notification);
+                foregroundStarted = true;
+            } else {
+                manager.notify(NOTIFICATION_ID, notification);
+            }
         }
-
-        startForeground(NOTIFICATION_ID, notification);
     }
 
     private Bitmap loadBitmapFromUrl(String urlStr) {
@@ -215,7 +274,10 @@ public class MusicService extends Service {
             conn.setReadTimeout(5000);
             conn.connect();
             InputStream input = conn.getInputStream();
-            return BitmapFactory.decodeStream(input);
+            Bitmap bmp = BitmapFactory.decodeStream(input);
+            input.close();
+            conn.disconnect();
+            return bmp;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -235,4 +297,4 @@ public class MusicService extends Service {
         }
         super.onDestroy();
     }
-            }
+}
