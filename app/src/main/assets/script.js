@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Final Script                                             */
+/* VAULTIFY — Final Script (FIXED)                                     */
 /* ═══════════════════════════════════════════════════════════════════ */
 
 const CREATOR_ROOT_EMAIL="akshat594kumar@gmail.com";
@@ -96,10 +96,10 @@ function onYTStateChange(e){if(e.data===YT.PlayerState.PLAYING)setVisualState(tr
 function setupAndroidMediaSession(){
   if('mediaSession' in navigator){
     try{
-      navigator.mediaSession.setActionHandler('play',()=>{if(activeStreamEngine==='direct')mainAudio.play().catch(()=>{});else if(ytPlayerReady&&ytPlayer)ytPlayer.playVideo();setVisualState(true)});
-      navigator.mediaSession.setActionHandler('pause',()=>{if(activeStreamEngine==='direct')mainAudio.pause();else if(ytPlayerReady&&ytPlayer)ytPlayer.pauseVideo();setVisualState(false)});
-      navigator.mediaSession.setActionHandler('previoustrack',playPrevious);
-      navigator.mediaSession.setActionHandler('nexttrack',playNext);
+      navigator.mediaSession.setActionHandler('play',()=>{onNativePlay()});
+      navigator.mediaSession.setActionHandler('pause',()=>{onNativePause()});
+      navigator.mediaSession.setActionHandler('previoustrack',()=>{onNativePrev()});
+      navigator.mediaSession.setActionHandler('nexttrack',()=>{onNativeNext()});
       navigator.mediaSession.setActionHandler('seekto',d=>{if(d.seekTime!==undefined)seekAudioTo(d.seekTime)});
     }catch(e){}
   }
@@ -120,13 +120,29 @@ function setupAndroidMediaSession(){
   mainAudio.addEventListener('loadedmetadata',()=>{const durEl=document.getElementById('labelTotalDuration');if(durEl)durEl.innerText=formatClock(mainAudio.duration)});
 }
 
+// Native callbacks (notification buttons)
+window.onNativePlay=function(){
+  if(activeStreamEngine==='direct'&&mainAudio.paused){mainAudio.play().catch(()=>{})}
+  else if(activeStreamEngine==='yt_engine'&&ytPlayerReady&&ytPlayer){try{ytPlayer.playVideo()}catch(e){}}
+  setVisualState(true);
+};
+window.onNativePause=function(){
+  if(activeStreamEngine==='direct'){mainAudio.pause()}
+  else if(activeStreamEngine==='yt_engine'&&ytPlayerReady&&ytPlayer){try{ytPlayer.pauseVideo()}catch(e){}}
+  setVisualState(false);
+};
+window.onNativeNext=function(){playNext()};
+window.onNativePrev=function(){playPrevious()};
+
 function updateMediaSessionMetadata(track){
-  if(!track||!('mediaSession' in navigator))return;
-  try{
-    const cover=track.cover||'vaultify.png';
-    navigator.mediaSession.metadata=new MediaMetadata({title:track.title||'Unknown',artist:track.artist||'Unknown',album:'Vaultify',artwork:[{src:cover,sizes:'96x96',type:'image/jpeg'},{src:cover,sizes:'256x256',type:'image/jpeg'},{src:cover,sizes:'512x512',type:'image/jpeg'}]});
-    navigator.mediaSession.playbackState=isPlayingAudio?'playing':'paused';
-  }catch(e){}
+  if(!track)return;
+  if('mediaSession' in navigator){
+    try{
+      const cover=track.cover||'vaultify.png';
+      navigator.mediaSession.metadata=new MediaMetadata({title:track.title||'Unknown',artist:track.artist||'Unknown',album:'Vaultify',artwork:[{src:cover,sizes:'96x96',type:'image/jpeg'},{src:cover,sizes:'256x256',type:'image/jpeg'},{src:cover,sizes:'512x512',type:'image/jpeg'}]});
+      navigator.mediaSession.playbackState=isPlayingAudio?'playing':'paused';
+    }catch(e){}
+  }
   if(window.AndroidNativeBridge&&window.AndroidNativeBridge.updateNotification){try{window.AndroidNativeBridge.updateNotification(track.title||'Vaultify',track.artist||'',track.cover||'',isPlayingAudio)}catch(e){}}
 }
 
@@ -562,19 +578,8 @@ function sendSupportMail(){
   const subject=`Vaultify Support - ${n}`;
   const body=`Name: ${n}\nEmail: ${e}\nUser: ${loggedInUser?.username||'guest'}\n\nProblem:\n${m}`;
   const mailtoUrl=`mailto:akshat594kumar@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  try{
-    window.location.href=mailtoUrl;
-    pushNotification({title:'Support',message:'Mail app khul raha hai...',icon:'fa-solid fa-headset',iconColor:'#10b981'});
-    showToast('📧 Mail app khul raha hai');
-  }catch(err){
-    try{
-      const a=document.createElement('a');a.href=mailtoUrl;a.target='_blank';a.rel='noopener';
-      document.body.appendChild(a);a.click();document.body.removeChild(a);
-      showToast('📧 Mail app khul raha hai');
-    }catch(e2){
-      try{navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`);showToast('📧 Email copied — manually bhejo')}catch(e3){showToast('❌ Mail fail')}
-    }
-  }
+  try{window.location.href=mailtoUrl;pushNotification({title:'Support',message:'Mail app khul raha hai...',icon:'fa-solid fa-headset',iconColor:'#10b981'});showToast('📧 Mail app khul raha hai')}
+  catch(err){try{const a=document.createElement('a');a.href=mailtoUrl;a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();document.body.removeChild(a);showToast('📧 Mail app khul raha hai')}catch(e2){try{navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`);showToast('📧 Email copied')}catch(e3){showToast('❌ Mail fail')}}}
 }
 
 async function savePlaybackState(){
@@ -703,7 +708,6 @@ function checkBroadcastNotifications(){
 }
 function syncLocalCatalog(){const c=JSON.parse(localStorage.getItem('vaultify_custom_tracks')||'[]');currentPlaylist=[...c]}
 
-/* ═══════════════ AUTH ═══════════════ */
 const AUTH_ITERATIONS=100000,AUTH_SALT_BYTES=16,AUTH_KEY_BYTES=32;
 function bytesToHex(bytes){return Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('')}
 function hexToBytes(hex){const a=new Uint8Array(hex.length/2);for(let i=0;i<hex.length;i+=2)a[i/2]=parseInt(hex.substr(i,2),16);return a}
@@ -792,7 +796,7 @@ async function processAuthSubmission(){
       if(findUserByEmail(e)){showAuthError("❌ This email is already registered. Try logging in.");return}
       const salt=generateSalt();
       const passwordHash=await derivePasswordHash(p,salt);
-      const partnerCode='VAULT-'+Math.abs((u+'_vaultify_2026').split('').reduce((h,c)=>((h<<5)-h)+c.charCodeAt(0)|0,0)).toString(36).toUpperCase().padStart(6,'0').slice(0,6);
+      const partnerCode=generatePartnerCode(u);
       const newUser={username:u,email:e,displayName:dName||u,bio:'',passwordHash,salt,avatar:'',partnerCode,partnerRequests:[],partnerRequestsSent:[],createdAt:Date.now(),lastLogin:Date.now(),version:3};
       const db=getUserDB();db[u]=newUser;saveUserDB(db);
       loggedInUser=newUser;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
@@ -814,7 +818,7 @@ function applyUserDataUI(user){
   if(certHandle)certHandle.innerText='@'+user.username;
   if(editName)editName.value=user.displayName||user.username;
   if(editBio)editBio.value=user.bio||'';
-  if(partnerCode)partnerCode.innerText=user.partnerCode||('VAULT-'+String(user.username).toUpperCase().slice(0,6));
+  if(partnerCode)partnerCode.innerText=user.partnerCode||generatePartnerCode(user.username);
   if(avatar&&user.avatar)avatar.src=user.avatar;
   updateDynamicUserCounter();
   syncUserPartnerCode();
@@ -870,7 +874,6 @@ function updateDynamicUserCounter(){
   if(el)el.innerText=`${c} User${c===1?'':'s'}`;
 }
 
-/* ═══════════════ PARTNER SYSTEM ═══════════════ */
 function generatePartnerCode(username){
   if(!username)return'VAULT-XXXXXX';
   let hash=0;
@@ -1038,7 +1041,6 @@ function handleDuoBroadcastMessage(e){
   else if(d.type==='SYNC_TOGGLE'){togglePlaybackState(false)}
 }
 
-/* ═══════════════ EMOJI / THEME ═══════════════ */
 function initEmojiRunner(){
   const i=document.getElementById('notchRunnerIcon');if(!i)return;
   i.classList.remove('mode-flow','mode-mix');
@@ -1089,5 +1091,6 @@ Object.assign(window,{
   toggleAuthMode,processAuthSubmission,openForgotPasswordFlow,executePasswordReset,
   searchPartnerProfile,pairPartner,sendDuoChatMessage,showToast,sendSupportMail,triggerDpPicker,
   acceptPartnerRequest,declinePartnerRequest,sendPartnerRequest,syncUserPartnerCode,
-  renderPartnerRequests,generatePartnerCode,copyPartnerCode
+  renderPartnerRequests,generatePartnerCode,copyPartnerCode,
+  onNativePlay,onNativePause,onNativeNext,onNativePrev
 });
