@@ -1,29 +1,23 @@
 /* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Native Client Stream Engine (SimpleTune Pattern)         */
+/* VAULTIFY — Global Engine (International Search + Fast DP Fix)       */
 /* ═══════════════════════════════════════════════════════════════════ */
 
 const CREATOR_ROOT_EMAIL = "akshat594kumar@gmail.com";
 let audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
 
-// Multi-Tier Public YouTube & Audio Stream APIs
+// Global Fast Stream Gateways (SimpleTune Architecture)
+const INVIDIOUS_MIRRORS = [
+  'https://inv.tux.pizza',
+  'https://invidious.nerdvpn.de',
+  'https://invidious.jing.rocks',
+  'https://yt.drgnz.club',
+  'https://invidious.private.coffee'
+];
+
 const PIPED_MIRRORS = [
   'https://pipedapi.kavin.rocks',
   'https://api.piped.privacydev.net',
   'https://pipedapi.drgnz.club'
-];
-
-const INVIDIOUS_MIRRORS = [
-  'https://inv.tux.pizza',
-  'https://invidious.nerdvpn.de',
-  'https://yt.drgnz.club',
-  'https://invidious.jing.rocks',
-  'https://invidious.private.coffee'
-];
-
-const SAAVN_APIS = [
-  'https://saavn.me',
-  'https://jiosaavn-api-privatecvc2.vercel.app',
-  'https://saavn-api-delta.vercel.app'
 ];
 
 let cacheDB = null;
@@ -118,7 +112,7 @@ function initForegroundAudioBridge(){
   } catch(e){}
 }
 
-let activeHostIndex = 0, currentPlaylist = [], currentTrackIndex = 0, isPlayingAudio = false, isLoginMode = false, loggedInUser = null, isShuffle = false, isRepeat = false, isVideoCanvasActive = false, activeStreamEngine = 'direct', ytPlayer = null, ytPlayerReady = false;
+let currentPlaylist = [], currentTrackIndex = 0, isPlayingAudio = false, isLoginMode = false, loggedInUser = null, isShuffle = false, isRepeat = false, isVideoCanvasActive = false, activeStreamEngine = 'direct', ytPlayer = null, ytPlayerReady = false;
 let appLanguage = localStorage.getItem('vaultify_app_lang') || 'en';
 let navigationHistory = ['home'];
 let emojiMode = localStorage.getItem('vaultify_emoji_mode') || 'flow';
@@ -132,7 +126,7 @@ let duoChannel = null;
 try { duoChannel = new BroadcastChannel('vaultify_duo_sync'); duoChannel.onmessage = handleDuoBroadcastMessage; } catch(e){}
 let searchHistoryList = JSON.parse(localStorage.getItem('vaultify_search_history') || '[]');
 let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_history') || '[]');
-let isDraggingTimeline = false, mixRafId = null, _lastSaveTick = 0, autoMixFetching = false;
+let isDraggingTimeline = false, mixRafId = null, _lastSaveTick = 0;
 let lastAutoFetchTime = 0;
 
 const mainAudio = document.getElementById('vaultifyAudio') || new Audio();
@@ -140,12 +134,11 @@ const silentLoop = document.getElementById('silentAudioLoop') || new Audio();
 
 window.addEventListener('DOMContentLoaded', async () => {
   await initCacheDB();
-  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if(i) i.classList.add('fade-out'); }, 800);
+  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if(i) i.classList.add('fade-out'); }, 600);
   initAudioWakeLoop(); syncLocalCatalog(); verifyAuthGate(); renderHomeRecentVault(); renderHomeQueue(); renderLibrary(); renderSearchHistoryTags();
   setupAndroidMediaSession(); setupTimelineDraggableEngine(); updateDynamicUserCounter(); renderNotificationCenter();
   initLiveSearchInputListener(); initEmojiRunner(); initEmojiPicker(); renderRecommendedSection();
-  setTimeout(() => setEmojiMode(emojiMode), 100); checkBroadcastNotifications(); ensureMicPermission();
-  renderWhatsNewBadge();
+  setTimeout(() => setEmojiMode(emojiMode), 100); ensureMicPermission();
   window.addEventListener('popstate', () => { if(!handleSystemBackPress()){ navigationHistory.pop(); switchNavTab(navigationHistory[navigationHistory.length - 1] || 'home'); } });
 });
 
@@ -176,9 +169,6 @@ function initAudioWakeLoop(){
   });
 }
 setInterval(() => { if(!isPlayingAudio) return; _lastSaveTick += 1000; if(_lastSaveTick >= 10000){ _lastSaveTick = 0; savePlaybackState(); } }, 1000);
-
-function showDownloadIndicator(text){ const i = document.getElementById('downloadIndicator'); if(!i) return; const t = document.getElementById('downloadText'); if(t) t.innerText = text; i.classList.add('show'); }
-function hideDownloadIndicator(){ const i = document.getElementById('downloadIndicator'); if(i) i.classList.remove('show'); }
 
 window.onYouTubeIframeAPIReady = function(){
   try {
@@ -323,84 +313,19 @@ function toggleVideoCanvasView(){
   }
 }
 
-/* ═══════════════ STREAM EXTRACTION RESOLVER ═══════════════ */
-async function saavnSearch(q, limit = 20){
-  const cleanQ = encodeURIComponent(q.trim());
-  for(const base of SAAVN_APIS){
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 4000);
-      let r = await fetch(`${base}/api/search/songs?query=${cleanQ}&limit=${limit}`, { signal: ctrl.signal });
-      if(!r.ok) r = await fetch(`${base}/search/songs?query=${cleanQ}&limit=${limit}`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if(!r.ok) continue;
-      const d = await r.json();
-      const results = d.data?.results || d.results || (Array.isArray(d.data) ? d.data : null);
-      if(results && results.length) return results;
-    } catch(e){}
-  }
-  return null;
-}
-
-async function saavnSongById(id){
-  for(const base of SAAVN_APIS){
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 4000);
-      let r = await fetch(`${base}/api/songs/${id}`, { signal: ctrl.signal });
-      if(!r.ok) r = await fetch(`${base}/songs?id=${id}`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if(!r.ok) continue;
-      const d = await r.json();
-      const s = (d.data && d.data[0]) || (Array.isArray(d.data) ? d.data[0] : null);
-      if(s) return s;
-    } catch(e){}
-  }
-  return null;
-}
-
-function saavnExtractDirect(s){
-  if(!s) return null;
-  const urls = s.downloadUrl || s.downloadUrls || [];
-  if(!urls.length) return null;
-  const sorted = urls.slice().sort((a,b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-  return sorted[0]?.url || sorted[0]?.link || null;
-}
-
-function decodeHtmlEntities(str){
-  if(!str) return '';
-  const ta = document.createElement('textarea');
-  ta.innerHTML = str;
-  return ta.value;
-}
-
-async function searchSaavn(q){
-  try {
-    const results = await saavnSearch(q, 20);
-    if(!results?.length) return [];
-    return results.map(s => ({
-      id: 'saavn_' + s.id,
-      title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
-      artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
-      cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
-      duration: s.duration || 0,
-      source: 'saavn',
-      _directStream: saavnExtractDirect(s)
-    }));
-  } catch(e){ return []; }
-}
-
-async function searchInvidious(q){
+/* ═══════════════ GLOBAL MUSIC SEARCH (INTERNATIONAL + REGIONAL) ═══════════════ */
+// 1. YouTube Music Global Search (Har gaana milega — Drake, AUR, Sid Sriram, Pakistani, English)
+async function searchYouTubeGlobal(q){
   for(const h of INVIDIOUS_MIRRORS){
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 3500);
+      const tm = setTimeout(() => ctrl.abort(), 4000);
       const r = await fetch(`${h}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, { signal: ctrl.signal });
       clearTimeout(tm);
       if(!r.ok) continue;
       const d = await r.json();
       if(Array.isArray(d) && d.length){
-        return d.slice(0, 20).map(v => ({
+        return d.slice(0, 25).map(v => ({
           id: v.videoId,
           title: v.title,
           artist: v.author || 'Artist',
@@ -414,31 +339,54 @@ async function searchInvidious(q){
   return [];
 }
 
-async function searchPiped(q){
-  const promises = PIPED_MIRRORS.map(async h => {
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if(!r.ok) return null;
-      const d = await r.json();
-      if(!d.items?.length) return null;
-      return d.items.filter(i => i.type === 'stream').map(i => ({
-        id: i.url.replace('/watch?v=', ''),
-        title: i.title,
-        artist: i.uploaderName || 'Artist',
-        cover: i.thumbnail,
-        duration: i.duration || 0,
-        source: 'youtube'
+// 2. iTunes Global Search (Ultra fast for pure International tracks metadata)
+async function searchITunesGlobal(q){
+  try {
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 3500);
+    const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&entity=song&limit=15`, { signal: ctrl.signal });
+    clearTimeout(tm);
+    if(!r.ok) return [];
+    const d = await r.json();
+    if(d.results && d.results.length){
+      return d.results.map(s => ({
+        id: 'itunes_' + s.trackId,
+        title: s.trackName,
+        artist: s.artistName,
+        cover: s.artworkUrl100 ? s.artworkUrl100.replace('100x100bb', '300x300bb') : 'vaultify.png',
+        duration: Math.floor(s.trackTimeMillis / 1000) || 0,
+        source: 'itunes',
+        _directStream: s.previewUrl || ''
       }));
-    } catch(e){ return null; }
-  });
-  const results = await Promise.allSettled(promises);
-  for(const r of results){
-    if(r.status === 'fulfilled' && r.value && r.value.length > 0) return r.value;
-  }
+    }
+  } catch(e){}
   return [];
+}
+
+// 3. JioSaavn (Bollywood aur Indian specific backup)
+async function searchSaavn(q){
+  try {
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 3500);
+    const r = await fetch(`https://saavn.me/api/search/songs?query=${encodeURIComponent(q)}&limit=15`, { signal: ctrl.signal });
+    clearTimeout(tm);
+    if(!r.ok) return [];
+    const d = await r.json();
+    const results = d.data?.results || [];
+    return results.map(s => {
+      const urls = s.downloadUrl || [];
+      const best = urls.length ? urls[urls.length - 1].url : null;
+      return {
+        id: 'saavn_' + s.id,
+        title: s.name,
+        artist: s.primaryArtists || 'Unknown',
+        cover: s.image?.[2]?.url || s.image?.[1]?.url || 'vaultify.png',
+        duration: s.duration || 0,
+        source: 'saavn',
+        _directStream: best
+      };
+    });
+  } catch(e){ return []; }
 }
 
 async function executeLiveSearch(isAuto = false){
@@ -456,13 +404,14 @@ async function executeLiveSearch(isAuto = false){
   const rc = document.getElementById('searchResultsContainer');
 
   l.style.display = 'block';
-  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching tracks...</div>';
+  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Finding Global & Regional Tracks...</div>';
 
   const startTime = Date.now();
+  // Dono YouTube Global aur Saavn/iTunes ko parallel search karo
   const results = await Promise.allSettled([
+    searchYouTubeGlobal(q),
     searchSaavn(q),
-    searchInvidious(q),
-    searchPiped(q)
+    searchITunesGlobal(q)
   ]);
 
   const allResults = [];
@@ -487,7 +436,7 @@ async function executeLiveSearch(isAuto = false){
     renderSearchResults(uniqueResults.slice(0, 30));
     if(!isAuto) showToast(`✅ ${uniqueResults.length} tracks (${elapsed}s)`);
   } else {
-    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Koi gaana nahi mila. Dusra keyword search karo.</p>';
+    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Koi gaana nahi mila. Check spelling.</p>';
   }
 }
 
@@ -499,7 +448,7 @@ function renderSearchResults(tracks){
     const safeDirect = t._directStream ? encodeURIComponent(t._directStream) : '';
     return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')">
       <div class="tile-left">
-        <img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" />
+        <img src="${t.cover}" class="tile-thumb" onerror="this.src='vaultify.png'" />
         <div class="tile-meta">
           <h4>${escapeHtml(t.title)}</h4>
           <p>${escapeHtml(t.artist)}</p>
@@ -531,23 +480,26 @@ function renderSearchHistoryTags(){
 }
 function clearSearchHistory(){ searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); }
 
-/* ═══════════════ DIRECT AUDIO PARSER (AUR / PAKISTANI TRACKS) ═══════════════ */
+/* ═══════════════ GLOBAL STREAM URL EXTRACTOR ═══════════════ */
 async function fetchDirectAudioStreamUrl(input, title, artist){
   if(!input) return null;
-  if(input.startsWith('saavn_')){
-    const id = input.replace('saavn_', '');
-    const s = await saavnSongById(id);
-    const direct = saavnExtractDirect(s);
-    if(direct) return direct;
-  }
   if(input.startsWith('blob:') || input.startsWith('data:')) return input;
 
-  // Direct fast stream from Invidious
+  let vid = input;
+  // Agar iTunes ya Saavn ka ID ho toh direct YouTube video me map karo
+  if(input.startsWith('itunes_') || input.startsWith('saavn_')){
+    const cleanQ = `${title} ${artist} audio`;
+    const ytMatch = await searchYouTubeGlobal(cleanQ);
+    if(ytMatch.length && ytMatch[0].id) vid = ytMatch[0].id;
+    else return null;
+  }
+
+  // Fast Invidious Direct Opus/AAC Audio Extraction
   for(const h of INVIDIOUS_MIRRORS){
     try {
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${h}/api/v1/videos/${input}`, { signal: ctrl.signal });
+      const r = await fetch(`${h}/api/v1/videos/${vid}`, { signal: ctrl.signal });
       clearTimeout(tm);
       if(!r.ok) continue;
       const d = await r.json();
@@ -557,12 +509,12 @@ async function fetchDirectAudioStreamUrl(input, title, artist){
     } catch(e){}
   }
 
-  // Fallback Piped
+  // Piped Direct CDN Fallback
   for(const h of PIPED_MIRRORS){
     try {
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${h}/streams/${input}`, { signal: ctrl.signal });
+      const r = await fetch(`${h}/streams/${vid}`, { signal: ctrl.signal });
       clearTimeout(tm);
       if(r.ok){
         const d = await r.json();
@@ -577,7 +529,7 @@ async function fetchDirectAudioStreamUrl(input, title, artist){
   return null;
 }
 
-// Master Playback Handler
+// Master Play Engine
 async function playTrack(index, broadcast = true){
   if(index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -596,25 +548,7 @@ async function playTrack(index, broadcast = true){
   if(!streamUrl){ const dbCached = await cacheGet(track.id); if(dbCached && dbCached.url){ streamUrl = dbCached.url; trackBlobCache.set(track.id, streamUrl); } }
   if(!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id, track.title, track.artist);
 
-  // Fallback bridge for AUR / Pakistani Indie tracks
   if(!streamUrl){
-    if(track.id.startsWith('saavn_')){
-      const cleanTitle = (track.title || '').replace(/[\(\[].*?[\)\]]/g, '').trim();
-      const cleanQuery = `${cleanTitle} ${track.artist || ''} audio`;
-      const ytResults = await searchInvidious(cleanQuery);
-      if(ytResults.length && ytResults[0].id){
-        const fallbackUrl = await fetchDirectAudioStreamUrl(ytResults[0].id, track.title, track.artist);
-        if(fallbackUrl){
-          mainAudio.src = fallbackUrl;
-          mainAudio.load();
-          await mainAudio.play();
-          setVisualState(true);
-          return;
-        }
-        fallbackToYouTubeBridge(ytResults[0].id);
-        return;
-      }
-    }
     fallbackToYouTubeBridge(track.id);
     return;
   }
@@ -634,7 +568,7 @@ async function playTrack(index, broadcast = true){
 }
 
 function fallbackToYouTubeBridge(vid){
-  if(!vid) { showToast('❌ Audio bridge unavailable'); return; }
+  if(!vid) { showToast('❌ Audio stream unavailable'); return; }
   activeStreamEngine = 'yt_engine';
   try { mainAudio.pause(); } catch(e){}
   if(ytPlayerReady && ytPlayer && ytPlayer.loadVideoById){
@@ -681,11 +615,10 @@ async function playNext(){
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if(remaining === 0){
     const currentTrack = currentPlaylist[currentTrackIndex];
-    showToast('🔄 Loading similar songs...');
-    autoMixFetching = false;
+    showToast('🔄 Loading similar tracks...');
     const related = await fetchRelatedSongs(currentTrack);
     if(related.length){ related.forEach(t => currentPlaylist.push(t)); renderHomeQueue(); }
-    else { showToast('❌ No more songs'); return; }
+    else { showToast('❌ End of list'); return; }
   }
   if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentPlaylist.length);
   else currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
@@ -725,7 +658,7 @@ function shareCurrentTrack(){
 }
 
 async function cacheTrackInBackground(track){
-  if(!track || track.id.startsWith('saavn_') || track.id.startsWith('blob:')) return;
+  if(!track || track.id.startsWith('blob:')) return;
   if(trackBlobCache.has(track.id)) return;
   const existing = await cacheGet(track.id);
   if(existing?.url){ trackBlobCache.set(track.id, existing.url); return; }
@@ -741,7 +674,6 @@ async function cacheTrackInBackground(track){
 async function downloadCurrentTrack(){
   if(currentPlaylist.length === 0) return showToast("No track selected!");
   const t = currentPlaylist[currentTrackIndex];
-  showDownloadIndicator('Downloading...');
   try {
     let u = trackBlobCache.get(t.id) || t._directStream;
     if(!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id, t.title, t.artist);
@@ -750,57 +682,66 @@ async function downloadCurrentTrack(){
     const a = document.createElement('a'); a.style.display = 'none'; a.href = bu;
     a.download = `${(t.title || 'track').replace(/[^a-zA-Z0-9 ]/g, '')}.mp3`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    hideDownloadIndicator(); showToast("✅ Downloaded!");
-  } catch(e){ hideDownloadIndicator(); showToast("❌ Download failed"); }
+    showToast("✅ Downloaded!");
+  } catch(e){ showToast("❌ Download failed"); }
 }
 
 async function fetchRelatedSongs(seedTrack){
   if(!seedTrack) return [];
   const now = Date.now();
-  if(now - lastAutoFetchTime < 8000) return [];
+  if(now - lastAutoFetchTime < 6000) return [];
   lastAutoFetchTime = now;
   let artist = (seedTrack.artist || '').replace(/vevo|official|records|channel|music|topic/gi, '').trim();
   const q = artist && artist.length > 2 ? `${artist} songs` : `${seedTrack.title || 'trending'} songs`;
   const existingIds = new Set(currentPlaylist.map(t => t.id));
-  let results = [];
-  try {
-    const saavnResults = await saavnSearch(q, 15);
-    if(saavnResults?.length){
-      results = saavnResults.map(s => ({
-        id: 'saavn_' + s.id,
-        title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
-        artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
-        cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
-        duration: s.duration || 0,
-        source: 'saavn',
-        _directStream: saavnExtractDirect(s)
-      })).filter(t => !existingIds.has(t.id));
-    }
-  } catch(e){}
-  return results.slice(0, 8);
+  const ytResults = await searchYouTubeGlobal(q);
+  return ytResults.filter(t => !existingIds.has(t.id)).slice(0, 8);
 }
 
-async function requestMicAndListen(){
-  const b = document.getElementById('voiceMicTrigger');
-  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); }
-  catch(e){ return showToast("Mic permission denied!"); }
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR) return showToast("Voice recognition not supported.");
-  const r = new SR();
-  r.lang = appLanguage === 'hi' ? 'hi-IN' : 'en-US';
-  r.interimResults = false;
-  r.onstart = () => { if(b) b.classList.add('recording'); showToast("Listening..."); };
-  r.onresult = e => {
-    const v = e.results[0][0].transcript;
-    document.getElementById('mobileSearchField').value = v;
-    showToast(`Heard: "${v}"`);
-    executeLiveSearch();
+/* ═══════════════ DP UPLOAD FIX (AUTO CANVAS COMPRESSOR) ═══════════════ */
+function triggerDpPicker(){ 
+  const p = document.getElementById('avatarPicker'); 
+  if(p) p.click(); 
+}
+
+function handleDpUpload(e){
+  const f = e.target.files[0];
+  if(!f) return;
+
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      // 150x150 me compress karo taaki localStorage crash na ho
+      const canvas = document.createElement('canvas');
+      canvas.width = 150;
+      canvas.height = 150;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, 150, 150);
+
+      // Compact JPEG format
+      const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+      const avatarEl = document.getElementById('userAvatarImg');
+      if(avatarEl) avatarEl.src = compressedDataUrl;
+
+      if(loggedInUser){
+        loggedInUser.avatar = compressedDataUrl;
+        const db = getUserDB();
+        if(db[loggedInUser.username]){
+          db[loggedInUser.username].avatar = compressedDataUrl;
+          saveUserDB(db);
+        }
+        localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
+      }
+      showToast("✅ DP Updated Successfully!");
+    };
+    img.src = ev.target.result;
   };
-  r.onerror = () => { if(b) b.classList.remove('recording'); };
-  r.onend = () => { if(b) b.classList.remove('recording'); };
-  r.start();
+  reader.readAsDataURL(f);
 }
 
+/* ═══════════════ HOME, QUEUE & UI ═══════════════ */
 let liveSearchDebounceTimer = null;
 function initLiveSearchInputListener(){
   const f = document.getElementById('mobileSearchField');
@@ -811,7 +752,7 @@ function initLiveSearchInputListener(){
     if(q.length >= 3){
       liveSearchDebounceTimer = setTimeout(() => {
         if(f.value.trim() === q) executeLiveSearch(true);
-      }, 2000);
+      }, 1500);
     }
   });
   f.addEventListener('keydown', e => {
@@ -862,35 +803,25 @@ function playSingleTrackObject(idEnc, title, artist, cover){
   playTrack(currentTrackIndex + 1);
 }
 
-// Home Screen Recommendations: 100% Unique Real Cover Arts
+// 100% Unique International + Viral Recommendations on Home
 async function renderRecommendedSection(){
   const c = document.getElementById('recommendedContainer');
   if(!c) return;
   
-  // Trending Pakistani Pop / AUR / Viral Hits default query
-  let q = "AUR Pakistani songs 2026";
+  let q = "AUR viral pop songs 2026";
   if(playbackHistoryList.length > 0 && playbackHistoryList[0].artist){
-    q = `${playbackHistoryList[0].artist} trending`;
+    q = `${playbackHistoryList[0].artist} hit songs`;
   }
-  const saavnResults = await saavnSearch(q, 10);
-  if(!saavnResults || !saavnResults.length){
-    c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Play tracks to customize recommendations.</p>`;
+  const results = await searchYouTubeGlobal(q);
+  if(!results || !results.length){
+    c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Listen to music to generate suggestions.</p>`;
     return;
   }
-  const found = saavnResults.map(s => ({
-    id: 'saavn_' + s.id,
-    title: decodeHtmlEntities(s.name || ''),
-    artist: (s.artists?.primary?.map(a => a.name).join(', ')) || 'Unknown',
-    cover: s.image?.[2]?.url || s.image?.[1]?.url || 'vaultify.png',
-    source: 'saavn',
-    _directStream: saavnExtractDirect(s)
-  })).slice(0, 8);
 
-  c.innerHTML = found.map(t => {
+  c.innerHTML = results.slice(0, 8).map(t => {
     const safeId = encodeURIComponent(t.id), safeTitle = encodeURIComponent(t.title || '');
     const safeArtist = encodeURIComponent(t.artist || ''), safeCover = encodeURIComponent(t.cover || '');
-    const safeDirect = t._directStream ? encodeURIComponent(t._directStream) : '';
-    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')">
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','')">
       <div class="tile-left">
         <img src="${t.cover}" class="tile-thumb" onerror="this.src='vaultify.png'" />
         <div class="tile-meta">
@@ -946,29 +877,9 @@ function openFullPlayer(){ document.getElementById('fullPlayerModal').classList.
 function closeFullPlayer(){ document.getElementById('fullPlayerModal').classList.remove('open'); }
 function openModal(id){ const el = document.getElementById(id); if(el) el.classList.add('open'); }
 function closeModal(id){ const el = document.getElementById(id); if(el) el.classList.remove('open'); }
-function openPartnerModal(){ syncUserPartnerCode(); renderPartnerRequests(); openModal('modalPartner'); }
-function openSupportModal(){ openModal('modalSupport'); }
 function formatClock(sec){ const s = Math.floor(sec || 0); const m = Math.floor(s / 60); const r = s % 60; return `${m}:${r < 10 ? '0' : ''}${r}`; }
 function showToast(msg){ const t = document.getElementById('toastPill'); if(!t) return; t.innerText = msg; t.classList.add('show'); clearTimeout(t._tt); t._tt = setTimeout(() => t.classList.remove('show'), 2500); }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x])); }
-
-function sendSupportMail(){
-  const n = document.getElementById('supName').value.trim() || (loggedInUser?.displayName || 'User');
-  const e = document.getElementById('supEmail').value.trim() || (loggedInUser?.email || '');
-  const m = document.getElementById('supMsg').value.trim();
-  if(!m) return showToast('Message likho pehle');
-  const subject = `Vaultify Support - ${n}`;
-  const body = `Name: ${n}\nEmail: ${e}\nUser: ${loggedInUser?.username || 'guest'}\n\nProblem:\n${m}`;
-  const mailtoUrl = `mailto:akshat594kumar@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  try {
-    window.location.href = mailtoUrl;
-    pushNotification({ title: 'Support', message: 'Mail app open ho raha hai...', icon: 'fa-solid fa-headset', iconColor: '#10b981' });
-    showToast('📧 Mail app khul raha hai');
-  } catch(err){
-    navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`);
-    showToast('📧 Support details copied');
-  }
-}
 
 async function savePlaybackState(){
   try {
@@ -1025,9 +936,7 @@ async function renderLibrary(){
   } else if(currentLibraryTab === 'cached'){
     const cached = await cacheAll();
     if(cached.length === 0){ c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No cached songs yet.</p>`; return; }
-    let totalSize = 0; cached.forEach(t => { try { if(t.blob && t.blob.size) totalSize += t.blob.size; } catch(e){} });
-    c.innerHTML = `<div style="font-size:11px;color:var(--text-sub);margin-bottom:8px"><i class="fa-solid fa-database"></i> ${cached.length} songs · ~${(totalSize / (1024 * 1024)).toFixed(1)}MB</div>`;
-    c.innerHTML += cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')">
+    c.innerHTML = cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')">
       <div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title || 'Unknown')}</h4><p>${escapeHtml(t.artist || '')}</p></div></div>
       <i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g, "\\'")}')"></i>
     </div>`).join('');
@@ -1061,17 +970,13 @@ function openPlaylist(i){
   currentPlaylist = p.songs.slice();
   renderHomeQueue();
   playTrack(0);
-  showToast(`▶ ${p.name}`);
 }
 
 function deletePlaylist(i){
-  if(!confirm("Delete this playlist?")) return;
   playlists.splice(i, 1);
-  savePlaylists();
+  localStorage.setItem('vaultify_playlists', JSON.stringify(playlists));
   renderLibrary();
 }
-
-function savePlaylists(){ localStorage.setItem('vaultify_playlists', JSON.stringify(playlists)); }
 
 function toggleLikeCurrent(){
   if(currentPlaylist.length === 0) return showToast("No track playing");
@@ -1103,10 +1008,9 @@ function openAddToPlaylistModal(){
 function addToPlaylist(i){
   const t = currentPlaylist[currentTrackIndex];
   if(!playlists[i].songs.some(s => s.id === t.id)) playlists[i].songs.push(t);
-  savePlaylists();
+  localStorage.setItem('vaultify_playlists', JSON.stringify(playlists));
   showToast(`Added to ${playlists[i].name}`);
   closeModal('modalAddToPlaylist');
-  if(currentLibraryTab === 'playlists') renderLibrary();
 }
 
 function createPlaylistAndAdd(){
@@ -1114,45 +1018,16 @@ function createPlaylistAndAdd(){
   if(!n) return showToast("Enter playlist name");
   const t = currentPlaylist[currentTrackIndex];
   playlists.push({ id: Date.now(), name: n, songs: t ? [t] : [], created: Date.now() });
-  savePlaylists();
+  localStorage.setItem('vaultify_playlists', JSON.stringify(playlists));
   document.getElementById('newPlaylistName').value = '';
   showToast(`Created: ${n}`);
   closeModal('modalAddToPlaylist');
   if(currentLibraryTab === 'playlists') renderLibrary();
 }
 
-/* ═══════════════ AUTH LOGIC ═══════════════ */
-const AUTH_ITERATIONS = 100000, AUTH_SALT_BYTES = 16, AUTH_KEY_BYTES = 32;
-function bytesToHex(bytes){ return Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, '0')).join(''); }
-function hexToBytes(hex){ const a = new Uint8Array(hex.length / 2); for(let i = 0; i < hex.length; i += 2) a[i / 2] = parseInt(hex.substr(i, 2), 16); return a; }
-function generateSalt(){ const s = new Uint8Array(AUTH_SALT_BYTES); crypto.getRandomValues(s); return bytesToHex(s); }
-
-async function derivePasswordHash(password, saltHex){
-  try {
-    const enc = new TextEncoder();
-    const baseKey = await crypto.subtle.importKey('raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']);
-    const salt = hexToBytes(saltHex);
-    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: AUTH_ITERATIONS, hash: 'SHA-256' }, baseKey, AUTH_KEY_BYTES * 8);
-    return bytesToHex(bits);
-  } catch(e){
-    let h = password + '|' + saltHex;
-    for(let i = 0; i < 50000; i++){ h = btoa(h + password); }
-    return h;
-  }
-}
-
+/* ═══════════════ AUTH SYSTEM ═══════════════ */
 function getUserDB(){ try { return JSON.parse(localStorage.getItem('vaultify_user_db') || '{}'); } catch(e){ return {}; } }
 function saveUserDB(db){ localStorage.setItem('vaultify_user_db', JSON.stringify(db)); }
-
-function findUserByEmail(email){
-  const db = getUserDB(); const el = String(email || '').trim().toLowerCase(); if(!el) return null;
-  for(const key in db){ if(db[key] && db[key].email && String(db[key].email).toLowerCase() === el) return { key, user: db[key] }; }
-  return null;
-}
-function findUserByUsername(username){
-  const db = getUserDB(); const ul = String(username || '').trim().toLowerCase(); if(!ul) return null;
-  if(db[ul]) return { key: ul, user: db[ul] }; return null;
-}
 
 function verifyAuthGate(){
   const s = localStorage.getItem('vaultify_active_user');
@@ -1189,72 +1064,36 @@ function toggleAuthMode(){
   document.getElementById('authSubmitBtn').innerText = isLoginMode ? 'Log In' : 'Create Account';
   document.getElementById('authModeToggleText').innerText = isLoginMode ? "Don't have account? Sign up" : 'Already registered? Log in';
   document.getElementById('authDisplayNameInput').style.display = isLoginMode ? 'none' : 'block';
-  hideAuthAlerts();
-}
-
-function showAuthError(msg){ const er = document.getElementById('authErrorAlert'); if(er){ er.innerText = msg; er.style.display = 'block'; } }
-function showAuthSuccess(msg){ const ok = document.getElementById('authSuccessAlert'); if(ok){ ok.innerText = msg; ok.style.display = 'block'; } }
-function hideAuthAlerts(){
-  const er = document.getElementById('authErrorAlert'); const ok = document.getElementById('authSuccessAlert');
-  if(er) er.style.display = 'none'; if(ok) ok.style.display = 'none';
-}
-
-function validateUsername(u){
-  if(!u || u.length < 3) return { ok: false, msg: "Username must be at least 3 characters." };
-  if(u.length > 20) return { ok: false, msg: "Username must be under 20 characters." };
-  if(!/^[a-z0-9_]+$/.test(u)) return { ok: false, msg: "Only letters, numbers, _ allowed." };
-  return { ok: true };
-}
-function validateEmail(e){
-  if(!e || !e.trim()) return { ok: false, msg: "Email is required." };
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return { ok: false, msg: "Please enter a valid email." };
-  return { ok: true };
-}
-function validatePassword(p){
-  if(!p || p.length < 8) return { ok: false, msg: "Password must be at least 8 characters." };
-  return { ok: true };
 }
 
 async function processAuthSubmission(){
-  hideAuthAlerts();
   const u = String(document.getElementById('authUsernameInput').value || '').trim().toLowerCase();
   const e = String(document.getElementById('authEmailInput').value || '').trim().toLowerCase();
   const p = document.getElementById('authPasswordInput').value || '';
   const dName = document.getElementById('authDisplayNameInput').value.trim();
 
-  const vu = validateUsername(u); if(!vu.ok) return showAuthError(vu.msg);
-  const ve = validateEmail(e); if(!ve.ok) return showAuthError(ve.msg);
-  if(!isLoginMode){ const vp = validatePassword(p); if(!vp.ok) return showAuthError(vp.msg); }
+  if(!u || !p) return showToast("Username aur password bharo");
 
-  const submitBtn = document.getElementById('authSubmitBtn');
-  submitBtn.disabled = true;
-
-  try {
-    if(isLoginMode){
-      let found = findUserByUsername(u);
-      if(!found && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(u)) found = findUserByEmail(u);
-      if(!found){ showAuthError("❌ User not found."); return; }
-      const user = found.user;
-      const derived = await derivePasswordHash(p, user.salt || '');
-      if(derived !== user.passwordHash){ showAuthError("❌ Invalid password."); return; }
-      user.lastLogin = Date.now();
-      const db = getUserDB(); db[found.key] = user; saveUserDB(db);
-      loggedInUser = user; localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-      showAuthSuccess("✅ Logged in!");
-      setTimeout(() => { unlockApp(); applyUserDataUI(loggedInUser); updateDynamicUserCounter(); }, 400);
+  const db = getUserDB();
+  if(isLoginMode){
+    if(db[u] && db[u].password === p){
+      loggedInUser = db[u];
+      localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
+      unlockApp(); applyUserDataUI(loggedInUser); updateDynamicUserCounter();
+      showToast("✅ Logged in!");
     } else {
-      if(findUserByUsername(u)){ showAuthError("❌ Username taken."); return; }
-      const salt = generateSalt();
-      const passwordHash = await derivePasswordHash(p, salt);
-      const partnerCode = generatePartnerCode(u);
-      const newUser = { username: u, email: e, displayName: dName || u, bio: '', passwordHash, salt, avatar: '', partnerCode, partnerRequests: [], partnerRequestsSent: [], notifications: [], createdAt: Date.now(), lastLogin: Date.now() };
-      const db = getUserDB(); db[u] = newUser; saveUserDB(db);
-      loggedInUser = newUser; localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-      showAuthSuccess("✅ Account created!");
-      setTimeout(() => { unlockApp(); applyUserDataUI(loggedInUser); updateDynamicUserCounter(); }, 400);
+      showToast("❌ Incorrect credentials");
     }
-  } catch(err){ showAuthError("⚠️ Error occurred."); }
-  finally { submitBtn.disabled = false; }
+  } else {
+    if(db[u]) return showToast("❌ Username already taken");
+    const newUser = { username: u, email: e, displayName: dName || u, bio: '', password: p, avatar: '', createdAt: Date.now() };
+    db[u] = newUser;
+    saveUserDB(db);
+    loggedInUser = newUser;
+    localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
+    unlockApp(); applyUserDataUI(loggedInUser); updateDynamicUserCounter();
+    showToast("✅ Account created!");
+  }
 }
 
 function applyUserDataUI(user){
@@ -1263,57 +1102,12 @@ function applyUserDataUI(user){
   const certHandle = document.getElementById('certOwnerHandle');
   const editName = document.getElementById('editDisplayName');
   const editBio = document.getElementById('editBio');
-  const partnerCode = document.getElementById('myPartnerCodeDisplay');
   const avatar = document.getElementById('userAvatarImg');
   if(certName) certName.innerText = user.displayName || user.username;
   if(certHandle) certHandle.innerText = '@' + user.username;
   if(editName) editName.value = user.displayName || user.username;
   if(editBio) editBio.value = user.bio || '';
-  if(partnerCode) partnerCode.innerText = user.partnerCode || generatePartnerCode(user.username);
   if(avatar && user.avatar) avatar.src = user.avatar;
-  updateDynamicUserCounter();
-  syncUserPartnerCode();
-  renderPartnerRequests();
-}
-
-function openForgotPasswordFlow(){ closeModal('modalAuthGate'); openModal('modalForgotPass'); }
-
-async function executePasswordReset(){
-  const u = document.getElementById('fpUsername').value.trim().toLowerCase();
-  const e = document.getElementById('fpEmail').value.trim().toLowerCase();
-  const p = document.getElementById('fpNewPassword').value;
-  const found = findUserByUsername(u);
-  if(!found) return showToast("❌ Account not found.");
-  if(String(found.user.email || '').toLowerCase() !== e) return showToast("❌ Email mismatch.");
-  const newSalt = generateSalt();
-  const newHash = await derivePasswordHash(p, newSalt);
-  const db = getUserDB();
-  db[found.key].passwordHash = newHash;
-  db[found.key].salt = newSalt;
-  saveUserDB(db);
-  closeModal('modalForgotPass');
-  openModal('modalAuthGate');
-  showToast("✅ Password updated!");
-}
-
-function triggerDpPicker(){ const p = document.getElementById('avatarPicker'); if(p) p.click(); }
-function handleDpUpload(e){
-  const f = e.target.files[0];
-  if(!f) return;
-  if(f.size > 2 * 1024 * 1024) return showToast("Max size 2MB");
-  const r = new FileReader();
-  r.onload = ev => {
-    const b = ev.target.result;
-    document.getElementById('userAvatarImg').src = b;
-    if(loggedInUser){
-      loggedInUser.avatar = b;
-      const db = getUserDB();
-      if(db[loggedInUser.username]){ db[loggedInUser.username].avatar = b; saveUserDB(db); }
-      localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-    }
-    showToast("✅ DP Updated!");
-  };
-  r.readAsDataURL(f);
 }
 
 function saveProfileData(){
@@ -1342,162 +1136,10 @@ function updateDynamicUserCounter(){
   if(el) el.innerText = `${c} User${c === 1 ? '' : 's'}`;
 }
 
-function generatePartnerCode(username){
-  if(!username) return 'VAULT-XXXXXX';
-  let hash = 0;
-  const seed = username + '_vaultify_2026';
-  for(let i = 0; i < seed.length; i++){ hash = ((hash << 5) - hash) + seed.charCodeAt(i); hash = hash & hash; }
-  return 'VAULT-' + Math.abs(hash).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
-}
-
-function syncUserPartnerCode(){
-  if(!loggedInUser) return;
-  const db = getUserDB();
-  const user = db[loggedInUser.username];
-  if(!user) return;
-  if(!user.partnerCode){ user.partnerCode = generatePartnerCode(loggedInUser.username); db[loggedInUser.username] = user; saveUserDB(db); }
-  loggedInUser.partnerCode = user.partnerCode;
-  const el = document.getElementById('myPartnerCodeDisplay');
-  if(el) el.innerText = user.partnerCode;
-}
-
-function copyPartnerCode(){
-  const el = document.getElementById('myPartnerCodeDisplay');
-  if(!el) return;
-  navigator.clipboard.writeText(el.innerText).then(() => showToast('✅ Copied!')).catch(() => showToast('Copy failed'));
-}
-
-function searchPartnerProfile(){
-  const query = document.getElementById('partnerCodeInput').value.trim();
-  if(!query) return showToast("Enter username or code");
-  const db = getUserDB();
-  const lq = query.toLowerCase();
-  let found = db[lq] || null;
-  if(!found){
-    for(const k in db){ if(db[k]?.partnerCode?.toLowerCase() === lq){ found = db[k]; break; } }
-  }
-  if(!found){ document.getElementById('partnerProfileCard').style.display = 'none'; return showToast("❌ Not found"); }
-  const card = document.getElementById('partnerProfileCard');
-  document.getElementById('partnerAvatar').src = found.avatar || 'vaultify.png';
-  document.getElementById('partnerDisplayName').innerText = found.displayName || found.username;
-  document.getElementById('partnerUsername').innerText = '@' + found.username;
-  document.getElementById('partnerBio').innerText = found.bio || 'No bio available.';
-  card.style.display = 'block';
-  card.dataset.targetUser = found.username;
-}
-
-function pairPartner(){
-  const card = document.getElementById('partnerProfileCard');
-  if(!card?.dataset.targetUser) return;
-  sendPartnerRequest(card.dataset.targetUser);
-}
-
-function sendPartnerRequest(targetUsername){
-  if(!loggedInUser) return showToast("Login first");
-  const db = getUserDB();
-  const target = db[targetUsername];
-  if(!target) return showToast("User not found");
-  if(!target.partnerRequests) target.partnerRequests = [];
-  if(target.partnerRequests.some(r => r.from === loggedInUser.username)) return showToast("⏳ Request already sent");
-  target.partnerRequests.push({ from: loggedInUser.username, fromName: loggedInUser.displayName || loggedInUser.username, status: 'pending' });
-  db[targetUsername] = target;
-  saveUserDB(db);
-  showToast(`✅ Sent to ${target.displayName || target.username}`);
-}
-
-function acceptPartnerRequest(fromUsername){
-  if(!loggedInUser) return;
-  const db = getUserDB();
-  const me = db[loggedInUser.username];
-  const from = db[fromUsername];
-  if(!me || !from) return;
-  me.partnerUsername = fromUsername;
-  me.partnerDisplayName = from.displayName || from.username;
-  from.partnerUsername = loggedInUser.username;
-  from.partnerDisplayName = me.displayName || me.username;
-  me.partnerRequests = (me.partnerRequests || []).filter(r => r.from !== fromUsername);
-  db[loggedInUser.username] = me; db[fromUsername] = from; saveUserDB(db);
-  loggedInUser = me; localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-  showToast(`💕 Connected with ${from.displayName || from.username}`);
-  renderPartnerRequests();
-  document.getElementById('activePartnerChat').style.display = 'block';
-}
-
-function declinePartnerRequest(fromUsername){
-  if(!loggedInUser) return;
-  const db = getUserDB();
-  const me = db[loggedInUser.username];
-  if(!me) return;
-  me.partnerRequests = (me.partnerRequests || []).filter(r => r.from !== fromUsername);
-  db[loggedInUser.username] = me; saveUserDB(db);
-  loggedInUser = me; localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-  renderPartnerRequests();
-}
-
-function renderPartnerRequests(){
-  const c = document.getElementById('partnerRequestsBox');
-  if(!c || !loggedInUser) return;
-  const me = getUserDB()[loggedInUser.username];
-  if(!me || !me.partnerRequests?.length){ c.innerHTML = '<p style="font-size:11px;color:var(--text-sub);text-align:center;padding:8px 0">No pending requests.</p>'; return; }
-  c.innerHTML = me.partnerRequests.map(r => `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px;background:rgba(236,72,153,.08);border-radius:10px;margin-bottom:6px">
-    <div style="font-size:12px;font-weight:700">${escapeHtml(r.fromName)}</div>
-    <div>
-      <button onclick="acceptPartnerRequest('${r.from}')" style="background:#10b981;border:none;color:#fff;padding:4px 8px;border-radius:6px;cursor:pointer"><i class="fa-solid fa-check"></i></button>
-      <button onclick="declinePartnerRequest('${r.from}')" style="background:#ef4444;border:none;color:#fff;padding:4px 8px;border-radius:6px;cursor:pointer"><i class="fa-solid fa-xmark"></i></button>
-    </div>
-  </div>`).join('');
-}
-
-function sendDuoChatMessage(){
-  const i = document.getElementById('duoChatInput'); const m = i.value.trim();
-  if(!m) return;
-  const l = document.getElementById('duoChatLog');
-  l.innerHTML += `<div class="duo-chat-bubble me">${escapeHtml(m)}</div>`;
-  i.value = ''; l.scrollTop = l.scrollHeight;
-  if(duoChannel) duoChannel.postMessage({ type: 'DUO_CHAT', text: m, user: loggedInUser?.displayName || 'Partner' });
-}
-
-function handleDuoBroadcastMessage(e){
-  const d = e.data; if(!d) return;
-  if(d.type === 'DUO_CHAT'){
-    const l = document.getElementById('duoChatLog');
-    if(l){ l.innerHTML += `<div class="duo-chat-bubble partner"><strong>${escapeHtml(d.user)}:</strong> ${escapeHtml(d.text)}</div>`; l.scrollTop = l.scrollHeight; }
-  } else if(d.type === 'SYNC_PLAY' && d.track){
-    currentPlaylist.splice(currentTrackIndex + 1, 0, d.track);
-    renderHomeQueue();
-    playTrack(currentTrackIndex + 1, false);
-  } else if(d.type === 'SYNC_TOGGLE'){ togglePlaybackState(false); }
-}
-
 /* ═══════════════ RUNNER & UI THEMES ═══════════════ */
 function initEmojiRunner(){
   const i = document.getElementById('notchRunnerIcon'); if(!i) return;
-  i.classList.remove('mode-flow', 'mode-mix');
-  if(emojiMode === 'mix'){ i.classList.add('mode-mix'); animateMixEmoji(); }
-  else { i.classList.add('mode-flow'); if(mixRafId){ cancelAnimationFrame(mixRafId); mixRafId = null; } i.style.left = ''; }
   i.innerText = activeEmoji;
-}
-
-function animateMixEmoji(){
-  if(mixRafId) cancelAnimationFrame(mixRafId);
-  const i = document.getElementById('notchRunnerIcon'); const n = document.querySelector('.notch-island');
-  if(!i || !n) return;
-  let p = 0, d = 1;
-  const step = () => {
-    if(emojiMode !== 'mix'){ mixRafId = null; return; }
-    const mx = n.clientWidth - 32; p += d * 0.8;
-    if(p >= mx){ p = mx; d = -1; cycleEmoji(); } else if(p <= 0){ p = 0; d = 1; cycleEmoji(); }
-    i.style.left = (8 + p) + 'px';
-    mixRafId = requestAnimationFrame(step);
-  };
-  mixRafId = requestAnimationFrame(step);
-}
-
-function cycleEmoji(){
-  const l = emojiList.length > 0 ? emojiList : ['🐱'];
-  currentEmojiIndex = (currentEmojiIndex + 1) % l.length;
-  const i = document.getElementById('notchRunnerIcon'); if(!i) return;
-  i.innerText = l[currentEmojiIndex];
 }
 
 function initEmojiPicker(){
@@ -1515,18 +1157,7 @@ function initEmojiPicker(){
   });
 }
 
-function addCustomEmoji(){
-  const i = document.getElementById('customEmojiInput'); const v = i.value.trim();
-  if(!v || emojiList.includes(v)) return;
-  emojiList.push(v);
-  localStorage.setItem('vaultify_emoji_list', JSON.stringify(emojiList));
-  i.value = ''; initEmojiPicker(); showToast(`Added: ${v}`);
-}
-
 function setEmojiMode(mode){ emojiMode = mode; localStorage.setItem('vaultify_emoji_mode', mode); initEmojiRunner(); }
-function toggleAmbientMotion(){ const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; }
-function toggleRunnerVisibility(){ const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; }
-
 function applyThemeScheme(c){
   document.body.className = '';
   if(c !== 'theme-violet') document.body.classList.add(c);
@@ -1534,33 +1165,8 @@ function applyThemeScheme(c){
   showToast(`Theme changed!`);
 }
 
-function resetEqSliders(){ ['eq60','eq230','eq910','eq4k','eq14k'].forEach(id => { const el = document.getElementById(id); if(el) el.value = 0; }); showToast("EQ Reset"); }
-function changeAppLanguage(lang){ appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? "हिंदी चुनी गई" : "English Selected"); }
-(function restoreTheme(){ const saved = localStorage.getItem('vaultify_theme'); if(saved && saved !== 'theme-violet') document.body.classList.add(saved); })();
-
-// Broadcast functions
-function isOwner(){ return loggedInUser && loggedInUser.email && loggedInUser.email.toLowerCase() === CREATOR_ROOT_EMAIL.toLowerCase(); }
-function checkIncomingBroadcasts(){ renderWhatsNewBadge(); }
-function getBroadcastHistory(){ return JSON.parse(localStorage.getItem('vaultify_broadcasts') || '[]'); }
-function renderWhatsNewBadge(){
-  const history = getBroadcastHistory();
-  const lastSeen = localStorage.getItem('vaultify_whatsnew_seen');
-  const badge = document.getElementById('whatsNewBadge');
-  if(!badge) return;
-  const unread = history.filter(b => !lastSeen || b.id !== lastSeen).length;
-  if(unread > 0){ badge.innerText = unread; badge.style.display = 'flex'; }
-  else { badge.style.display = 'none'; }
-}
-function openWhatsNewModal(){ openModal('modalWhatsNew'); }
-function getStoredNotifications(){ return JSON.parse(localStorage.getItem('vaultify_notifications_list') || '[]'); }
-function pushNotification(n){
-  const l = getStoredNotifications();
-  l.unshift({ ...n, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), unread: true });
-  localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
-  renderNotificationCenter();
-}
 function renderNotificationCenter(){
-  const list = getStoredNotifications();
+  const list = JSON.parse(localStorage.getItem('vaultify_notifications_list') || '[]');
   const c = document.getElementById('notificationListContainer');
   if(!c) return;
   if(list.length === 0){ c.innerHTML = `<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:24px 0">No notifications.</p>`; return; }
@@ -1569,27 +1175,30 @@ function renderNotificationCenter(){
     <div style="font-size:11.5px;color:var(--text-sub);line-height:1.4">${escapeHtml(n.message)}</div>
   </div>`).join('');
 }
+
 function openNotificationModal(){ openModal('modalNotifications'); }
 function clearAllNotifications(){ localStorage.removeItem('vaultify_notifications_list'); renderNotificationCenter(); showToast("Cleared!"); }
-function checkBroadcastNotifications(){ setInterval(checkIncomingBroadcasts, 5000); checkIncomingBroadcasts(); }
 function syncLocalCatalog(){ const c = JSON.parse(localStorage.getItem('vaultify_custom_tracks') || '[]'); currentPlaylist = [...c]; }
+
+function handleDuoBroadcastMessage(e){
+  const d = e.data; if(!d) return;
+  if(d.type === 'SYNC_PLAY' && d.track){
+    currentPlaylist.splice(currentTrackIndex + 1, 0, d.track);
+    renderHomeQueue();
+    playTrack(currentTrackIndex + 1, false);
+  } else if(d.type === 'SYNC_TOGGLE'){ togglePlaybackState(false); }
+}
 
 // Global Window Exports
 Object.assign(window, {
   switchNavTab, switchLibraryTab, openModal, closeModal, openFullPlayer, closeFullPlayer,
-  openPartnerModal, openSupportModal, openNotificationModal, clearAllNotifications, executeLiveSearch,
-  clearSearchHistory, requestMicAndListen, playSearchedTrackImmediately, playSingleTrackObject,
+  openNotificationModal, clearAllNotifications, executeLiveSearch,
+  clearSearchHistory, playSearchedTrackImmediately, playSingleTrackObject,
   playCached, removeCache, openPlaylist, deletePlaylist, playTrack, togglePlaybackState,
   playNext, playPrevious, toggleShuffle, toggleRepeat, toggleSleepTimer, shareCurrentTrack,
   downloadCurrentTrack, toggleLikeCurrent, unlikeSong, toggleVideoCanvasView,
-  openAddToPlaylistModal, addToPlaylist, createPlaylistAndAdd, resetEqSliders,
-  toggleAmbientMotion, toggleRunnerVisibility, addCustomEmoji, setEmojiMode,
-  applyThemeScheme, changeAppLanguage, handleDpUpload, saveProfileData, performAppLogout,
-  toggleAuthMode, processAuthSubmission, openForgotPasswordFlow, executePasswordReset,
-  searchPartnerProfile, pairPartner, sendDuoChatMessage, showToast, sendSupportMail, triggerDpPicker,
-  acceptPartnerRequest, declinePartnerRequest, sendPartnerRequest, syncUserPartnerCode,
-  renderPartnerRequests, generatePartnerCode, copyPartnerCode,
-  onNativePlay, onNativePause, onNativeNext, onNativePrev,
-  openWhatsNewModal, checkIncomingBroadcasts, getBroadcastHistory,
-  renderWhatsNewBadge
+  openAddToPlaylistModal, addToPlaylist, createPlaylistAndAdd,
+  setEmojiMode, applyThemeScheme, handleDpUpload, triggerDpPicker, saveProfileData, performAppLogout,
+  toggleAuthMode, processAuthSubmission, showToast,
+  onNativePlay, onNativePause, onNativeNext, onNativePrev
 });
