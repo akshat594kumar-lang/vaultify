@@ -13,12 +13,15 @@ import androidx.appcompat.app.AppCompatActivity;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
+    private static MainActivity instance;
+    private static MusicService musicService;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        instance = this;
 
         Intent serviceIntent = new Intent(this, MusicService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -62,7 +65,26 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        webView.addJavascriptInterface(new Object() {
+            @android.webkit.JavascriptInterface
+            public void updateNotification(String title, String artist, String cover, boolean playing) {
+                if (musicService != null) {
+                    musicService.updateTrackInfo(title, artist, cover, playing);
+                }
+            }
+        }, "AndroidNativeBridge");
+
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    public static void callJs(String js) {
+        if (instance != null && instance.webView != null) {
+            instance.webView.post(() -> instance.webView.evaluateJavascript(js, null));
+        }
+    }
+
+    public static void setMusicService(MusicService service) {
+        musicService = service;
     }
 
     @Override
