@@ -9,6 +9,7 @@ import android.webkit.WebViewClient;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.chaquo.python.Python;
+import com.chaquo.python.android.AndroidPlatform;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -19,7 +20,12 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Background thread me Flask server call karo
+        // 1. Python runtime ko Main Thread par initialize karo taaki crash na ho
+        if (!Python.isStarted()) {
+            Python.start(new AndroidPlatform(this));
+        }
+
+        // 2. Flask server ko background thread me start karo
         new Thread(() -> {
             try {
                 Python py = Python.getInstance();
@@ -29,7 +35,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }).start();
 
-        // Dynamic WebView
+        // 3. Dynamic WebView setup
         webView = new WebView(this);
         webView.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
