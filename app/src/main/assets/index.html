@@ -67,7 +67,14 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="logo-font">Vaultify</div>
       </div>
       <div class="top-icons">
-        <div class="notif-bell-wrap" onclick="openNotificationModal()"><i class="fa-solid fa-bell"></i><span class="notif-badge-pill" id="notifBadgeCount" style="display:none">0</span></div>
+        <div class="notif-bell-wrap" onclick="openNotificationModal()">
+          <i class="fa-solid fa-bell"></i>
+          <span class="notif-badge-pill" id="notifBadgeCount" style="display:none">0</span>
+        </div>
+        <span onclick="openWhatsNewModal()" style="position:relative;cursor:pointer">
+          <i class="fa-solid fa-star" style="color:#fbbf24"></i>
+          <span id="whatsNewBadge" class="notif-badge-pill" style="display:none;background:#fbbf24;color:#000">0</span>
+        </span>
         <i class="fa-solid fa-list-check" onclick="openModal('modalQueueDrawer')" style="color:var(--accent-neon)"></i>
         <i class="fa-solid fa-sliders" onclick="openModal('modalEqualizer')"></i>
         <i class="fa-solid fa-heart" onclick="openPartnerModal()" style="color:var(--partner-pink)"></i>
@@ -199,6 +206,17 @@ document.addEventListener('DOMContentLoaded', function() {
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:linear-gradient(135deg,#d4af37,#a855f7);color:#0a0614;grid-column:span 3;font-weight:800" onclick="applyThemeScheme('theme-royal-gold')">👑 Royal Gold</button>
             </div>
           </div>
+        </div>
+
+        <div class="card-popup" id="broadcastBox" style="display:none;margin-bottom:12px;border:1px solid #10b981">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <i class="fa-solid fa-bullhorn" style="color:#10b981;font-size:18px"></i>
+            <div style="font-size:13px;font-weight:700;color:#10b981">Broadcast (Owner Only)</div>
+          </div>
+          <p style="font-size:11px;color:var(--text-sub);margin-bottom:10px">Saare users ko notification bhejo.</p>
+          <button class="submit-btn" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700" onclick="openModal('modalBroadcast')">
+            <i class="fa-solid fa-paper-plane"></i> Open Broadcast
+          </button>
         </div>
 
         <button class="submit-btn" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444;margin-bottom:20px" onclick="performAppLogout()"><i class="fa-solid fa-arrow-right-from-bracket"></i> Log Out</button>
@@ -353,6 +371,31 @@ document.addEventListener('DOMContentLoaded', function() {
           <button class="submit-btn" style="width:auto;padding:0 16px;background:var(--partner-pink);color:#fff" onclick="sendDuoChatMessage()"><i class="fa-solid fa-paper-plane"></i></button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modalBroadcast">
+    <div class="card-popup">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-size:16px;color:#10b981;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-bullhorn"></i> Broadcast to All Users</h3>
+        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalBroadcast')"></i>
+      </div>
+      <p style="font-size:11.5px;color:var(--text-sub);margin-bottom:12px;line-height:1.5">Ye message app ke <b style="color:#10b981">saare users</b> ko notification me jayega. Sirf owner send kar sakta hai.</p>
+      <input class="form-input" id="bcTitle" placeholder="Notification Title" autocomplete="off" maxlength="60" />
+      <textarea class="form-input" id="bcMessage" placeholder="Kya message bhejna hai? (max 300)" style="min-height:100px" maxlength="300"></textarea>
+      <button class="submit-btn" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700" onclick="sendBroadcastFromForm()">
+        <i class="fa-solid fa-paper-plane"></i> Send to All Users
+      </button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modalWhatsNew">
+    <div class="card-popup">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-size:16px;color:var(--accent-neon);display:flex;align-items:center;gap:8px"><i class="fa-solid fa-star"></i> What's New</h3>
+        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalWhatsNew')"></i>
+      </div>
+      <div id="whatsNewList" style="max-height:400px;overflow-y:auto"></div>
     </div>
   </div>
 
