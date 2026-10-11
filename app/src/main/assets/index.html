@@ -77,10 +77,6 @@ document.addEventListener('DOMContentLoaded', function() {
           <i class="fa-solid fa-bell"></i>
           <span class="notif-badge-pill" id="notifBadgeCount" style="display:none">0</span>
         </div>
-        <span onclick="openWhatsNewModal()" style="position:relative;cursor:pointer">
-          <i class="fa-solid fa-star" style="color:#fbbf24"></i>
-          <span id="whatsNewBadge" class="notif-badge-pill" style="display:none;background:#fbbf24;color:#000">0</span>
-        </span>
         <i class="fa-solid fa-list-check" onclick="openModal('modalQueueDrawer')" style="color:var(--accent-neon)"></i>
         <i class="fa-solid fa-sliders" onclick="openModal('modalEqualizer')"></i>
         <i class="fa-solid fa-heart" onclick="openPartnerModal()" style="color:var(--partner-pink)"></i>
@@ -133,7 +129,6 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="libraryContent"></div>
       </div>
 
-      <!-- CERTIFICATE - OWNER FIXED -->
       <div class="view-screen" id="tabCert">
         <div style="background:radial-gradient(circle at 10% 10%,rgba(168,85,247,.22),transparent 75%),linear-gradient(135deg,rgba(20,6,32,.98),rgba(9,2,16,.98));border:1px solid rgba(192,132,252,.4);border-radius:18px;padding:18px">
           <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed rgba(168,85,247,.35);padding-bottom:10px;margin-bottom:12px">
@@ -385,16 +380,6 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
   </div>
 
-  <div class="modal-overlay" id="modalWhatsNew">
-    <div class="card-popup">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="font-size:16px;color:var(--accent-neon);display:flex;align-items:center;gap:8px"><i class="fa-solid fa-star"></i> What's New</h3>
-        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalWhatsNew')"></i>
-      </div>
-      <div id="whatsNewList" style="max-height:400px;overflow-y:auto"></div>
-    </div>
-  </div>
-
   <div class="modal-overlay" id="modalSupport">
     <div class="card-popup">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-headset" style="color:var(--accent-neon)"></i> Help & Support</h3><i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalSupport')"></i></div>
@@ -440,4 +425,4 @@ document.addEventListener('DOMContentLoaded', function() {
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="./script.js"></script>
 </body>
-  </html>     
+  </html>
