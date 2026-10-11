@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Final Script (APK-Optimized, No yt-dlp)                  */
+/* VAULTIFY — Final Script (Saavn + Piped + Invidious only)            */
 /* ═══════════════════════════════════════════════════════════════════ */
 
 const CREATOR_ROOT_EMAIL="akshat594kumar@gmail.com";
@@ -192,7 +192,7 @@ async function saavnSongById(id){
 function saavnExtractDirect(s){if(!s)return null;const urls=s.downloadUrl||s.downloadUrls||[];if(!urls.length)return null;const sorted=urls.slice().sort((a,b)=>(parseInt(b.quality)||0)-(parseInt(a.quality)||0));return sorted[0]?.url||sorted[0]?.link||null}
 function decodeHtmlEntities(str){if(!str)return'';const ta=document.createElement('textarea');ta.innerHTML=str;return ta.value}
 
-/* ═══════════════ PARALLEL SEARCH ENGINE ═══════════════ */
+/* ═══════════════ PARALLEL SEARCH ═══════════════ */
 async function searchSaavn(q){
   try{
     const results=await saavnSearch(q,20);
@@ -205,8 +205,7 @@ async function searchSaavn(q){
 }
 
 async function searchPiped(q){
-  const hosts=PRIMARY_API_GATEWAYS;
-  const promises=hosts.map(async h=>{
+  const promises=PRIMARY_API_GATEWAYS.map(async h=>{
     try{
       const ctrl=new AbortController();
       const tm=setTimeout(()=>ctrl.abort(),4500);
@@ -226,8 +225,7 @@ async function searchPiped(q){
 }
 
 async function searchInvidious(q){
-  const hosts=INVIDIOUS_GATEWAYS;
-  const promises=hosts.map(async h=>{
+  const promises=INVIDIOUS_GATEWAYS.map(async h=>{
     try{
       const ctrl=new AbortController();
       const tm=setTimeout(()=>ctrl.abort(),4500);
@@ -271,11 +269,8 @@ async function executeLiveSearch(isAuto=false){
   ]);
   
   const allResults=[];
-  const engines=['saavn','piped','invidious'];
-  results.forEach((r,idx)=>{
-    if(r.status==='fulfilled'&&r.value&&r.value.length>0){
-      allResults.push(...r.value);
-    }
+  results.forEach(r=>{
+    if(r.status==='fulfilled'&&r.value&&r.value.length>0)allResults.push(...r.value);
   });
   
   const seen=new Set();
@@ -338,17 +333,11 @@ function renderSearchHistoryTags(){
   tb.innerHTML=searchHistoryList.map(tag=>`<span style="font-size:11px;background:rgba(255,255,255,.06);padding:5px 10px;border-radius:10px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mobileSearchField').value='${escapeHtml(tag).replace(/'/g,"\\'")}';executeLiveSearch();">${escapeHtml(tag)}</span>`).join('');
 }
 function clearSearchHistory(){searchHistoryList=[];localStorage.removeItem('vaultify_search_history');renderSearchHistoryTags();renderRecommendedSection()}
-function extractYouTubeId(url){try{const u=new URL(url);if(u.hostname.includes('youtu.be'))return u.pathname.slice(1);return u.searchParams.get('v')||null}catch(e){return null}}
 
 async function fetchDirectAudioStreamUrl(input){
   if(!input)return null;
   if(input.startsWith('saavn_')){const id=input.replace('saavn_','');const s=await saavnSongById(id);return saavnExtractDirect(s)}
   if(input.startsWith('blob:')||input.startsWith('data:'))return input;
-  if(input.startsWith('http://')||input.startsWith('https://')){
-    if(/\.(mp3|m4a|webm|ogg|opus|aac|wav)(\?|$)/i.test(input))return input;
-    if(/youtube\.com|youtu\.be|music\.youtube\.com/i.test(input)){const ytId=extractYouTubeId(input);if(ytId){const piped=await fetchFromPiped(ytId);if(piped)return piped;const inv=await fetchFromInvidious(ytId);if(inv)return inv}return null}
-    return input;
-  }
   if(/^[a-zA-Z0-9_-]{11}$/.test(input)){
     const piped=await fetchFromPiped(input);if(piped)return piped;
     const inv=await fetchFromInvidious(input);if(inv)return inv;
@@ -508,7 +497,7 @@ function shareCurrentTrack(){
 
 async function cacheTrackInBackground(track){
   if(!track)return;
-  if(track.id.startsWith('http')||track.id.startsWith('blob:')||track.id.startsWith('saavn_'))return;
+  if(track.id.startsWith('saavn_')||track.id.startsWith('blob:'))return;
   if(trackBlobCache.has(track.id))return;
   const existing=await cacheGet(track.id);
   if(existing?.url){trackBlobCache.set(track.id,existing.url);return}
@@ -764,7 +753,7 @@ function createPlaylistAndAdd(){
   if(currentLibraryTab==='playlists')renderLibrary();
 }
 
-/* ═══════════════ BROADCAST (Owner Only) ═══════════════ */
+/* ═══════════════ BROADCAST ═══════════════ */
 function isOwner(){return loggedInUser&&loggedInUser.email&&loggedInUser.email.toLowerCase()===CREATOR_ROOT_EMAIL.toLowerCase()}
 
 async function broadcastNotification(title,message){
