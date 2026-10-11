@@ -36,6 +36,7 @@ public class MusicService extends Service {
     public void onCreate() {
         super.onCreate();
         createChannel();
+        MainActivity.setMusicService(this);
 
         controlReceiver = new BroadcastReceiver() {
             @Override
