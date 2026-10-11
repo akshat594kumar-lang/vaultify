@@ -1,20 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Final Script (Parallel Search + Broadcast + Partner)     */
+/* VAULTIFY — Final Script (APK-Optimized, No yt-dlp)                  */
 /* ═══════════════════════════════════════════════════════════════════ */
 
 const CREATOR_ROOT_EMAIL="akshat594kumar@gmail.com";
 let audioContextNode=null,wakeLockSentinel=null,silentLoopStarted=false;
-const PYTHON_API='http://127.0.0.1:5000';
-let pythonServerOnline=false;
-
-async function checkPythonServer(){
-  try{const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),2000);
-  const r=await fetch(`${PYTHON_API}/health`,{signal:ctrl.signal});clearTimeout(tm);
-  if(r.ok){pythonServerOnline=true;return true}}catch(e){}
-  pythonServerOnline=false;return false;
-}
-checkPythonServer();
-setInterval(checkPythonServer,20000);
 
 const PRIMARY_API_GATEWAYS=['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.leptons.xyz','https://piped-api.lunar.icu','https://pipedapi.drgnz.club','https://api.piped.privacydev.net','https://pipedapi.nosebs.ru','https://pipedapi.reallyaweso.me'];
 const INVIDIOUS_GATEWAYS=['https://inv.nadeko.net','https://yewtu.be','https://invidious.nerdvpn.de','https://vid.puffyan.us','https://invidious.privacyredirect.com','https://invidious.reallyaweso.me','https://inv.tux.pizza','https://invidious.flokinet.to'];
@@ -51,7 +40,7 @@ const mainAudio=document.getElementById('vaultifyAudio');
 const silentLoop=document.getElementById('silentAudioLoop');
 
 window.addEventListener('DOMContentLoaded',async()=>{
-  await initCacheDB();checkPythonServer();
+  await initCacheDB();
   setTimeout(()=>{const i=document.getElementById('appIntroScreen');if(i)i.classList.add('fade-out')},1200);
   initAudioWakeLoop();syncLocalCatalog();verifyAuthGate();renderHomeRecentVault();renderHomeQueue();renderLibrary();renderSearchHistoryTags();
   setupAndroidMediaSession();setupTimelineDraggableEngine();updateDynamicUserCounter();renderNotificationCenter();
@@ -204,7 +193,6 @@ function saavnExtractDirect(s){if(!s)return null;const urls=s.downloadUrl||s.dow
 function decodeHtmlEntities(str){if(!str)return'';const ta=document.createElement('textarea');ta.innerHTML=str;return ta.value}
 
 /* ═══════════════ PARALLEL SEARCH ENGINE ═══════════════ */
-
 async function searchSaavn(q){
   try{
     const results=await saavnSearch(q,20);
@@ -258,20 +246,6 @@ async function searchInvidious(q){
   return[];
 }
 
-async function searchPython(q){
-  if(!(await checkPythonServer()))return[];
-  try{
-    const ctrl=new AbortController();
-    const tm=setTimeout(()=>ctrl.abort(),15000);
-    const r=await fetch(`${PYTHON_API}/api/search?q=${encodeURIComponent(q)}&limit=20`,{signal:ctrl.signal});
-    clearTimeout(tm);
-    if(!r.ok)return[];
-    const d=await r.json();
-    if(!d.items?.length)return[];
-    return d.items.map(i=>({id:i.id||i.url,title:i.title,artist:i.artist||'Unknown',cover:i.cover||'',duration:i.duration||0,source:'yt-dlp'}));
-  }catch(e){return[]}
-}
-
 async function executeLiveSearch(isAuto=false){
   const q=document.getElementById('mobileSearchField').value.trim();
   if(!q)return;
@@ -286,22 +260,6 @@ async function executeLiveSearch(isAuto=false){
   const l=document.getElementById('searchLoadingIndicator');
   const rc=document.getElementById('searchResultsContainer');
   
-  if(/^https?:\/\//i.test(q)){
-    l.style.display='block';
-    l.innerHTML='<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Extracting URL...</div>';
-    const meta=await fetchFromPython(q);
-    l.style.display='none';
-    if(meta&&meta.url){
-      const t={id:q,title:meta.title||'Unknown',artist:meta.artist||'Unknown',cover:meta.cover||'vaultify.png',_directStream:meta.url,_source:meta.source||'yt-dlp'};
-      const existingIdx=currentPlaylist.findIndex(x=>x.id===t.id);
-      if(existingIdx>=0)currentTrackIndex=existingIdx;
-      else{currentPlaylist.splice(currentTrackIndex+1,0,t);currentTrackIndex++}
-      renderHomeQueue();playTrack(currentTrackIndex);
-      showToast(`▶ ${(t.title||'').slice(0,30)}`);
-    }else showToast('❌ URL extract fail');
-    return;
-  }
-  
   l.style.display='block';
   l.innerHTML='<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching Saavn + YouTube...</div>';
   
@@ -309,18 +267,14 @@ async function executeLiveSearch(isAuto=false){
   const results=await Promise.allSettled([
     searchSaavn(q),
     searchPiped(q),
-    searchInvidious(q),
-    searchPython(q)
+    searchInvidious(q)
   ]);
   
   const allResults=[];
-  const engines=['saavn','piped','invidious','yt-dlp'];
+  const engines=['saavn','piped','invidious'];
   results.forEach((r,idx)=>{
     if(r.status==='fulfilled'&&r.value&&r.value.length>0){
-      console.log(`✅ ${engines[idx]}: ${r.value.length} results`);
       allResults.push(...r.value);
-    }else{
-      console.log(`❌ ${engines[idx]}: failed`);
     }
   });
   
@@ -358,8 +312,8 @@ function renderSearchResults(tracks){
   const c=document.getElementById('searchResultsContainer');
   c.innerHTML=tracks.map(t=>{
     const src=t.source||'youtube';
-    const srcIcon={youtube:'fa-brands fa-youtube',saavn:'fa-solid fa-music','yt-dlp':'fa-solid fa-microchip',soundcloud:'fa-brands fa-soundcloud'}[src]||'fa-solid fa-music';
-    const srcColor={youtube:'#ef4444',saavn:'#10b981','yt-dlp':'#a855f7'}[src]||'var(--accent-neon)';
+    const srcIcon={youtube:'fa-brands fa-youtube',saavn:'fa-solid fa-music',soundcloud:'fa-brands fa-soundcloud'}[src]||'fa-solid fa-music';
+    const srcColor={youtube:'#ef4444',saavn:'#10b981'}[src]||'var(--accent-neon)';
     const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');
     const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'vaultify.png');
     const safeDirect=t._directStream?encodeURIComponent(t._directStream):'';
@@ -392,13 +346,10 @@ async function fetchDirectAudioStreamUrl(input){
   if(input.startsWith('blob:')||input.startsWith('data:'))return input;
   if(input.startsWith('http://')||input.startsWith('https://')){
     if(/\.(mp3|m4a|webm|ogg|opus|aac|wav)(\?|$)/i.test(input))return input;
-    if(await checkPythonServer()){const p=await fetchFromPython(input);if(p&&p.url)return p.url}
-    if(/soundcloud\.com|bandcamp\.com|archive\.org|vimeo\.com|dailymotion\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com/i.test(input))return null;
     if(/youtube\.com|youtu\.be|music\.youtube\.com/i.test(input)){const ytId=extractYouTubeId(input);if(ytId){const piped=await fetchFromPiped(ytId);if(piped)return piped;const inv=await fetchFromInvidious(ytId);if(inv)return inv}return null}
     return input;
   }
   if(/^[a-zA-Z0-9_-]{11}$/.test(input)){
-    if(await checkPythonServer()){const p=await fetchFromPython(`https://www.youtube.com/watch?v=${input}`);if(p&&p.url)return p.url}
     const piped=await fetchFromPiped(input);if(piped)return piped;
     const inv=await fetchFromInvidious(input);if(inv)return inv;
   }
@@ -426,14 +377,6 @@ async function fetchFromInvidious(vid){
       if(af[0]?.url)return af[0].url;
     }catch(e){}
   }
-  return null;
-}
-async function fetchFromPython(url){
-  try{
-    const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),25000);
-    const r=await fetch(`${PYTHON_API}/api/universal?url=${encodeURIComponent(url)}`,{signal:ctrl.signal});
-    clearTimeout(tm);if(r.ok)return await r.json();
-  }catch(e){}
   return null;
 }
 
@@ -622,7 +565,7 @@ function initLiveSearchInputListener(){
   f.addEventListener('input',()=>{
     clearTimeout(liveSearchDebounceTimer);
     const q=f.value.trim();
-    if(q.length>=3&&!/^https?:\/\//i.test(q)){
+    if(q.length>=3){
       liveSearchDebounceTimer=setTimeout(()=>{
         if(f.value.trim()===q)executeLiveSearch(true);
       },3000);
@@ -670,10 +613,8 @@ async function renderRecommendedSection(){
   if(playbackHistoryList.length===0&&searchHistoryList.length===0){c.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Play some songs — recommendations will appear here.</p>`;return}
   const q=buildRecommendationQuery();const seen=new Set(playbackHistoryList.map(t=>t.id));
   let found=[];
-  if(await checkPythonServer()){
-    try{const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),20000);const r=await fetch(`${PYTHON_API}/api/search?q=${encodeURIComponent(q)}&limit=8`,{signal:ctrl.signal});clearTimeout(tm);if(r.ok){const d=await r.json();if(d.items?.length)found=d.items.filter(t=>!seen.has(t.id)).slice(0,5).map(i=>({id:i.id,title:i.title,artist:i.artist,cover:i.cover,source:'yt-dlp'}))}}catch(e){}
-  }
-  if(!found.length){const saavnResults=await saavnSearch(q,10);if(saavnResults?.length){found=saavnResults.map(s=>{const direct=saavnExtractDirect(s);return{id:'saavn_'+s.id,title:decodeHtmlEntities(s.name||''),artist:(s.artists?.primary?.map(a=>a.name).join(', '))||'Unknown',cover:s.image?.[2]?.url||'',source:'saavn',_directStream:direct}}).filter(t=>t._directStream&&!seen.has(t.id)).slice(0,5)}}
+  const saavnResults=await saavnSearch(q,10);
+  if(saavnResults?.length){found=saavnResults.map(s=>{const direct=saavnExtractDirect(s);return{id:'saavn_'+s.id,title:decodeHtmlEntities(s.name||''),artist:(s.artists?.primary?.map(a=>a.name).join(', '))||'Unknown',cover:s.image?.[2]?.url||'',source:'saavn',_directStream:direct}}).filter(t=>t._directStream&&!seen.has(t.id)).slice(0,5)}
   if(found.length===0){c.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`;return}
   c.innerHTML=found.map(t=>{const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'');const safeDirect=t._directStream?encodeURIComponent(t._directStream):'';return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon);font-size:13px"></i></div>`}).join('');
 }
