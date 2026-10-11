@@ -48,16 +48,14 @@ public class MusicService extends Service {
         super.onCreate();
         createChannel();
         MainActivity.setMusicService(this);
-        // Load default cover from mipmap (guaranteed to exist)
+
+        // Load default cover from mipmap
         try {
             defaultCover = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
-            if (defaultCover == null) {
-                defaultCover = BitmapFactory.decodeResource(getResources(), R.drawable.ic_launcher_background);
-            }
         } catch (Exception e) {
-            e.printStackTrace();
+            defaultCover = null;
         }
-        
+
         // Try to load vaultify.png from assets (better quality)
         try {
             InputStream is = getAssets().open("vaultify.png");
@@ -84,7 +82,12 @@ public class MusicService extends Service {
                 }
                 if (jsAction != null) {
                     MainActivity.callJs(jsAction);
-                    mainHandler.postDelayed(() -> updateNotification(), 300);
+                    mainHandler.postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            updateNotification();
+                        }
+                    }, 300);
                 }
             }
         };
@@ -120,42 +123,39 @@ public class MusicService extends Service {
     }
 
     private void loadCoverImage(String url) {
-        if (url == null || url.isEmpty()) {
+        if (url == null || url.isEmpty() || !url.startsWith("http")) {
             updateNotification();
             return;
         }
-        
-        // If it's a local file or vaultify.png, use default
-        if (!url.startsWith("http")) {
-            updateNotification();
-            return;
-        }
-        
-        imageExecutor.execute(() -> {
-            Bitmap bmp = null;
-            try {
-                URL imageUrl = new URL(url);
-                HttpURLConnection conn = (HttpURLConnection) imageUrl.openConnection();
-                conn.setDoInput(true);
-                conn.setConnectTimeout(6000);
-                conn.setReadTimeout(6000);
-                conn.setInstanceFollowRedirects(true);
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36");
-                conn.connect();
-                InputStream input = conn.getInputStream();
-                bmp = BitmapFactory.decodeStream(input);
-                input.close();
-                conn.disconnect();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            final Bitmap finalBmp = bmp;
-            mainHandler.post(() -> {
-                if (finalBmp != null) {
-                    currentCover = finalBmp;
+        imageExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                Bitmap bmp = null;
+                try {
+                    URL imageUrl = new URL(url);
+                    HttpURLConnection conn = (HttpURLConnection) imageUrl.openConnection();
+                    conn.setDoInput(true);
+                    conn.setConnectTimeout(6000);
+                    conn.setReadTimeout(6000);
+                    conn.setInstanceFollowRedirects(true);
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 10)");
+                    conn.connect();
+                    InputStream input = conn.getInputStream();
+                    bmp = BitmapFactory.decodeStream(input);
+                    input.close();
+                    conn.disconnect();
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-                updateNotification();
-            });
+                final Bitmap finalBmp = bmp;
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (finalBmp != null) currentCover = finalBmp;
+                        updateNotification();
+                    }
+                });
+            }
         });
     }
 
@@ -171,7 +171,6 @@ public class MusicService extends Service {
         PendingIntent nextPI = PendingIntent.getBroadcast(this, 3, new Intent(ACTION_NEXT).setPackage(getPackageName()), flagsPI);
         PendingIntent prevPI = PendingIntent.getBroadcast(this, 4, new Intent(ACTION_PREV).setPackage(getPackageName()), flagsPI);
 
-        // Pick the best cover available
         Bitmap displayCover;
         if (currentCover != null) {
             displayCover = currentCover;
