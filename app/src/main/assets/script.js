@@ -1,23 +1,54 @@
-/* VAULTIFY — Full Final Script (No Firebase) */
+/* VAULTIFY — FINAL (Autoplay Always On + Same Language Related) */
 
 const CREATOR_ROOT_EMAIL = "akshat594kumar@gmail.com";
 let audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
+let eqNodes = null, eqSourceNode = null;
 
 const PRIMARY_API_GATEWAYS = [
   'https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de',
   'https://api.piped.yt','https://pipedapi.leptons.xyz',
   'https://piped-api.lunar.icu','https://pipedapi.drgnz.club',
   'https://api.piped.privacydev.net','https://pipedapi.nosebs.ru',
-  'https://pipedapi.reallyaweso.me'
+  'https://pipedapi.reallyaweso.me','https://pipedapi.orangenet.cc',
+  'https://pipedapi.ducks.party','https://pipedapi.smnz.de'
 ];
 const INVIDIOUS_GATEWAYS = [
   'https://inv.nadeko.net','https://yewtu.be','https://invidious.nerdvpn.de',
   'https://vid.puffyan.us','https://invidious.privacyredirect.com',
-  'https://invidious.reallyaweso.me','https://inv.tux.pizza','https://invidious.flokinet.to'
+  'https://invidious.reallyaweso.me','https://inv.tux.pizza','https://invidious.flokinet.to',
+  'https://iv.melmac.space','https://invidious.lunar.icu'
 ];
 const SAAVN_APIS = [
   'https://saavn.dev','https://jiosaavn-api-privatecvc2.vercel.app','https://saavn-api-delta.vercel.app'
 ];
+
+/* ═══════════ LANGUAGE DETECTION ═══════════ */
+const HINDI_CHARS = /[\u0900-\u097F]/;
+const URDU_CHARS = /[\u0600-\u06FF]/;
+const PUNJABI_CHARS = /[\u0A00-\u0A7F]/;
+
+function detectLanguage(text){
+  if(!text) return 'english';
+  if(HINDI_CHARS.test(text)) return 'hindi';
+  if(URDU_CHARS.test(text)) return 'urdu';
+  if(PUNJABI_CHARS.test(text)) return 'punjabi';
+  const lower = text.toLowerCase();
+  const hindiKeywords = ['arijit','atif','shreya','sonu','kishore','lata','asha','rafi','kumar sanu','udit','alka','sunidhi','neha kakkar','honey singh','badshah','yo yo','diljit','guru randhawa','jass manak','karan aujla','ap dhillon','sidhu moose','divine','emiway','raftaar','nucleya','jubin','darshan raval','armaan malik','sonakshi','tony kakkar','atif aslam','rahat fateh','nusrat','coke studio','bollywood','hindi','desi','punjabi'];
+  const englishKeywords = ['taylor swift','ed sheeran','drake','justin bieber','ariana grande','billie eilish','post malone','the weeknd','eminem','rihanna','adele','bruno mars','coldplay','imagine dragons','maroon 5','edm','pop','rock','hip hop','english','western'];
+  let hindiScore = 0, englishScore = 0;
+  hindiKeywords.forEach(k => { if(lower.includes(k)) hindiScore++; });
+  englishKeywords.forEach(k => { if(lower.includes(k)) englishScore++; });
+  if(hindiScore > englishScore) return 'hindi';
+  if(englishScore > hindiScore) return 'english';
+  return 'hindi';
+}
+
+function getLanguageQueries(lang){
+  if(lang === 'hindi') return ['trending hindi songs 2026','best bollywood hits','arijit singh top songs','atif aslam best','punjabi hits 2026','new hindi songs'];
+  if(lang === 'urdu') return ['trending pakistani songs 2026','atif aslam hits','coke studio pakistan','nusrat fateh ali','rahat fateh ali khan'];
+  if(lang === 'punjabi') return ['punjabi hits 2026','diljit dosanjh songs','ap dhillon hits','karan aujla','sidhu moose wala'];
+  return ['top english hits 2026','billboard hot 100','taylor swift songs','ed sheeran hits','pop hits 2026','top 50 global'];
+}
 
 let cacheDB=null;
 function initCacheDB(){return new Promise(r=>{try{const req=indexedDB.open('vaultify_cache',2);req.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('songs'))db.createObjectStore('songs',{keyPath:'id'})};req.onsuccess=e=>{cacheDB=e.target.result;r(cacheDB)};req.onerror=()=>r(null)}catch(e){r(null)}})}
@@ -27,9 +58,47 @@ function cacheDelete(id){return new Promise(r=>{if(!cacheDB)return r(false);try{
 function cacheAll(){return new Promise(r=>{if(!cacheDB)return r([]);try{const rq=cacheDB.transaction('songs','readonly').objectStore('songs').getAll();rq.onsuccess=()=>r(rq.result||[]);rq.onerror=()=>r([])}catch(e){r([])}})}
 
 async function requestHardwareWakeLock(){try{if('wakeLock' in navigator&&(!wakeLockSentinel||wakeLockSentinel.released)){wakeLockSentinel=await navigator.wakeLock.request('screen');wakeLockSentinel.addEventListener('release',()=>{wakeLockSentinel=null})}}catch(e){}}
-function initForegroundAudioBridge(){try{if(!audioContextNode)audioContextNode=new(window.AudioContext||window.webkitAudioContext)();if(audioContextNode.state==='suspended')audioContextNode.resume();if(!audioContextNode._oscStarted){const osc=audioContextNode.createOscillator();const gain=audioContextNode.createGain();osc.frequency.value=30;gain.gain.value=0.0001;osc.connect(gain);gain.connect(audioContextNode.destination);osc.start();audioContextNode._oscStarted=true}}catch(e){}}
+
+function initForegroundAudioBridge(){
+  try{
+    if(!audioContextNode)audioContextNode=new(window.AudioContext||window.webkitAudioContext)();
+    if(audioContextNode.state==='suspended')audioContextNode.resume();
+    if(!audioContextNode._oscStarted){const osc=audioContextNode.createOscillator();const gain=audioContextNode.createGain();osc.frequency.value=30;gain.gain.value=0.0001;osc.connect(gain);gain.connect(audioContextNode.destination);osc.start();audioContextNode._oscStarted=true}
+    if(!eqNodes)initEqChain();
+  }catch(e){}
+}
+function initEqChain(){
+  try{
+    if(!audioContextNode)audioContextNode=new(window.AudioContext||window.webkitAudioContext)();
+    if(eqNodes)return;
+    const freqs=[60,230,910,4000,14000];
+    const filters=freqs.map(f=>{const b=audioContextNode.createBiquadFilter();b.type='peaking';b.frequency.value=f;b.Q.value=1;b.gain.value=0;return b});
+    for(let i=0;i<filters.length-1;i++)filters[i].connect(filters[i+1]);
+    const masterGain=audioContextNode.createGain();masterGain.gain.value=1;
+    filters[filters.length-1].connect(masterGain);masterGain.connect(audioContextNode.destination);
+    eqNodes={filters,masterGain};
+    try{eqSourceNode=audioContextNode.createMediaElementSource(mainAudio);eqSourceNode.connect(filters[0])}catch(e){eqSourceNode=null}
+  }catch(e){}
+}
+function applyEqNow(){
+  try{
+    if(!audioContextNode)initForegroundAudioBridge();
+    if(!eqNodes)initEqChain();
+    if(!eqNodes)return showToast('EQ not ready');
+    const ids=['eq60','eq230','eq910','eq4k','eq14k'];
+    ids.forEach((id,i)=>{const el=document.getElementById(id);if(el&&eqNodes.filters[i])eqNodes.filters[i].gain.value=parseFloat(el.value)||0});
+    saveEqToStorage();
+    showToast('✅ EQ applied');
+    closeModal('modalEqualizer');
+  }catch(e){showToast('EQ fail')}
+}
+function resetEqSliders(){['eq60','eq230','eq910','eq4k','eq14k'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0});if(eqNodes)eqNodes.filters.forEach(f=>f.gain.value=0);saveEqToStorage();showToast("EQ Reset")}
+function loadEqFromStorage(){try{const saved=JSON.parse(localStorage.getItem('vaultify_eq')||'null');if(!saved)return;const ids=['eq60','eq230','eq910','eq4k','eq14k'];ids.forEach((id,i)=>{const el=document.getElementById(id);if(el)el.value=saved[i]||0})}catch(e){}}
+function saveEqToStorage(){try{const ids=['eq60','eq230','eq910','eq4k','eq14k'];const vals=ids.map(id=>{const el=document.getElementById(id);return el?parseFloat(el.value)||0:0});localStorage.setItem('vaultify_eq',JSON.stringify(vals))}catch(e){}}
+(function attachEqListeners(){setTimeout(()=>{['eq60','eq230','eq910','eq4k','eq14k'].forEach((id,i)=>{const el=document.getElementById(id);if(el)el.addEventListener('input',()=>{if(eqNodes&&eqNodes.filters[i])eqNodes.filters[i].gain.value=parseFloat(el.value)||0});if(el)el.addEventListener('change',saveEqToStorage)});loadEqFromStorage()},1500)})();
 
 let activeHostIndex=0,currentPlaylist=[],currentTrackIndex=0,isPlayingAudio=false,isLoginMode=false,loggedInUser=null,isShuffle=false,isRepeat=false,isVideoCanvasActive=false,activeStreamEngine='direct',ytPlayer=null,ytPlayerReady=false;
+let currentLanguage='hindi';
 let appLanguage=localStorage.getItem('vaultify_app_lang')||'en';
 let navigationHistory=['home'];
 let emojiMode=localStorage.getItem('vaultify_emoji_mode')||'flow';
@@ -58,9 +127,9 @@ window.addEventListener('DOMContentLoaded',async()=>{
   renderNotificationCenter();
   initLiveSearchInputListener();initEmojiRunner();initEmojiPicker();
   checkPermissionsStatus();
+  setTimeout(initEqChain,800);
   await renderRecommendedSection();
   setTimeout(()=>setEmojiMode(emojiMode),100);
-  renderWhatsNewBadge();
   window.addEventListener('popstate',()=>{if(!handleSystemBackPress()){navigationHistory.pop();switchNavTab(navigationHistory[navigationHistory.length-1]||'home')}});
 });
 
@@ -93,8 +162,8 @@ setInterval(()=>{if(!isPlayingAudio)return;_lastSaveTick+=1000;if(_lastSaveTick>
 function showDownloadIndicator(text){const i=document.getElementById('downloadIndicator');if(!i)return;const t=document.getElementById('downloadText');if(t)t.innerText=text;i.classList.add('show')}
 function hideDownloadIndicator(){const i=document.getElementById('downloadIndicator');if(i)i.classList.remove('show')}
 
-window.onYouTubeIframeAPIReady=function(){try{ytPlayer=new YT.Player('ytEngineSlot',{height:'10',width:'10',videoId:'',playerVars:{autoplay:0,controls:0,playsinline:1,origin:'*'},events:{onReady:()=>{ytPlayerReady=true},onStateChange:onYTStateChange}})}catch(e){}};
-function onYTStateChange(e){if(e.data===YT.PlayerState.PLAYING)setVisualState(true);else if(e.data===YT.PlayerState.PAUSED)setVisualState(false);else if(e.data===YT.PlayerState.ENDED){if(isRepeat)playTrack(currentTrackIndex);else playNext()}}
+window.onYouTubeIframeAPIReady=function(){try{ytPlayer=new YT.Player('ytEngineSlot',{height:'10',width:'10',videoId:'',playerVars:{autoplay:0,controls:0,playsinline:1},events:{onReady:()=>{ytPlayerReady=true},onStateChange:onYTStateChange}})}catch(e){}};
+function onYTStateChange(e){if(e.data===YT.PlayerState.PLAYING)setVisualState(true);else if(e.data===YT.PlayerState.PAUSED)setVisualState(false);else if(e.data===YT.PlayerState.ENDED){autoplayNext()}}
 
 function setupAndroidMediaSession(){
   if('mediaSession' in navigator){
@@ -106,7 +175,7 @@ function setupAndroidMediaSession(){
       navigator.mediaSession.setActionHandler('seekto',d=>{if(d.seekTime!==undefined)seekAudioTo(d.seekTime)});
     }catch(e){}
   }
-  mainAudio.addEventListener('ended',()=>{if(isRepeat)playTrack(currentTrackIndex);else playNext()});
+  mainAudio.addEventListener('ended',()=>autoplayNext());
   mainAudio.addEventListener('error',()=>{if(currentPlaylist[currentTrackIndex])fallbackToYouTubeBridge(currentPlaylist[currentTrackIndex].id)});
   mainAudio.addEventListener('timeupdate',()=>{
     if(!mainAudio.duration||isDraggingTimeline)return;
@@ -136,15 +205,7 @@ window.onNativePause=function(){
 };
 window.onNativeNext=function(){playNext()};
 window.onNativePrev=function(){playPrevious()};
-
-window.handleNativeMediaAction=function(action){
-  switch(action){
-    case 'PLAY':onNativePlay();break;
-    case 'PAUSE':onNativePause();break;
-    case 'NEXT':onNativeNext();break;
-    case 'PREV':onNativePrev();break;
-  }
-};
+window.handleNativeMediaAction=function(action){switch(action){case 'PLAY':onNativePlay();break;case 'PAUSE':onNativePause();break;case 'NEXT':onNativeNext();break;case 'PREV':onNativePrev();break;}};
 window.handleNativeSeek=function(positionMs){seekAudioTo(positionMs/1000)};
 window.onNativePermissionResult=function(){checkPermissionsStatus()};
 
@@ -165,25 +226,12 @@ function checkPermissionsStatus(){
     if(!hasMic)missing.push('Microphone');
     if(!hasNotif)missing.push('Notifications');
   }catch(e){}
-  if(missing.length>0&&banner&&text){
-    text.innerText=`${missing.join(' & ')} permission needed. Tap to enable.`;
-    banner.classList.add('show');
-  }else if(banner){banner.classList.remove('show')}
+  if(missing.length>0&&banner&&text){text.innerText=`${missing.join(' & ')} permission needed. Tap to enable.`;banner.classList.add('show')}
+  else if(banner){banner.classList.remove('show')}
 }
-
-function handlePermissionBannerClick(){
-  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}
-  else showToast('Open Profile > Permissions to enable');
-}
-function requestPermsFromNative(){
-  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}
-  else showToast('Open app settings');
-  setTimeout(checkPermissionsStatus,800);
-}
-function openAppSettingsNative(){
-  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.openAppSettings){window.AndroidNativeBridge.openAppSettings()}
-  else showToast('Native settings not available');
-}
+function handlePermissionBannerClick(){if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}else showToast('Open Profile > Permissions')}
+function requestPermsFromNative(){if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}else showToast('Open app settings');setTimeout(checkPermissionsStatus,800)}
+function openAppSettingsNative(){if(window.AndroidNativeBridge&&window.AndroidNativeBridge.openAppSettings){window.AndroidNativeBridge.openAppSettings()}else showToast('Native settings not available')}
 
 function updateMediaSessionMetadata(track){
   if(!track)return;
@@ -296,27 +344,22 @@ async function searchInvidious(q){
 }
 
 async function searchAll(q){
-  const results=await Promise.allSettled([searchSaavn(q),searchPiped(q),searchInvidious(q)]);
+  const results=await Promise.allSettled([searchPiped(q),searchInvidious(q),searchSaavn(q)]);
   const all=[];const seen=new Set();
   results.forEach(r=>{if(r.status==='fulfilled'&&r.value)r.value.forEach(t=>{const k=(t.id||t.title||'').toString().toLowerCase().trim();if(k&&!seen.has(k)){seen.add(k);all.push(t)}})});
   return all;
 }
 
 async function fetchTrendingSongs(limit=10){
-  const queries=[
-    'trending hindi songs 2026','top hits india 2026','viral songs 2026',
-    'latest bollywood songs','punjabi hits 2026','arijit singh latest',
-    'atif aslam hits','new pakistani songs 2026','arijit singh sad songs',
-    'trending pakistani songs','coke studio hits','best of 2026 songs'
-  ];
-  const q=queries[Math.floor(Math.random()*queries.length)];
-  const piped=await searchPiped(q);
-  if(piped.length)return piped.slice(0,limit);
-  const inv=await searchInvidious(q);
-  if(inv.length)return inv.slice(0,limit);
-  const saavn=await searchSaavn(q);
-  if(saavn.length)return saavn.slice(0,limit);
-  return[];
+  const queries=getLanguageQueries(currentLanguage);
+  const shuffled=queries.sort(()=>Math.random()-0.5);
+  for(const q of shuffled){
+    const piped=await searchPiped(q);
+    if(piped.length)return piped.slice(0,limit);
+    const inv=await searchInvidious(q);
+    if(inv.length)return inv.slice(0,limit);
+  }
+  return await searchSaavn('trending '+currentLanguage);
 }
 
 function extractYouTubeId(url){
@@ -337,32 +380,21 @@ async function executeLiveSearch(isAuto=false){
     localStorage.setItem('vaultify_search_history',JSON.stringify(searchHistoryList));
     renderSearchHistoryTags();
   }
+  currentLanguage = detectLanguage(q);
   const l=document.getElementById('searchLoadingIndicator');
   const rc=document.getElementById('searchResultsContainer');
   l.style.display='block';
   l.innerHTML='<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
-  
   const ytId=extractYouTubeId(q);
   if(ytId){
     const meta=await getYouTubeVideoMeta(ytId);
-    if(meta){
-      l.style.display='none';
-      playSearchedTrackImmediately(encodeURIComponent(meta.id),encodeURIComponent(meta.title),encodeURIComponent(meta.artist),encodeURIComponent(meta.cover),'');
-      return;
-    }
+    if(meta){l.style.display='none';playSearchedTrackImmediately(encodeURIComponent(meta.id),encodeURIComponent(meta.title),encodeURIComponent(meta.artist),encodeURIComponent(meta.cover),'');return}
   }
-  
   const plId=extractPlaylistId(q);
   if(plId){
     const pl=await fetchPlaylistItems(plId);
-    if(pl&&pl.length){
-      showToast(`Loaded ${pl.length} playlist songs`);
-      l.style.display='none';
-      renderSearchResults(pl);
-      return;
-    }
+    if(pl&&pl.length){showToast(`Loaded ${pl.length} playlist songs`);l.style.display='none';renderSearchResults(pl);return}
   }
-  
   const allResults=await searchAll(q);
   const found=allResults.slice(0,30);
   l.style.display='none';
@@ -428,11 +460,44 @@ function playSearchedTrackImmediately(idEnc,title,artist,cover,directEnc){
   const t={id,title:decodeURIComponent(title),artist:decodeURIComponent(artist),cover:decodeURIComponent(cover)};
   const realDirect=directEnc?decodeURIComponent(directEnc):'';
   if(realDirect)t._directStream=realDirect;
-  const existingIdx=currentPlaylist.findIndex(x=>x.id===t.id);
-  if(existingIdx>=0){currentTrackIndex=existingIdx;renderHomeQueue();playTrack(existingIdx);return}
-  currentPlaylist.splice(currentTrackIndex+1,0,t);
+  currentPlaylist=[t];currentTrackIndex=0;
   renderHomeQueue();
-  playTrack(currentTrackIndex+1);
+  playTrack(0);
+}
+
+let liveSearchDebounceTimer=null;
+let liveSearchRequestId=0;
+function initLiveSearchInputListener(){
+  const f=document.getElementById('mobileSearchField');
+  if(!f)return;
+  f.addEventListener('input',()=>{
+    clearTimeout(liveSearchDebounceTimer);
+    const q=f.value.trim();
+    if(q.length>=2){
+      liveSearchDebounceTimer=setTimeout(()=>{if(f.value.trim()===q)instantSearch(q)},350);
+    }else if(q.length===0){
+      const rc=document.getElementById('searchResultsContainer');
+      if(rc)rc.innerHTML='<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name or paste YouTube link.</p>';
+    }
+  });
+  f.addEventListener('keydown',(e)=>{
+    if(e.key==='Enter'){clearTimeout(liveSearchDebounceTimer);e.preventDefault();executeLiveSearch(false)}
+  });
+}
+async function instantSearch(q){
+  currentLanguage = detectLanguage(q);
+  const myId=++liveSearchRequestId;
+  const l=document.getElementById('searchLoadingIndicator');
+  const rc=document.getElementById('searchResultsContainer');
+  if(l){l.style.display='block';l.innerHTML='<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'}
+  const results=await Promise.allSettled([searchPiped(q),searchInvidious(q),searchSaavn(q)]);
+  if(myId!==liveSearchRequestId)return;
+  if(l)l.style.display='none';
+  const all=[];const seen=new Set();
+  results.forEach(r=>{if(r.status==='fulfilled'&&r.value)r.value.forEach(t=>{const k=(t.id||t.title||'').toString().toLowerCase().trim();if(k&&!seen.has(k)){seen.add(k);all.push(t)}})});
+  const found=all.slice(0,20);
+  if(found.length>0){renderSearchResults(found)}
+  else{if(rc)rc.innerHTML='<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>'}
 }
 
 function renderSearchHistoryTags(){
@@ -483,14 +548,16 @@ async function playTrack(index,broadcast=true){
   if(index<0||index>=currentPlaylist.length)return;
   currentTrackIndex=index;
   const track=currentPlaylist[index];
+  if(track) currentLanguage = detectLanguage((track.title||'') + ' ' + (track.artist||''));
   syncPlayerUI(track);updateMediaSessionMetadata(track);logPlaybackHistory(track);renderHomeRecentVault();
   showToast(`Loading: ${(track.title||'').slice(0,30)}`);
   setTimeout(()=>initForegroundAudioBridge(),0);
   setTimeout(()=>requestHardwareWakeLock(),0);
   if(!silentLoopStarted){silentLoop.play().catch(()=>{});silentLoopStarted=true}
   if(broadcast&&duoChannel)duoChannel.postMessage({type:'SYNC_PLAY',track});
-  setTimeout(()=>preCacheNextTracks(index,2),10000);
-  setTimeout(()=>autoExtendQueue(track),10000);
+  setTimeout(()=>preCacheNextTracks(index,3),8000);
+  /* AUTOPLAY ALWAYS ON — instant fill queue */
+  setTimeout(()=>autoExtendQueue(track),500);
   let streamUrl=null;
   if(track._directStream&&track._directStream.startsWith('http'))streamUrl=track._directStream;
   if(!streamUrl){const c=trackBlobCache.get(track.id);if(c&&c.startsWith('blob:'))streamUrl=c}
@@ -504,58 +571,105 @@ async function playTrack(index,broadcast=true){
   try{await mainAudio.play();setVisualState(true);setTimeout(()=>cacheTrackInBackground(track),12000)}catch(e){fallbackToYouTubeBridge(track.id)}
 }
 
+/* ═══════════ AUTOPLAY — Always ON ═══════════ */
+async function autoplayNext(){
+  if(isRepeat){playTrack(currentTrackIndex);return}
+  /* Ensure at least 3 songs in queue ahead */
+  const remaining = currentPlaylist.length - currentTrackIndex - 1;
+  if(remaining < 2){
+    const currentTrack = currentPlaylist[currentTrackIndex];
+    if(currentTrack){
+      autoMixFetching = false;
+      try{
+        const related = await fetchRelatedSongs(currentTrack);
+        if(related.length){
+          related.forEach(t=>{if(!currentPlaylist.some(x=>x.id===t.id))currentPlaylist.push(t)});
+          renderHomeQueue();
+        }
+      }catch(e){}
+    }
+  }
+  if(currentPlaylist.length === 0) return;
+  if(isShuffle) currentTrackIndex = Math.floor(Math.random()*currentPlaylist.length);
+  else currentTrackIndex = (currentTrackIndex+1) % currentPlaylist.length;
+  playTrack(currentTrackIndex);
+}
+
 async function autoExtendQueue(track){
   if(autoMixFetching||!track)return;
   const remaining=currentPlaylist.length-currentTrackIndex-1;
-  if(remaining>2)return;
+  if(remaining>=3)return;
   autoMixFetching=true;
   try{
     const related=await fetchRelatedSongs(track);
     if(related.length){
       related.forEach(t=>{if(!currentPlaylist.some(x=>x.id===t.id))currentPlaylist.push(t)});
       renderHomeQueue();
-      showToast(`➕ ${related.length} related songs`);
     }
   }catch(e){}
   autoMixFetching=false;
 }
 
+/* ═══════════ RELATED SONGS — SAME LANGUAGE/VIBE ═══════════ */
 async function fetchRelatedSongs(seedTrack){
   if(!seedTrack)return[];
   const now=Date.now();
-  if(now-lastAutoFetchTime<5000)return[];
+  if(now-lastAutoFetchTime<4000)return[];
   lastAutoFetchTime=now;
-  let artist=(seedTrack.artist||'').replace(/vevo|official|records|channel|music|topic|entertainment/gi,'').trim();
-  let query='';
-  if(artist&&artist.length>2&&artist!==lastFetchedArtist){
-    query=`${artist} top songs`;
-    lastFetchedArtist=artist;
-  }else{
-    const titleWords=(seedTrack.title||'').split(' ').slice(0,4).join(' ').replace(/[\(\)\[\]]/g,'').trim();
-    query=`${titleWords} similar songs`;
-  }
+
+  const seedLang = detectLanguage((seedTrack.title||'') + ' ' + (seedTrack.artist||''));
+  currentLanguage = seedLang;
+
+  let artist=(seedTrack.artist||'')
+    .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios/gi,'')
+    .replace(/[-_]/g,' ')
+    .trim();
+
   const existingIds=new Set(currentPlaylist.map(t=>t.id));
-  const results=await searchAll(query);
-  const filtered=results.filter(t=>!existingIds.has(t.id)).slice(0,10);
-  return filtered.sort(()=>Math.random()-0.5).slice(0,8);
+  let results=[];
+  const queries = [];
+
+  /* Query 1: Same artist */
+  if(artist && artist.length > 2 && artist !== lastFetchedArtist){
+    queries.push(`${artist} songs`);
+    queries.push(`${artist} top hits`);
+    lastFetchedArtist = artist;
+  }
+
+  /* Query 2: Same language trending */
+  const langQ = getLanguageQueries(seedLang);
+  queries.push(langQ[Math.floor(Math.random()*langQ.length)]);
+
+  /* Query 3: Similar title */
+  const titleWords=(seedTrack.title||'').split(' ').slice(0,3).join(' ').replace(/[\(\)\[\]]/g,'').trim();
+  if(titleWords.length > 3) queries.push(`${titleWords} similar`);
+
+  /* Fetch all queries */
+  for(const q of queries){
+    if(results.length >= 12) break;
+    try{
+      const batch = await searchAll(q);
+      batch.forEach(t => {
+        if(!existingIds.has(t.id) && !results.some(r=>r.id===t.id)){
+          /* Ensure same language */
+          const tLang = detectLanguage((t.title||'') + ' ' + (t.artist||''));
+          if(tLang === seedLang || Math.random() < 0.3){
+            results.push(t);
+          }
+        }
+      });
+    }catch(e){}
+  }
+
+  return results.slice(0,10);
 }
 
 function fallbackToYouTubeBridge(vid){
   if(!vid||!/^[a-zA-Z0-9_-]{11}$/.test(vid)){showToast('❌ Play fail');return}
   activeStreamEngine='yt_engine';
   try{mainAudio.pause()}catch(e){}
-  if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){
-    ytPlayer.loadVideoById(vid);
-    ytPlayer.playVideo();
-    setVisualState(true);
-  }else{
-    showToast("YT Engine loading...");
-    setTimeout(()=>{
-      if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){
-        ytPlayer.loadVideoById(vid);ytPlayer.playVideo();setVisualState(true);
-      }else showToast('❌ Play failed');
-    },1500);
-  }
+  if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){ytPlayer.loadVideoById(vid);ytPlayer.playVideo();setVisualState(true)}
+  else{showToast("YT Engine loading...");setTimeout(()=>{if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){ytPlayer.loadVideoById(vid);ytPlayer.playVideo();setVisualState(true)}else showToast('❌ Play failed')},1500)}
 }
 function togglePlaybackState(broadcast=true){
   if(activeStreamEngine==='direct'){
@@ -577,20 +691,7 @@ function setVisualState(playing){
   const q=document.getElementById('modalQueueDrawer');
   if(q&&q.classList.contains('open'))renderHomeQueue();
 }
-async function playNext(){
-  if(currentPlaylist.length===0)return;
-  const remaining=currentPlaylist.length-currentTrackIndex-1;
-  if(remaining<2){
-    const currentTrack=currentPlaylist[currentTrackIndex];
-    showToast('🔄 Loading related...');
-    autoMixFetching=false;
-    const related=await fetchRelatedSongs(currentTrack);
-    if(related.length){related.forEach(t=>{if(!currentPlaylist.some(x=>x.id===t.id))currentPlaylist.push(t)});renderHomeQueue()}
-  }
-  if(isShuffle)currentTrackIndex=Math.floor(Math.random()*currentPlaylist.length);
-  else currentTrackIndex=(currentTrackIndex+1)%currentPlaylist.length;
-  playTrack(currentTrackIndex);
-}
+async function playNext(){autoplayNext()}
 function playPrevious(){if(currentPlaylist.length===0)return;currentTrackIndex=(currentTrackIndex-1+currentPlaylist.length)%currentPlaylist.length;playTrack(currentTrackIndex)}
 function syncPlayerUI(track){
   const els={miniTitleText:track.title,miniArtistText:track.artist,notchTrackTitle:track.title,fullTitleText:track.title,fullArtistText:track.artist};
@@ -603,12 +704,7 @@ function syncPlayerUI(track){
 function toggleShuffle(){isShuffle=!isShuffle;const el=document.getElementById('fullShuffleBtn');if(el)el.style.color=isShuffle?'var(--accent-neon)':'inherit';showToast(isShuffle?"Shuffle On":"Shuffle Off")}
 function toggleRepeat(){isRepeat=!isRepeat;const el=document.getElementById('fullRepeatBtn');if(el)el.style.color=isRepeat?'var(--accent-neon)':'inherit';showToast(isRepeat?"Repeat On":"Repeat Off")}
 function toggleSleepTimer(){showToast("Sleep 30 Min");setTimeout(()=>{if(isPlayingAudio)togglePlaybackState()},30*60*1000)}
-function shareCurrentTrack(){
-  if(currentPlaylist.length===0)return;
-  const t=currentPlaylist[currentTrackIndex];
-  if(navigator.share)navigator.share({title:t.title,text:`Listening to ${t.title} on Vaultify`}).catch(()=>{});
-  else{try{navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`);showToast("Copied!")}catch(e){showToast("Share not supported")}}
-}
+function shareCurrentTrack(){if(currentPlaylist.length===0)return;const t=currentPlaylist[currentTrackIndex];if(navigator.share)navigator.share({title:t.title,text:`Listening to ${t.title} on Vaultify`}).catch(()=>{});else{try{navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`);showToast("Copied!")}catch(e){showToast("Share not supported")}}}
 
 async function cacheTrackInBackground(track){
   if(!track)return;
@@ -619,16 +715,9 @@ async function cacheTrackInBackground(track){
   showDownloadIndicator('Caching...');
   const url=await fetchDirectAudioStreamUrl(track.id);
   if(!url||!url.startsWith('http')){hideDownloadIndicator();return}
-  try{
-    const r=await fetch(url);const blob=await r.blob();
-    await cachePut(track.id,blob,{title:track.title,artist:track.artist,cover:track.cover});
-    const blobUrl=URL.createObjectURL(blob);
-    trackBlobCache.set(track.id,blobUrl);
-    hideDownloadIndicator();
-    if(currentLibraryTab==='cached'&&document.getElementById('tabLibrary').classList.contains('active'))renderLibrary();
-  }catch(e){hideDownloadIndicator()}
+  try{const r=await fetch(url);const blob=await r.blob();await cachePut(track.id,blob,{title:track.title,artist:track.artist,cover:track.cover});const blobUrl=URL.createObjectURL(blob);trackBlobCache.set(track.id,blobUrl);hideDownloadIndicator();if(currentLibraryTab==='cached'&&document.getElementById('tabLibrary').classList.contains('active'))renderLibrary()}catch(e){hideDownloadIndicator()}
 }
-function preCacheNextTracks(startIdx,count=2){for(let i=1;i<=count;i++){const idx=startIdx+i;if(idx<currentPlaylist.length){const t=currentPlaylist[idx];setTimeout(()=>cacheTrackInBackground(t),i*6000)}}}
+function preCacheNextTracks(startIdx,count=3){for(let i=1;i<=count;i++){const idx=startIdx+i;if(idx<currentPlaylist.length){const t=currentPlaylist[idx];setTimeout(()=>cacheTrackInBackground(t),i*5000)}}}
 
 async function downloadCurrentTrack(){
   if(currentPlaylist.length===0)return showToast("No track!");
@@ -649,14 +738,9 @@ async function downloadCurrentTrack(){
 }
 
 async function requestMicAndListen(){
-  if(window.AndroidNativeBridge&&!window.AndroidNativeBridge.hasMicPermission()){
-    if(window.AndroidNativeBridge.requestPermissions)window.AndroidNativeBridge.requestPermissions();
-    showToast('Mic permission needed — grant and retry');
-    return;
-  }
+  if(window.AndroidNativeBridge&&!window.AndroidNativeBridge.hasMicPermission()){if(window.AndroidNativeBridge.requestPermissions)window.AndroidNativeBridge.requestPermissions();showToast('Mic permission needed');return}
   const b=document.getElementById('voiceMicTrigger');
-  try{const s=await navigator.mediaDevices.getUserMedia({audio:true});s.getTracks().forEach(t=>t.stop())}
-  catch(e){return showToast("Mic permission denied!")}
+  try{const s=await navigator.mediaDevices.getUserMedia({audio:true});s.getTracks().forEach(t=>t.stop())}catch(e){return showToast("Mic permission denied!")}
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR)return showToast("Voice not supported.");
   const r=new SR();r.lang=appLanguage==='hi'?'hi-IN':'en-US';r.interimResults=false;
@@ -667,86 +751,32 @@ async function requestMicAndListen(){
   r.start();
 }
 
-let liveSearchDebounceTimer=null;
-function initLiveSearchInputListener(){
-  const f=document.getElementById('mobileSearchField');
-  if(!f)return;
-  f.addEventListener('input',()=>{
-    clearTimeout(liveSearchDebounceTimer);
-    const q=f.value.trim();
-    if(q.length>=4){
-      liveSearchDebounceTimer=setTimeout(()=>{if(f.value.trim()===q)executeLiveSearch(true)},2000);
-    }
-  });
-  f.addEventListener('keydown',(e)=>{
-    if(e.key==='Enter'){clearTimeout(liveSearchDebounceTimer);e.preventDefault();executeLiveSearch(false)}
-  });
-}
-
-function logPlaybackHistory(track){
-  playbackHistoryList=playbackHistoryList.filter(t=>t.id!==track.id);
-  playbackHistoryList.unshift(track);
-  if(playbackHistoryList.length>20)playbackHistoryList.pop();
-  localStorage.setItem('vaultify_playback_history',JSON.stringify(playbackHistoryList));
-  if(currentLibraryTab==='history')renderLibrary();
-}
-function renderHomeRecentVault(){
-  const c=document.getElementById('homeRecentGrid');if(!c)return;
-  const r=playbackHistoryList.slice(0,6);
-  if(r.length===0){c.innerHTML=`<div style="grid-column:span 2;font-size:12.5px;color:var(--text-sub);text-align:center;padding:16px 0;background:rgba(255,255,255,.03);border-radius:14px;border:1px dashed var(--border)">No recently played.</div>`;return}
-  c.innerHTML=r.map(t=>{const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'');return `<div class="history-card" onclick="playSingleTrackObject('${safeId}','${safeTitle}','${safeArtist}','${safeCover}')"><div class="history-art"><img src="${t.cover || 'vaultify.png'}" onerror="this.src='vaultify.png'" /></div><div class="history-card-meta"><div class="history-card-title">${escapeHtml(t.title)}</div><div class="history-card-artist">${escapeHtml(t.artist)}</div></div></div>`}).join('');
-}
-function playSingleTrackObject(idEnc,title,artist,cover){
-  const id=decodeURIComponent(idEnc);
-  const t={id,title:decodeURIComponent(title),artist:decodeURIComponent(artist),cover:decodeURIComponent(cover)};
-  const existingIdx=currentPlaylist.findIndex(x=>x.id===t.id);
-  if(existingIdx>=0){currentTrackIndex=existingIdx;renderHomeQueue();playTrack(existingIdx);return}
-  currentPlaylist.splice(currentTrackIndex+1,0,t);renderHomeQueue();playTrack(currentTrackIndex+1);
-}
-function buildRecommendationQuery(){
-  const tokens=[];
-  playbackHistoryList.slice(0,5).forEach(t=>{if(t.artist)tokens.push(t.artist.replace(/vevo|official|channel|records|music/gi,'').trim())});
-  searchHistoryList.slice(0,3).forEach(s=>tokens.push(s));
-  const u=[...new Set(tokens.filter(t=>t&&t.length>2))];
-  if(u.length===0)return"trending songs 2026";
-  return u.slice(0,3).join(' ')+" songs";
-}
+function logPlaybackHistory(track){playbackHistoryList=playbackHistoryList.filter(t=>t.id!==track.id);playbackHistoryList.unshift(track);if(playbackHistoryList.length>20)playbackHistoryList.pop();localStorage.setItem('vaultify_playback_history',JSON.stringify(playbackHistoryList));if(currentLibraryTab==='history')renderLibrary()}
+function renderHomeRecentVault(){const c=document.getElementById('homeRecentGrid');if(!c)return;const r=playbackHistoryList.slice(0,6);if(r.length===0){c.innerHTML=`<div style="grid-column:span 2;font-size:12.5px;color:var(--text-sub);text-align:center;padding:16px 0;background:rgba(255,255,255,.03);border-radius:14px;border:1px dashed var(--border)">No recently played.</div>`;return}c.innerHTML=r.map(t=>{const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'');return `<div class="history-card" onclick="playSingleTrackObject('${safeId}','${safeTitle}','${safeArtist}','${safeCover}')"><div class="history-art"><img src="${t.cover || 'vaultify.png'}" onerror="this.src='vaultify.png'" /></div><div class="history-card-meta"><div class="history-card-title">${escapeHtml(t.title)}</div><div class="history-card-artist">${escapeHtml(t.artist)}</div></div></div>`}).join('')}
+function playSingleTrackObject(idEnc,title,artist,cover){const id=decodeURIComponent(idEnc);const t={id,title:decodeURIComponent(title),artist:decodeURIComponent(artist),cover:decodeURIComponent(cover)};currentPlaylist=[t];currentTrackIndex=0;renderHomeQueue();playTrack(0)}
+function buildRecommendationQuery(){const tokens=[];playbackHistoryList.slice(0,5).forEach(t=>{if(t.artist)tokens.push(t.artist.replace(/vevo|official|channel|records|music/gi,'').trim())});searchHistoryList.slice(0,3).forEach(s=>tokens.push(s));const u=[...new Set(tokens.filter(t=>t&&t.length>2))];if(u.length===0)return getLanguageQueries(currentLanguage)[0];return u.slice(0,3).join(' ')+" songs"}
 
 async function renderRecommendedSection(){
   const container=document.getElementById('recommendedContainer');
   if(!container)return;
   let found=[];let headerText='Trending Now';
-  if(playbackHistoryList.length===0&&searchHistoryList.length===0){
-    found=await fetchTrendingSongs(8);
-  }else{
+  if(playbackHistoryList.length===0&&searchHistoryList.length===0){found=await fetchTrendingSongs(8)}
+  else{
     headerText='Recommended For You';
     const q=buildRecommendationQuery();
     const seen=new Set(playbackHistoryList.map(t=>t.id));
     const all=await searchAll(q);
-    found=all.filter(t=>!seen.has(t.id)).slice(0,6);
+    const langFiltered = all.filter(t=>detectLanguage((t.title||'')+' '+(t.artist||''))===currentLanguage);
+    found = langFiltered.length >= 4 ? langFiltered.slice(0,6) : all.filter(t=>!seen.has(t.id)).slice(0,6);
   }
   const headerEl=document.querySelector('.recommended-header span');
   if(headerEl)headerEl.innerText=headerText;
-  if(found.length===0){container.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions. Play something first.</p>`;return}
+  if(found.length===0){container.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`;return}
   container.innerHTML=found.map(t=>{const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'');const safeDirect=t._directStream?encodeURIComponent(t._directStream):'';return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon);font-size:13px"></i></div>`}).join('');
 }
 
-function renderHomeQueue(){
-  const el=document.getElementById('homeQueueContainer');const c=document.getElementById('queueCountSubtitle');
-  if(c)c.innerText=`${currentPlaylist.length} tracks`;
-  if(!el)return;
-  if(currentPlaylist.length===0){el.innerHTML=`<div style="font-size:12px;color:var(--text-sub);text-align:center;padding:12px 0">Empty queue.</div>`;return}
-  let h='';
-  const np=currentPlaylist[currentTrackIndex];
-  const un=currentPlaylist.slice(currentTrackIndex+1,currentTrackIndex+20);
-  if(np){h+=`<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--accent-neon)">▶ Now Playing</div>`;h+=renderQueueTile(np,currentTrackIndex,true)}
-  if(un.length>0){h+=`<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--text-sub)">🎵 Up Next (${un.length})</div>`;un.forEach((t,i)=>{h+=renderQueueTile(t,currentTrackIndex+1+i,false)})}
-  el.innerHTML=h;
-}
-function renderQueueTile(t,i,ic){
-  const isCached=trackBlobCache.has(t.id);
-  return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isCached ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
-}
+function renderHomeQueue(){const el=document.getElementById('homeQueueContainer');const c=document.getElementById('queueCountSubtitle');if(c)c.innerText=`${currentPlaylist.length} tracks`;if(!el)return;if(currentPlaylist.length===0){el.innerHTML=`<div style="font-size:12px;color:var(--text-sub);text-align:center;padding:12px 0">Empty queue.</div>`;return}let h='';const np=currentPlaylist[currentTrackIndex];const un=currentPlaylist.slice(currentTrackIndex+1,currentTrackIndex+20);if(np){h+=`<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--accent-neon)">▶ Now Playing</div>`;h+=renderQueueTile(np,currentTrackIndex,true)}if(un.length>0){h+=`<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--text-sub)">🎵 Up Next (${un.length})</div>`;un.forEach((t,i)=>{h+=renderQueueTile(t,currentTrackIndex+1+i,false)})}el.innerHTML=h}
+function renderQueueTile(t,i,ic){const isCached=trackBlobCache.has(t.id);return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isCached ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`}
 
 function switchNavTab(tab,th=true){
   document.querySelectorAll('.view-screen').forEach(s=>s.classList.remove('active'));
@@ -782,23 +812,11 @@ function sendSupportMail(){
   catch(err){navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(()=>showToast('✅ Email copied')).catch(()=>showToast('❌ Failed'))}
 }
 
-async function savePlaybackState(){
-  try{
-    if(!currentPlaylist[currentTrackIndex])return;
-    const t=currentPlaylist[currentTrackIndex];
-    const pos=activeStreamEngine==='direct'?mainAudio.currentTime:0;
-    localStorage.setItem('vaultify_playback_state',JSON.stringify({wasPlaying:isPlayingAudio,lastTrackId:t.id,lastTrackTitle:t.title,lastTrackArtist:t.artist,lastTrackCover:t.cover,lastPosition:Math.floor(pos*1000),lastIndex:currentTrackIndex,playlistJson:JSON.stringify(currentPlaylist.slice(0,50)),timestamp:Date.now()}));
-  }catch(e){}
-}
+async function savePlaybackState(){try{if(!currentPlaylist[currentTrackIndex])return;const t=currentPlaylist[currentTrackIndex];const pos=activeStreamEngine==='direct'?mainAudio.currentTime:0;localStorage.setItem('vaultify_playback_state',JSON.stringify({wasPlaying:isPlayingAudio,lastTrackId:t.id,lastTrackTitle:t.title,lastTrackArtist:t.artist,lastTrackCover:t.cover,lastPosition:Math.floor(pos*1000),lastIndex:currentTrackIndex,playlistJson:JSON.stringify(currentPlaylist.slice(0,50)),timestamp:Date.now()}))}catch(e){}}
 window.addEventListener('beforeunload',savePlaybackState);
 window.addEventListener('pagehide',savePlaybackState);
 
-function switchLibraryTab(tab,el){
-  currentLibraryTab=tab;
-  document.querySelectorAll('#tabLibrary .nav-btn').forEach(p=>p.classList.remove('active'));
-  if(el)el.classList.add('active');
-  renderLibrary();
-}
+function switchLibraryTab(tab,el){currentLibraryTab=tab;document.querySelectorAll('#tabLibrary .nav-btn').forEach(p=>p.classList.remove('active'));if(el)el.classList.add('active');renderLibrary()}
 async function renderLibrary(){
   const c=document.getElementById('libraryContent');if(!c)return;
   if(currentLibraryTab==='history'){
@@ -819,141 +837,44 @@ async function renderLibrary(){
     c.innerHTML+=cached.map(t=>`<div class="song-tile" onclick="playCached('${t.id.replace(/'/g,"\\'")}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title||'Unknown')}</h4><p>${escapeHtml(t.artist||'')}</p></div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g,"\\'")}')"></i></div>`).join('');
   }
 }
-async function playCached(id){
-  const c=await cacheGet(id);
-  if(c&&c.url){
-    const t={id,title:c.title,artist:c.artist,cover:c.cover,_directStream:c.url};
-    const idx=currentPlaylist.findIndex(x=>x.id===t.id);
-    if(idx>=0){currentTrackIndex=idx;renderHomeQueue();playTrack(idx);return}
-    currentPlaylist.splice(currentTrackIndex+1,0,t);renderHomeQueue();playTrack(currentTrackIndex+1);
-  }
-}
-async function removeCache(id){
-  const u=trackBlobCache.get(id);
-  if(u&&u.startsWith('blob:')){try{URL.revokeObjectURL(u)}catch(e){}}
-  trackBlobCache.delete(id);await cacheDelete(id);renderLibrary();showToast("Removed from cache");
-}
-function openPlaylist(i){
-  const p=playlists[i];if(!p)return showToast("Playlist empty");
-  if(p.songs.length===0)return showToast("Empty playlist");
-  currentPlaylist=p.songs.slice();renderHomeQueue();playTrack(0);closeModal('modalAddToPlaylist');showToast(`▶ ${p.name} (${p.songs.length} songs)`);
-}
+async function playCached(id){const c=await cacheGet(id);if(c&&c.url){const t={id,title:c.title,artist:c.artist,cover:c.cover,_directStream:c.url};currentPlaylist=[t];currentTrackIndex=0;renderHomeQueue();playTrack(0)}}
+async function removeCache(id){const u=trackBlobCache.get(id);if(u&&u.startsWith('blob:')){try{URL.revokeObjectURL(u)}catch(e){}}trackBlobCache.delete(id);await cacheDelete(id);renderLibrary();showToast("Removed from cache")}
+function openPlaylist(i){const p=playlists[i];if(!p)return showToast("Playlist empty");if(p.songs.length===0)return showToast("Empty playlist");currentPlaylist=p.songs.slice();renderHomeQueue();playTrack(0);closeModal('modalAddToPlaylist');showToast(`▶ ${p.name} (${p.songs.length} songs)`)}
 function deletePlaylist(i){if(!confirm("Delete this playlist?"))return;playlists.splice(i,1);savePlaylists();renderLibrary()}
 function savePlaylists(){localStorage.setItem('vaultify_playlists',JSON.stringify(playlists))}
-function toggleLikeCurrent(){
-  if(currentPlaylist.length===0)return showToast("No track");
-  const t=currentPlaylist[currentTrackIndex];
-  const idx=likedSongs.findIndex(s=>s.id===t.id);
-  if(idx>=0){likedSongs.splice(idx,1);showToast("Removed from Liked")}
-  else{likedSongs.unshift(t);showToast("❤️ Added to Liked")}
-  localStorage.setItem('vaultify_liked',JSON.stringify(likedSongs));
-  const hb=document.getElementById('fullHeartBtn');
-  const isLiked=likedSongs.some(s=>s.id===t.id);
-  hb.className=isLiked?'fa-solid fa-heart':'fa-regular fa-heart';
-  hb.style.color=isLiked?'var(--partner-pink)':'inherit';
-  if(currentLibraryTab==='liked')renderLibrary();
-}
+function toggleLikeCurrent(){if(currentPlaylist.length===0)return showToast("No track");const t=currentPlaylist[currentTrackIndex];const idx=likedSongs.findIndex(s=>s.id===t.id);if(idx>=0){likedSongs.splice(idx,1);showToast("Removed from Liked")}else{likedSongs.unshift(t);showToast("❤️ Added to Liked")}localStorage.setItem('vaultify_liked',JSON.stringify(likedSongs));const hb=document.getElementById('fullHeartBtn');const isLiked=likedSongs.some(s=>s.id===t.id);hb.className=isLiked?'fa-solid fa-heart':'fa-regular fa-heart';hb.style.color=isLiked?'var(--partner-pink)':'inherit';if(currentLibraryTab==='liked')renderLibrary()}
 function unlikeSong(id){likedSongs=likedSongs.filter(s=>s.id!==id);localStorage.setItem('vaultify_liked',JSON.stringify(likedSongs));renderLibrary()}
-function openAddToPlaylistModal(){
-  if(currentPlaylist.length===0)return showToast("No track");
-  const c=document.getElementById('playlistSelectList');
-  if(playlists.length===0)c.innerHTML=`<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:8px 0">No playlists yet.</p>`;
-  else c.innerHTML=playlists.map((p,i)=>`<div class="song-tile" onclick="addToPlaylist(${i})"><div class="tile-left"><div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;flex-shrink:0"><i class="fa-solid fa-list"></i></div><div class="tile-meta"><h4>${escapeHtml(p.name)}</h4><p>${p.songs.length} songs</p></div></div><i class="fa-solid fa-plus" style="color:var(--accent-neon)"></i></div>`).join('');
-  openModal('modalAddToPlaylist');
-}
-function addToPlaylist(i){
-  const t=currentPlaylist[currentTrackIndex];
-  if(!playlists[i].songs.some(s=>s.id===t.id))playlists[i].songs.push(t);
-  savePlaylists();showToast(`Added to ${playlists[i].name}`);
-  closeModal('modalAddToPlaylist');
-  if(currentLibraryTab==='playlists')renderLibrary();
-}
-function createPlaylistAndAdd(){
-  const n=document.getElementById('newPlaylistName').value.trim();
-  if(!n)return showToast("Enter name");
-  const t=currentPlaylist[currentTrackIndex];
-  playlists.push({id:Date.now(),name:n,songs:t?[t]:[],created:Date.now()});
-  savePlaylists();document.getElementById('newPlaylistName').value='';showToast(`Created: ${n}`);
-  closeModal('modalAddToPlaylist');
-  if(currentLibraryTab==='playlists')renderLibrary();
-}
-
-function isOwner(){return loggedInUser&&loggedInUser.email&&loggedInUser.email.toLowerCase()===CREATOR_ROOT_EMAIL.toLowerCase()}
+function openAddToPlaylistModal(){if(currentPlaylist.length===0)return showToast("No track");const c=document.getElementById('playlistSelectList');if(playlists.length===0)c.innerHTML=`<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:8px 0">No playlists yet.</p>`;else c.innerHTML=playlists.map((p,i)=>`<div class="song-tile" onclick="addToPlaylist(${i})"><div class="tile-left"><div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;flex-shrink:0"><i class="fa-solid fa-list"></i></div><div class="tile-meta"><h4>${escapeHtml(p.name)}</h4><p>${p.songs.length} songs</p></div></div><i class="fa-solid fa-plus" style="color:var(--accent-neon)"></i></div>`).join('');openModal('modalAddToPlaylist')}
+function addToPlaylist(i){const t=currentPlaylist[currentTrackIndex];if(!playlists[i].songs.some(s=>s.id===t.id))playlists[i].songs.push(t);savePlaylists();showToast(`Added to ${playlists[i].name}`);closeModal('modalAddToPlaylist');if(currentLibraryTab==='playlists')renderLibrary()}
+function createPlaylistAndAdd(){const n=document.getElementById('newPlaylistName').value.trim();if(!n)return showToast("Enter name");const t=currentPlaylist[currentTrackIndex];playlists.push({id:Date.now(),name:n,songs:t?[t]:[],created:Date.now()});savePlaylists();document.getElementById('newPlaylistName').value='';showToast(`Created: ${n}`);closeModal('modalAddToPlaylist');if(currentLibraryTab==='playlists')renderLibrary()}
 
 function getStoredNotifications(){return JSON.parse(localStorage.getItem('vaultify_notifications_list')||'[]')}
-function pushNotification(n){
-  const l=getStoredNotifications();
-  l.unshift({...n,id:Date.now(),time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),unread:true});
-  if(l.length>60)l.pop();
-  localStorage.setItem('vaultify_notifications_list',JSON.stringify(l));
-  renderNotificationCenter();
-}
+function pushNotification(n){const l=getStoredNotifications();l.unshift({...n,id:Date.now(),time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),unread:true});if(l.length>60)l.pop();localStorage.setItem('vaultify_notifications_list',JSON.stringify(l));renderNotificationCenter()}
 function renderNotificationCenter(){
   const list=getStoredNotifications();
   const container=document.getElementById('notificationListContainer');
   const badge=document.getElementById('notifBadgeCount');
   if(badge){const unreadCount=list.filter(n=>n.unread).length;if(unreadCount>0){badge.innerText=unreadCount;badge.style.display='flex'}else{badge.style.display='none'}}
   if(!container)return;
-  if(list.length===0){container.innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--text-sub);"><i class="fa-solid fa-bell-slash" style="font-size:36px;margin-bottom:12px;opacity:0.5;"></i><p style="font-size:13px;font-weight:600;">No notifications yet</p><p style="font-size:11px;margin-top:4px;">We'll let you know when something new happens.</p></div>`;return}
+  if(list.length===0){container.innerHTML=`<div style="text-align:center;padding:40px 20px;color:var(--text-sub);"><i class="fa-solid fa-bell-slash" style="font-size:36px;margin-bottom:12px;opacity:0.5;"></i><p style="font-size:13px;font-weight:600;">No notifications yet</p></div>`;return}
   container.innerHTML=list.map(n=>`<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;margin-bottom:8px;background:${n.unread?'rgba(139,92,246,0.12)':'rgba(255,255,255,0.03)'};border:1px solid ${n.unread?'var(--accent-neon)':'var(--border)'};border-radius:14px;"><div style="width:38px;height:38px;border-radius:50%;background:${n.iconColor||'var(--accent-neon)'}20;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="${n.icon||'fa-solid fa-bell'}" style="color:${n.iconColor||'var(--accent-neon)'};font-size:16px;"></i></div><div style="flex:1;min-width:0;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;"><span style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%;">${escapeHtml(n.title)}</span><span style="font-size:10px;color:var(--text-sub);flex-shrink:0;margin-left:8px;">${n.time}</span></div><div style="font-size:11.5px;color:var(--text-sub);line-height:1.4;word-break:break-word;">${escapeHtml(n.message)}</div></div>${n.unread?'<div style="width:8px;height:8px;border-radius:50%;background:var(--accent-neon);flex-shrink:0;margin-top:6px;"></div>':''}</div>`).join('');
 }
-function openNotificationModal(){
-  const l=getStoredNotifications();l.forEach(n=>n.unread=false);
-  localStorage.setItem('vaultify_notifications_list',JSON.stringify(l));
-  renderNotificationCenter();openModal('modalNotifications');
-}
+function openNotificationModal(){const l=getStoredNotifications();l.forEach(n=>n.unread=false);localStorage.setItem('vaultify_notifications_list',JSON.stringify(l));renderNotificationCenter();openModal('modalNotifications')}
 function clearAllNotifications(){localStorage.removeItem('vaultify_notifications_list');renderNotificationCenter();showToast("Cleared!")}
-function syncLocalCatalog(){const c=JSON.parse(localStorage.getItem('vaultify_custom_tracks')||'[]');currentPlaylist=[...c]}
+function syncLocalCatalog(){currentPlaylist=[];currentTrackIndex=0}
 
 const AUTH_ITERATIONS=100000,AUTH_SALT_BYTES=16,AUTH_KEY_BYTES=32;
 function bytesToHex(bytes){return Array.from(new Uint8Array(bytes)).map(b=>b.toString(16).padStart(2,'0')).join('')}
 function hexToBytes(hex){const a=new Uint8Array(hex.length/2);for(let i=0;i<hex.length;i+=2)a[i/2]=parseInt(hex.substr(i,2),16);return a}
 function generateSalt(){const s=new Uint8Array(AUTH_SALT_BYTES);crypto.getRandomValues(s);return bytesToHex(s)}
-async function derivePasswordHash(password,saltHex){
-  try{
-    const enc=new TextEncoder();
-    const baseKey=await crypto.subtle.importKey('raw',enc.encode(password),{name:'PBKDF2'},false,['deriveBits']);
-    const salt=hexToBytes(saltHex);
-    const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:AUTH_ITERATIONS,hash:'SHA-256'},baseKey,AUTH_KEY_BYTES*8);
-    return bytesToHex(bits);
-  }catch(e){let h=password+'|'+saltHex;for(let i=0;i<50000;i++){h=btoa(h+password)}return h}
-}
+async function derivePasswordHash(password,saltHex){try{const enc=new TextEncoder();const baseKey=await crypto.subtle.importKey('raw',enc.encode(password),{name:'PBKDF2'},false,['deriveBits']);const salt=hexToBytes(saltHex);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:AUTH_ITERATIONS,hash:'SHA-256'},baseKey,AUTH_KEY_BYTES*8);return bytesToHex(bits)}catch(e){let h=password+'|'+saltHex;for(let i=0;i<50000;i++){h=btoa(h+password)}return h}}
 function getUserDB(){try{return JSON.parse(localStorage.getItem('vaultify_user_db')||'{}')}catch(e){return{}}}
 function saveUserDB(db){localStorage.setItem('vaultify_user_db',JSON.stringify(db))}
-function findUserByEmail(email){
-  const db=getUserDB();const el=String(email||'').trim().toLowerCase();if(!el)return null;
-  for(const key in db){if(db[key]&&db[key].email&&String(db[key].email).toLowerCase()===el)return{key,user:db[key]}}
-  return null;
-}
-function findUserByUsername(username){
-  const db=getUserDB();const ul=String(username||'').trim().toLowerCase();if(!ul)return null;
-  if(db[ul])return{key:ul,user:db[ul]};return null;
-}
-function verifyAuthGate(){
-  const s=localStorage.getItem('vaultify_active_user');
-  const authModal=document.getElementById('modalAuthGate');
-  const mainFrame=document.querySelector('.mobile-frame');
-  if(!authModal)return;
-  if(!s){document.body.classList.add('auth-locked');if(mainFrame)mainFrame.style.pointerEvents='none';authModal.classList.add('open');authModal.style.display='flex'}
-  else{
-    try{loggedInUser=JSON.parse(s);applyUserDataUI(loggedInUser);document.body.classList.remove('auth-locked');if(mainFrame)mainFrame.style.pointerEvents='';authModal.classList.remove('open');authModal.style.display='none'}
-    catch(e){document.body.classList.add('auth-locked');authModal.classList.add('open');authModal.style.display='flex'}
-  }
-}
-function unlockApp(){
-  const authModal=document.getElementById('modalAuthGate');
-  const mainFrame=document.querySelector('.mobile-frame');
-  if(authModal){authModal.classList.remove('open');authModal.style.display='none'}
-  document.body.classList.remove('auth-locked');
-  if(mainFrame)mainFrame.style.pointerEvents='';
-}
-function toggleAuthMode(){
-  isLoginMode=!isLoginMode;
-  document.getElementById('authSubmitBtn').innerText=isLoginMode?'Log In':'Create Account';
-  document.getElementById('authModeToggleText').innerText=isLoginMode?"Don't have account? Sign up":'Already registered? Log in';
-  document.getElementById('authDisplayNameInput').style.display=isLoginMode?'none':'block';
-  hideAuthAlerts();
-}
+function findUserByEmail(email){const db=getUserDB();const el=String(email||'').trim().toLowerCase();if(!el)return null;for(const key in db){if(db[key]&&db[key].email&&String(db[key].email).toLowerCase()===el)return{key,user:db[key]}}return null}
+function findUserByUsername(username){const db=getUserDB();const ul=String(username||'').trim().toLowerCase();if(!ul)return null;if(db[ul])return{key:ul,user:db[ul]};return null}
+function verifyAuthGate(){const s=localStorage.getItem('vaultify_active_user');const authModal=document.getElementById('modalAuthGate');const mainFrame=document.querySelector('.mobile-frame');if(!authModal)return;if(!s){document.body.classList.add('auth-locked');if(mainFrame)mainFrame.style.pointerEvents='none';authModal.classList.add('open');authModal.style.display='flex'}else{try{loggedInUser=JSON.parse(s);applyUserDataUI(loggedInUser);document.body.classList.remove('auth-locked');if(mainFrame)mainFrame.style.pointerEvents='';authModal.classList.remove('open');authModal.style.display='none'}catch(e){document.body.classList.add('auth-locked');authModal.classList.add('open');authModal.style.display='flex'}}}
+function unlockApp(){const authModal=document.getElementById('modalAuthGate');const mainFrame=document.querySelector('.mobile-frame');if(authModal){authModal.classList.remove('open');authModal.style.display='none'}document.body.classList.remove('auth-locked');if(mainFrame)mainFrame.style.pointerEvents=''}
+function toggleAuthMode(){isLoginMode=!isLoginMode;document.getElementById('authSubmitBtn').innerText=isLoginMode?'Log In':'Create Account';document.getElementById('authModeToggleText').innerText=isLoginMode?"Don't have account? Sign up":'Already registered? Log in';document.getElementById('authDisplayNameInput').style.display=isLoginMode?'none':'block';hideAuthAlerts()}
 function showAuthError(msg){const er=document.getElementById('authErrorAlert');const ok=document.getElementById('authSuccessAlert');if(ok)ok.style.display='none';if(er){er.innerText=msg;er.style.display='block'}}
 function showAuthSuccess(msg){const er=document.getElementById('authErrorAlert');const ok=document.getElementById('authSuccessAlert');if(er)er.style.display='none';if(ok){ok.innerText=msg;ok.style.display='block'}}
 function hideAuthAlerts(){const er=document.getElementById('authErrorAlert');const ok=document.getElementById('authSuccessAlert');if(er)er.style.display='none';if(ok)ok.style.display='none'}
@@ -1003,232 +924,34 @@ async function processAuthSubmission(){
   }catch(err){showAuthError("⚠️ Something went wrong.")}
   finally{submitBtn.innerText=originalText;submitBtn.disabled=false}
 }
-function applyUserDataUI(user){
-  if(!user)return;
-  const editName=document.getElementById('editDisplayName');
-  const editBio=document.getElementById('editBio');
-  const partnerCode=document.getElementById('myPartnerCodeDisplay');
-  const avatar=document.getElementById('userAvatarImg');
-  if(editName)editName.value=user.displayName||user.username;
-  if(editBio)editBio.value=user.bio||'';
-  if(partnerCode)partnerCode.innerText=user.partnerCode||generatePartnerCode(user.username);
-  if(avatar&&user.avatar)avatar.src=user.avatar;
-  syncUserPartnerCode();
-  renderPartnerRequests();
-  const chatBox=document.getElementById('activePartnerChat');
-  if(chatBox){if(user.partnerUsername)chatBox.style.display='block';else chatBox.style.display='none'}
-}
+function applyUserDataUI(user){if(!user)return;const editName=document.getElementById('editDisplayName');const editBio=document.getElementById('editBio');const avatar=document.getElementById('userAvatarImg');if(editName)editName.value=user.displayName||user.username;if(editBio)editBio.value=user.bio||'';if(avatar&&user.avatar)avatar.src=user.avatar}
 function openForgotPasswordFlow(){closeModal('modalAuthGate');openModal('modalForgotPass')}
-async function executePasswordReset(){
-  const u=document.getElementById('fpUsername').value.trim().toLowerCase();
-  const e=document.getElementById('fpEmail').value.trim().toLowerCase();
-  const p=document.getElementById('fpNewPassword').value;
-  const vu=validateUsername(u);if(!vu.ok)return showToast(vu.msg);
-  const ve=validateEmail(e);if(!ve.ok)return showToast(ve.msg);
-  const vp=validatePassword(p);if(!vp.ok)return showToast(vp.msg);
-  const found=findUserByUsername(u);if(!found)return showToast("❌ Account doesn't exist.");
-  if(String(found.user.email||'').toLowerCase()!==e)return showToast("❌ Email mismatch.");
-  const newSalt=generateSalt();
-  const newHash=await derivePasswordHash(p,newSalt);
-  const db=getUserDB();db[found.key].passwordHash=newHash;db[found.key].salt=newSalt;saveUserDB(db);
-  closeModal('modalForgotPass');openModal('modalAuthGate');showToast("✅ Password updated!");
-}
-function triggerDpPicker(){
-  const picker=document.getElementById('avatarPicker');
-  if(picker)picker.click();
-  else showToast('Picker not found');
-}
-function handleDpUpload(e){
-  const f=e.target.files[0];if(!f)return;
-  if(f.size>3*1024*1024){showToast("Max 3MB");return}
-  if(!f.type.startsWith('image/')){showToast("Image only");return}
-  const r=new FileReader();
-  r.onload=ev=>{
-    const b=ev.target.result;
-    document.getElementById('userAvatarImg').src=b;
-    if(loggedInUser){loggedInUser.avatar=b;const db=getUserDB();if(db[loggedInUser.username]){db[loggedInUser.username].avatar=b;saveUserDB(db)}localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser))}
-    showToast("✅ DP Updated!");
-  };
-  r.readAsDataURL(f);
-  e.target.value='';
-}
-function saveProfileData(){
-  if(!loggedInUser)return;
-  const n=document.getElementById('editDisplayName').value.trim();
-  if(!n)return showToast("Name required");
-  const bio=(document.getElementById('editBio')?.value||'').trim();
-  loggedInUser.displayName=n;loggedInUser.bio=bio;
-  const db=getUserDB();
-  if(db[loggedInUser.username]){db[loggedInUser.username].displayName=n;db[loggedInUser.username].bio=bio;saveUserDB(db)}
-  localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  applyUserDataUI(loggedInUser);showToast("Profile updated!");
-}
+async function executePasswordReset(){const u=document.getElementById('fpUsername').value.trim().toLowerCase();const e=document.getElementById('fpEmail').value.trim().toLowerCase();const p=document.getElementById('fpNewPassword').value;const vu=validateUsername(u);if(!vu.ok)return showToast(vu.msg);const ve=validateEmail(e);if(!ve.ok)return showToast(ve.msg);const vp=validatePassword(p);if(!vp.ok)return showToast(vp.msg);const found=findUserByUsername(u);if(!found)return showToast("❌ Account doesn't exist.");if(String(found.user.email||'').toLowerCase()!==e)return showToast("❌ Email mismatch.");const newSalt=generateSalt();const newHash=await derivePasswordHash(p,newSalt);const db=getUserDB();db[found.key].passwordHash=newHash;db[found.key].salt=newSalt;saveUserDB(db);closeModal('modalForgotPass');openModal('modalAuthGate');showToast("✅ Password updated!")}
+function triggerDpPicker(){const picker=document.getElementById('avatarPicker');if(picker)picker.click();else showToast('Picker not found')}
+function handleDpUpload(e){const f=e.target.files[0];if(!f)return;if(f.size>3*1024*1024){showToast("Max 3MB");return}if(!f.type.startsWith('image/')){showToast("Image only");return}const r=new FileReader();r.onload=ev=>{const b=ev.target.result;document.getElementById('userAvatarImg').src=b;if(loggedInUser){loggedInUser.avatar=b;const db=getUserDB();if(db[loggedInUser.username]){db[loggedInUser.username].avatar=b;saveUserDB(db)}localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser))}showToast("✅ DP Updated!")};r.readAsDataURL(f);e.target.value=''}
+function saveProfileData(){if(!loggedInUser)return;const n=document.getElementById('editDisplayName').value.trim();if(!n)return showToast("Name required");const bio=(document.getElementById('editBio')?.value||'').trim();loggedInUser.displayName=n;loggedInUser.bio=bio;const db=getUserDB();if(db[loggedInUser.username]){db[loggedInUser.username].displayName=n;db[loggedInUser.username].bio=bio;saveUserDB(db)}localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));applyUserDataUI(loggedInUser);showToast("Profile updated!")}
 function performAppLogout(){if(!confirm("Log out from this device?"))return;localStorage.removeItem('vaultify_active_user');location.reload()}
-function generatePartnerCode(username){
-  if(!username)return'VAULT-XXXXXX';
-  let hash=0;
-  const seed=username+'_vaultify_2026';
-  for(let i=0;i<seed.length;i++){hash=((hash<<5)-hash)+seed.charCodeAt(i);hash=hash&hash}
-  const code=Math.abs(hash).toString(36).toUpperCase().padStart(6,'0').slice(0,6);
-  return 'VAULT-'+code;
-}
-function syncUserPartnerCode(){
-  if(!loggedInUser)return;
-  const db=getUserDB();
-  const user=db[loggedInUser.username];
-  if(!user)return;
-  if(!user.partnerCode){user.partnerCode=generatePartnerCode(loggedInUser.username);db[loggedInUser.username]=user;saveUserDB(db)}
-  loggedInUser.partnerCode=user.partnerCode;
-  localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  const el=document.getElementById('myPartnerCodeDisplay');
-  if(el)el.innerText=user.partnerCode;
-}
-function copyPartnerCode(){
-  const el=document.getElementById('myPartnerCodeDisplay');
-  if(!el)return;
-  navigator.clipboard.writeText(el.innerText).then(()=>showToast('✅ Code copied!')).catch(()=>showToast('❌ Copy fail'));
-}
-function searchPartnerProfile(){
-  const query=document.getElementById('partnerCodeInput').value.trim();
-  if(!query)return showToast("Enter username or code");
-  const db=getUserDB();
-  const lq=query.toLowerCase();
-  let found=null;
-  if(db[lq]){found=db[lq]}
-  else{
-    for(const key in db){const u=db[key];if(u.displayName&&u.displayName.toLowerCase()===lq){found=u;break}}
-    if(!found){for(const key in db){const u=db[key];if(u.partnerCode&&u.partnerCode.toLowerCase()===query.toLowerCase()){found=u;break}}}
-  }
-  if(!found){const card=document.getElementById('partnerProfileCard');if(card)card.style.display='none';return showToast("❌ User not found")}
-  if(found.username===loggedInUser.username)return showToast("❌ Ye tumhari hi ID hai");
-  const card=document.getElementById('partnerProfileCard');if(!card)return;
-  document.getElementById('partnerAvatar').src=found.avatar||'vaultify.png';
-  document.getElementById('partnerDisplayName').innerText=found.displayName||found.username;
-  document.getElementById('partnerUsername').innerText='@'+found.username+' · '+(found.partnerCode||'');
-  document.getElementById('partnerBio').innerText=found.bio||'No bio available.';
-  const connectBtn=document.getElementById('partnerConnectBtn');
-  if(connectBtn){
-    if(loggedInUser.partnerUsername===found.username){connectBtn.innerHTML='<i class="fa-solid fa-check"></i> Already Connected';connectBtn.style.background='linear-gradient(135deg,#10b981,#059669)';connectBtn.disabled=true}
-    else{connectBtn.innerHTML='<i class="fa-solid fa-link"></i> Connect';connectBtn.style.background='linear-gradient(135deg,#ec4899,#a855f7)';connectBtn.disabled=false;connectBtn.onclick=()=>sendPartnerRequest(found.username)}
-  }
-  card.style.display='block';
-  card.dataset.targetUser=found.username;
-  showToast(`✅ Found ${found.displayName||found.username}`);
-}
-function sendPartnerRequest(targetUsername){
-  if(!loggedInUser)return showToast("Login karo pehle");
-  if(!targetUsername)return showToast("No target");
-  const db=getUserDB();
-  const target=db[targetUsername];
-  if(!target)return showToast("❌ User not found");
-  if(!target.partnerRequests)target.partnerRequests=[];
-  if(target.partnerRequests.some(r=>r.from===loggedInUser.username))return showToast("⏳ Request already sent");
-  target.partnerRequests.push({from:loggedInUser.username,fromName:loggedInUser.displayName||loggedInUser.username,fromAvatar:loggedInUser.avatar||'',timestamp:Date.now(),status:'pending'});
-  db[targetUsername]=target;saveUserDB(db);
-  if(!loggedInUser.partnerRequestsSent)loggedInUser.partnerRequestsSent=[];
-  loggedInUser.partnerRequestsSent.push({to:targetUsername,timestamp:Date.now(),status:'pending'});
-  const myDb=getUserDB();myDb[loggedInUser.username]=loggedInUser;saveUserDB(myDb);
-  localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  if(duoChannel)duoChannel.postMessage({type:'PARTNER_REQUEST',from:loggedInUser.username,fromName:loggedInUser.displayName||loggedInUser.username,fromAvatar:loggedInUser.avatar||'',to:targetUsername});
-  showToast(`✅ Request sent to ${target.displayName||target.username}`);
-}
-function acceptPartnerRequest(fromUsername){
-  if(!loggedInUser)return;
-  const db=getUserDB();
-  const me=db[loggedInUser.username];const from=db[fromUsername];
-  if(!me||!from)return;
-  me.partnerUsername=fromUsername;me.partnerDisplayName=from.displayName||from.username;me.partnerAvatar=from.avatar||'';
-  me.partnerCode=me.partnerCode||generatePartnerCode(loggedInUser.username);
-  from.partnerUsername=loggedInUser.username;from.partnerDisplayName=me.displayName||me.username;from.partnerAvatar=me.avatar||'';
-  from.partnerCode=from.partnerCode||generatePartnerCode(fromUsername);
-  me.partnerRequests=(me.partnerRequests||[]).filter(r=>r.from!==fromUsername);
-  from.partnerRequestsSent=(from.partnerRequestsSent||[]).filter(r=>r.to!==loggedInUser.username);
-  db[loggedInUser.username]=me;db[fromUsername]=from;saveUserDB(db);
-  loggedInUser=me;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  showToast(`💕 Connected with ${from.displayName||from.username}`);
-  renderPartnerRequests();syncUserPartnerCode();
-  const chatBox=document.getElementById('activePartnerChat');
-  if(chatBox)chatBox.style.display='block';
-}
-function declinePartnerRequest(fromUsername){
-  if(!loggedInUser)return;
-  const db=getUserDB();
-  const me=db[loggedInUser.username];if(!me)return;
-  me.partnerRequests=(me.partnerRequests||[]).filter(r=>r.from!==fromUsername);
-  db[loggedInUser.username]=me;saveUserDB(db);
-  loggedInUser=me;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
-  renderPartnerRequests();showToast('Request declined');
-}
-function renderPartnerRequests(){
-  const container=document.getElementById('partnerRequestsBox');
-  if(!container)return;
-  if(!loggedInUser)return;
-  const db=getUserDB();
-  const me=db[loggedInUser.username];
-  if(!me||!me.partnerRequests||me.partnerRequests.length===0){container.innerHTML='<p style="font-size:11px;color:var(--text-sub);text-align:center;padding:8px 0">No pending requests.</p>';return}
-  container.innerHTML=me.partnerRequests.filter(r=>r.status==='pending').map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.3);border-radius:12px;margin-bottom:8px"><img src="${r.fromAvatar||'vaultify.png'}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid var(--partner-pink)" onerror="this.src='vaultify.png'" /><div style="flex:1;overflow:hidden"><div style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.fromName)}</div><div style="font-size:10.5px;color:#f9a8d4;margin-top:2px">wants to sync</div></div><div style="display:flex;gap:6px"><button onclick="acceptPartnerRequest('${r.from}')" style="background:linear-gradient(135deg,#10b981,#059669);border:none;color:#fff;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer"><i class="fa-solid fa-check"></i></button><button onclick="declinePartnerRequest('${r.from}')" style="background:rgba(239,68,68,.15);border:1px solid #ef4444;color:#ef4444;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer"><i class="fa-solid fa-xmark"></i></button></div></div>`).join('');
-}
-function pairPartner(){
-  const card=document.getElementById('partnerProfileCard');
-  if(!card||!card.dataset.targetUser)return showToast('Pehle search karo');
-  sendPartnerRequest(card.dataset.targetUser);
-}
-function sendDuoChatMessage(){
-  const i=document.getElementById('duoChatInput');const m=i.value.trim();
-  if(!m)return;
-  const l=document.getElementById('duoChatLog');
-  l.innerHTML+=`<div class="duo-chat-bubble me">${escapeHtml(m)}</div>`;
-  i.value='';l.scrollTop=l.scrollHeight;
-  if(duoChannel)duoChannel.postMessage({type:'DUO_CHAT',text:m,user:loggedInUser?(loggedInUser.displayName||loggedInUser.username):'Partner'});
-}
-function handleDuoBroadcastMessage(e){
-  const d=e.data;if(!d)return;
-  if(d.type==='PARTNER_REQUEST'){
-    if(loggedInUser&&d.to===loggedInUser.username){
-      pushNotification({title:'💕 Partner Request',message:`${d.fromName} wants to sync`,icon:'fa-solid fa-heart',iconColor:'#ec4899'});
-      renderPartnerRequests();
-    }
-  }else if(d.type==='DUO_CHAT'){
-    const l=document.getElementById('duoChatLog');
-    if(l){l.innerHTML+=`<div class="duo-chat-bubble partner"><strong>${escapeHtml(d.user)}:</strong> ${escapeHtml(d.text)}</div>`;l.scrollTop=l.scrollHeight}
-  }else if(d.type==='SYNC_PLAY'&&d.track){currentPlaylist.splice(currentTrackIndex+1,0,d.track);renderHomeQueue();playTrack(currentTrackIndex+1,false)}
-  else if(d.type==='SYNC_TOGGLE'){togglePlaybackState(false)}
-}
+function generatePartnerCode(username){if(!username)return'VAULT-XXXXXX';let hash=0;const seed=username+'_vaultify_2026';for(let i=0;i<seed.length;i++){hash=((hash<<5)-hash)+seed.charCodeAt(i);hash=hash&hash}const code=Math.abs(hash).toString(36).toUpperCase().padStart(6,'0').slice(0,6);return 'VAULT-'+code}
+function syncUserPartnerCode(){if(!loggedInUser)return;const db=getUserDB();const user=db[loggedInUser.username];if(!user)return;if(!user.partnerCode){user.partnerCode=generatePartnerCode(loggedInUser.username);db[loggedInUser.username]=user;saveUserDB(db)}loggedInUser.partnerCode=user.partnerCode;localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser))}
+function copyPartnerCode(){showToast('Coming soon feature')}
+function searchPartnerProfile(){showToast('Coming soon')}
+function sendPartnerRequest(){showToast('Coming soon')}
+function acceptPartnerRequest(){showToast('Coming soon')}
+function declinePartnerRequest(){showToast('Coming soon')}
+function renderPartnerRequests(){}
+function pairPartner(){showToast('Coming soon')}
+function sendDuoChatMessage(){}
+function handleDuoBroadcastMessage(e){const d=e.data;if(!d)return;if(d.type==='SYNC_PLAY'&&d.track){currentPlaylist.push(d.track);renderHomeQueue()}else if(d.type==='SYNC_TOGGLE'){togglePlaybackState(false)}}
 
-function initEmojiRunner(){
-  const i=document.getElementById('notchRunnerIcon');if(!i)return;
-  i.classList.remove('mode-flow','mode-mix');
-  if(emojiMode==='mix'){i.classList.add('mode-mix');animateMixEmoji()}
-  else{i.classList.add('mode-flow');if(mixRafId){cancelAnimationFrame(mixRafId);mixRafId=null}i.style.left='';i.style.transform=''}
-  i.innerText=activeEmoji;
-}
-function animateMixEmoji(){
-  if(mixRafId)cancelAnimationFrame(mixRafId);
-  const i=document.getElementById('notchRunnerIcon');const n=document.querySelector('.notch-island');
-  if(!i||!n)return;
-  let p=0,d=1;const sp=0.8;
-  const step=()=>{if(emojiMode!=='mix'){mixRafId=null;return}const mx=n.clientWidth-32;p+=d*sp;if(p>=mx){p=mx;d=-1;cycleEmoji()}else if(p<=0){p=0;d=1;cycleEmoji()}i.style.left=(8+p)+'px';mixRafId=requestAnimationFrame(step)};
-  mixRafId=requestAnimationFrame(step);
-}
+function initEmojiRunner(){const i=document.getElementById('notchRunnerIcon');if(!i)return;i.classList.remove('mode-flow','mode-mix');if(emojiMode==='mix'){i.classList.add('mode-mix');animateMixEmoji()}else{i.classList.add('mode-flow');if(mixRafId){cancelAnimationFrame(mixRafId);mixRafId=null}i.style.left='';i.style.transform=''}i.innerText=activeEmoji}
+function animateMixEmoji(){if(mixRafId)cancelAnimationFrame(mixRafId);const i=document.getElementById('notchRunnerIcon');const n=document.querySelector('.notch-island');if(!i||!n)return;let p=0,d=1;const sp=0.8;const step=()=>{if(emojiMode!=='mix'){mixRafId=null;return}const mx=n.clientWidth-32;p+=d*sp;if(p>=mx){p=mx;d=-1;cycleEmoji()}else if(p<=0){p=0;d=1;cycleEmoji()}i.style.left=(8+p)+'px';mixRafId=requestAnimationFrame(step)};mixRafId=requestAnimationFrame(step)}
 function cycleEmoji(){const l=emojiList.length>0?emojiList:['🐱'];currentEmojiIndex=(currentEmojiIndex+1)%l.length;const i=document.getElementById('notchRunnerIcon');if(!i)return;i.innerText=l[currentEmojiIndex];i.style.filter='drop-shadow(0 0 10px var(--accent-neon))';setTimeout(()=>{i.style.filter=''},200)}
-function initEmojiPicker(){
-  const r=document.getElementById('emojiPickerRow');if(!r)return;
-  r.innerHTML=emojiList.map(e=>`<div class="emoji-chip ${e===activeEmoji?'active':''}" data-emoji="${e}">${e}</div>`).join('');
-  r.querySelectorAll('.emoji-chip').forEach(c=>{c.addEventListener('click',()=>{activeEmoji=c.dataset.emoji;localStorage.setItem('vaultify_active_emoji',activeEmoji);r.querySelectorAll('.emoji-chip').forEach(x=>x.classList.remove('active'));c.classList.add('active');const icon=document.getElementById('notchRunnerIcon');if(icon)icon.innerText=activeEmoji;showToast(`Runner: ${activeEmoji}`)})});
-}
+function initEmojiPicker(){const r=document.getElementById('emojiPickerRow');if(!r)return;r.innerHTML=emojiList.map(e=>`<div class="emoji-chip ${e===activeEmoji?'active':''}" data-emoji="${e}">${e}</div>`).join('');r.querySelectorAll('.emoji-chip').forEach(c=>{c.addEventListener('click',()=>{activeEmoji=c.dataset.emoji;localStorage.setItem('vaultify_active_emoji',activeEmoji);r.querySelectorAll('.emoji-chip').forEach(x=>x.classList.remove('active'));c.classList.add('active');const icon=document.getElementById('notchRunnerIcon');if(icon)icon.innerText=activeEmoji;showToast(`Runner: ${activeEmoji}`)})})}
 function addCustomEmoji(){const i=document.getElementById('customEmojiInput');const v=i.value.trim();if(!v)return showToast("Enter emoji");if(emojiList.includes(v))return showToast("Already added");emojiList.push(v);localStorage.setItem('vaultify_emoji_list',JSON.stringify(emojiList));i.value='';initEmojiPicker();showToast(`Added: ${v}`)}
 function setEmojiMode(mode){emojiMode=mode;localStorage.setItem('vaultify_emoji_mode',mode);initEmojiRunner()}
 function toggleAmbientMotion(){const e=document.getElementById('gradientFlowBg');const b=document.getElementById('gradientToggleBtn');const o=e.classList.toggle('disabled');b.innerText=o?'Disabled':'Enabled';showToast(`Motion ${o?'off':'on'}`)}
 function toggleRunnerVisibility(){const i=document.getElementById('notchRunnerIcon');const b=document.getElementById('runnerToggleBtn');const h=i.style.display==='none';i.style.display=h?'':'none';b.innerText=h?'Enabled':'Disabled';showToast(`Runner ${h?'on':'off'}`)}
-function applyThemeScheme(c){
-  document.body.className='';
-  if(c!=='theme-violet')document.body.classList.add(c);
-  localStorage.setItem('vaultify_theme',c);
-  const meta=document.querySelector('meta[name="theme-color"]');
-  if(meta)meta.content=(c==='theme-midnight-oled')?'#000000':(c==='theme-royal-gold'?'#d4af37':'#8b5cf6');
-  showToast(`Theme changed!`);
-}
-function resetEqSliders(){['eq60','eq230','eq910','eq4k','eq14k'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=0});showToast("EQ Reset")}
+function applyThemeScheme(c){document.body.className='';if(c!=='theme-violet')document.body.classList.add(c);localStorage.setItem('vaultify_theme',c);const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.content=(c==='theme-midnight-oled')?'#000000':(c==='theme-royal-gold'?'#d4af37':'#8b5cf6');showToast(`Theme changed!`)}
 function changeAppLanguage(lang){appLanguage=lang;localStorage.setItem('vaultify_app_lang',lang);showToast(lang==='hi'?"हिंदी चुनी गई":"English Selected")}
 (function restoreTheme(){const saved=localStorage.getItem('vaultify_theme');if(saved&&saved!=='theme-violet')document.body.classList.add(saved)})();
 
@@ -1236,12 +959,12 @@ setInterval(checkPermissionsStatus,5000);
 
 Object.assign(window,{
   switchNavTab,switchLibraryTab,openModal,closeModal,openFullPlayer,closeFullPlayer,
-  openPartnerModal,openSupportModal,openNotificationModal,clearAllNotifications,executeLiveSearch,
+  openPartnerModal,openSupportModal,openNotificationModal,clearAllNotifications,executeLiveSearch,instantSearch,
   clearSearchHistory,requestMicAndListen,playSearchedTrackImmediately,playSingleTrackObject,
   playCached,removeCache,openPlaylist,deletePlaylist,playTrack,togglePlaybackState,
-  playNext,playPrevious,toggleShuffle,toggleRepeat,toggleSleepTimer,shareCurrentTrack,
+  playNext,playPrevious,autoplayNext,toggleShuffle,toggleRepeat,toggleSleepTimer,shareCurrentTrack,
   downloadCurrentTrack,toggleLikeCurrent,unlikeSong,toggleVideoCanvasView,
-  openAddToPlaylistModal,addToPlaylist,createPlaylistAndAdd,resetEqSliders,
+  openAddToPlaylistModal,addToPlaylist,createPlaylistAndAdd,resetEqSliders,applyEqNow,
   toggleAmbientMotion,toggleRunnerVisibility,addCustomEmoji,setEmojiMode,
   applyThemeScheme,changeAppLanguage,handleDpUpload,saveProfileData,performAppLogout,
   toggleAuthMode,processAuthSubmission,openForgotPasswordFlow,executePasswordReset,
