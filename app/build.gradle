@@ -3,12 +3,12 @@ plugins {
 }
 
 android {
-    namespace 'com.music'
+    namespace 'com.vaultify.music'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.music"
-        minSdk 24
+        applicationId "com.vaultify.music"
+        minSdk 21
         targetSdk 34
         versionCode 1
         versionName "1.0"
@@ -25,10 +25,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    buildFeatures {
+        buildConfig true
+    }
 }
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.media:media:1.7.0'
+    implementation 'com.google.android.material:material:1.11.0'
 }
