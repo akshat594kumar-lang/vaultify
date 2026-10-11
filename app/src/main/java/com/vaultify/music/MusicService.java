@@ -12,10 +12,17 @@ import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.media.app.NotificationCompat.MediaStyle;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MusicService extends Service {
     private static final String CHANNEL_ID = "vaultify_music";
@@ -31,6 +38,9 @@ public class MusicService extends Service {
     private String currentArtist = "Unlimited Soundscape";
     private boolean isPlaying = false;
     private Bitmap currentCover = null;
+    private String lastCoverUrl = "";
+    private ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
+    private Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     public void onCreate() {
@@ -52,7 +62,7 @@ public class MusicService extends Service {
                 }
                 if (jsAction != null) {
                     MainActivity.callJs(jsAction);
-                    updateNotification();
+                    mainHandler.postDelayed(() -> updateNotification(), 200);
                 }
             }
         };
@@ -78,7 +88,44 @@ public class MusicService extends Service {
         if (title != null && !title.isEmpty()) this.currentTitle = title;
         if (artist != null) this.currentArtist = artist;
         this.isPlaying = playing;
-        updateNotification();
+        
+        if (coverUrl != null && !coverUrl.isEmpty() && !coverUrl.equals(lastCoverUrl)) {
+            lastCoverUrl = coverUrl;
+            loadCoverImage(coverUrl);
+        } else {
+            updateNotification();
+        }
+    }
+
+    private void loadCoverImage(String url) {
+        if (url == null || url.isEmpty()) {
+            updateNotification();
+            return;
+        }
+        if (!url.startsWith("http")) {
+            updateNotification();
+            return;
+        }
+        imageExecutor.execute(() -> {
+            try {
+                URL imageUrl = new URL(url);
+                HttpURLConnection conn = (HttpURLConnection) imageUrl.openConnection();
+                conn.setDoInput(true);
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.connect();
+                InputStream input = conn.getInputStream();
+                Bitmap bmp = BitmapFactory.decodeStream(input);
+                input.close();
+                if (bmp != null) {
+                    currentCover = bmp;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            } finally {
+                mainHandler.post(() -> updateNotification());
+            }
+        });
     }
 
     private void updateNotification() {
@@ -102,13 +149,15 @@ public class MusicService extends Service {
                 .setOnlyAlertOnce(true)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setColor(0xFF8B5CF6)
+                .addAction(new NotificationCompat.Action(android.R.drawable.ic_media_previous, "Prev", prevPI))
                 .addAction(new NotificationCompat.Action(
                         isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
                         isPlaying ? "Pause" : "Play",
                         isPlaying ? pausePI : playPI))
                 .addAction(new NotificationCompat.Action(android.R.drawable.ic_media_next, "Next", nextPI));
 
-        MediaStyle style = new MediaStyle().setShowActionsInCompactView(0, 1);
+        MediaStyle style = new MediaStyle().setShowActionsInCompactView(0, 1, 2);
         builder.setStyle(style);
 
         Bitmap bm = currentCover != null ? currentCover : BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
@@ -120,10 +169,11 @@ public class MusicService extends Service {
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Music Playback", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Vaultify music controls");
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Vaultify Music", NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("Vaultify music player controls");
             channel.setSound(null, null);
             channel.enableVibration(false);
+            channel.setShowBadge(false);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
@@ -133,6 +183,7 @@ public class MusicService extends Service {
     public void onDestroy() {
         super.onDestroy();
         try { if (controlReceiver != null) unregisterReceiver(controlReceiver); } catch (Exception e) {}
+        try { if (imageExecutor != null) imageExecutor.shutdown(); } catch (Exception e) {}
     }
 
     @Nullable
