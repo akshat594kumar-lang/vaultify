@@ -1,6 +1,4 @@
-/* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Full Script (Saavn + Piped + Invidious + SoundCloud)   */
-/* ═══════════════════════════════════════════════════════════════════ */
+/* VAULTIFY — Full Final Script */
 
 const CREATOR_ROOT_EMAIL = "akshat594kumar@gmail.com";
 let audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
@@ -21,15 +19,12 @@ const SAAVN_APIS = [
   'https://saavn.dev','https://jiosaavn-api-privatecvc2.vercel.app','https://saavn-api-delta.vercel.app'
 ];
 
-const SOUNDCLOUD_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
-const SOUNDCLOUD_API = 'https://api-v2.soundcloud.com';
-
-let cacheDB = null;
-function initCacheDB(){return new Promise(resolve=>{try{const req=indexedDB.open('vaultify_cache',2);req.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('songs'))db.createObjectStore('songs',{keyPath:'id'})};req.onsuccess=e=>{cacheDB=e.target.result;resolve(cacheDB)};req.onerror=()=>resolve(null)}catch(e){resolve(null)}})}
-function cacheGet(id){return new Promise(res=>{if(!cacheDB)return res(null);try{const rq=cacheDB.transaction('songs','readonly').objectStore('songs').get(id);rq.onsuccess=()=>{const r=rq.result;if(!r)return res(null);try{if(r.blob instanceof Blob)r.url=URL.createObjectURL(r.blob)}catch(e){}res(r)};rq.onerror=()=>res(null)}catch(e){res(null)}})}
-function cachePut(id,blob,meta){return new Promise(res=>{if(!cacheDB)return res(false);try{const tx=cacheDB.transaction('songs','readwrite');tx.objectStore('songs').put({id,blob,title:meta.title,artist:meta.artist,cover:meta.cover,cachedAt:Date.now()});tx.oncomplete=()=>res(true);tx.onerror=()=>res(false)}catch(e){res(false)}})}
-function cacheDelete(id){return new Promise(res=>{if(!cacheDB)return res(false);try{const tx=cacheDB.transaction('songs','readwrite');tx.objectStore('songs').delete(id);tx.oncomplete=()=>res(true)}catch(e){res(false)}})}
-function cacheAll(){return new Promise(res=>{if(!cacheDB)return res([]);try{const rq=cacheDB.transaction('songs','readonly').objectStore('songs').getAll();rq.onsuccess=()=>res(rq.result||[]);rq.onerror=()=>res([])}catch(e){res([])}})}
+let cacheDB=null;
+function initCacheDB(){return new Promise(r=>{try{const req=indexedDB.open('vaultify_cache',2);req.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('songs'))db.createObjectStore('songs',{keyPath:'id'})};req.onsuccess=e=>{cacheDB=e.target.result;r(cacheDB)};req.onerror=()=>r(null)}catch(e){r(null)}})}
+function cacheGet(id){return new Promise(r=>{if(!cacheDB)return r(null);try{const rq=cacheDB.transaction('songs','readonly').objectStore('songs').get(id);rq.onsuccess=()=>{const x=rq.result;if(!x)return r(null);try{if(x.blob instanceof Blob)x.url=URL.createObjectURL(x.blob)}catch(e){}r(x)};rq.onerror=()=>r(null)}catch(e){r(null)}})}
+function cachePut(id,blob,meta){return new Promise(r=>{if(!cacheDB)return r(false);try{const tx=cacheDB.transaction('songs','readwrite');tx.objectStore('songs').put({id,blob,title:meta.title,artist:meta.artist,cover:meta.cover,cachedAt:Date.now()});tx.oncomplete=()=>r(true);tx.onerror=()=>r(false)}catch(e){r(false)}})}
+function cacheDelete(id){return new Promise(r=>{if(!cacheDB)return r(false);try{const tx=cacheDB.transaction('songs','readwrite');tx.objectStore('songs').delete(id);tx.oncomplete=()=>r(true)}catch(e){r(false)}})}
+function cacheAll(){return new Promise(r=>{if(!cacheDB)return r([]);try{const rq=cacheDB.transaction('songs','readonly').objectStore('songs').getAll();rq.onsuccess=()=>r(rq.result||[]);rq.onerror=()=>r([])}catch(e){r([])}})}
 
 async function requestHardwareWakeLock(){try{if('wakeLock' in navigator&&(!wakeLockSentinel||wakeLockSentinel.released)){wakeLockSentinel=await navigator.wakeLock.request('screen');wakeLockSentinel.addEventListener('release',()=>{wakeLockSentinel=null})}}catch(e){}}
 function initForegroundAudioBridge(){try{if(!audioContextNode)audioContextNode=new(window.AudioContext||window.webkitAudioContext)();if(audioContextNode.state==='suspended')audioContextNode.resume();if(!audioContextNode._oscStarted){const osc=audioContextNode.createOscillator();const gain=audioContextNode.createGain();osc.frequency.value=30;gain.gain.value=0.0001;osc.connect(gain);gain.connect(audioContextNode.destination);osc.start();audioContextNode._oscStarted=true}}catch(e){}}
@@ -57,13 +52,16 @@ const silentLoop=document.getElementById('silentAudioLoop');
 window.addEventListener('DOMContentLoaded',async()=>{
   await initCacheDB();
   setTimeout(()=>{const i=document.getElementById('appIntroScreen');if(i)i.classList.add('fade-out')},1200);
-  initAudioWakeLoop();syncLocalCatalog();verifyAuthGate();renderHomeRecentVault();renderHomeQueue();renderLibrary();renderSearchHistoryTags();
-  setupAndroidMediaSession();setupTimelineDraggableEngine();updateDynamicUserCounter();renderNotificationCenter();
+  initAudioWakeLoop();syncLocalCatalog();verifyAuthGate();
+  renderHomeRecentVault();renderHomeQueue();renderLibrary();renderSearchHistoryTags();
+  setupAndroidMediaSession();setupTimelineDraggableEngine();
+  updateDynamicUserCounter();renderNotificationCenter();
   initLiveSearchInputListener();initEmojiRunner();initEmojiPicker();
+  checkPermissionsStatus();
   await renderRecommendedSection();
-  setTimeout(()=>setEmojiMode(emojiMode),100);checkBroadcastNotifications();ensureMicPermission();
-  renderWhatsNewBadge();
-  window.addEventListener('popstate',()=>{ if(!handleSystemBackPress()){ navigationHistory.pop(); switchNavTab(navigationHistory[navigationHistory.length-1]||'home'); } });
+  setTimeout(()=>setEmojiMode(emojiMode),100);
+  checkBroadcastNotifications();renderWhatsNewBadge();
+  window.addEventListener('popstate',()=>{if(!handleSystemBackPress()){navigationHistory.pop();switchNavTab(navigationHistory[navigationHistory.length-1]||'home')}});
 });
 
 function handleSystemBackPress(){
@@ -76,8 +74,6 @@ function handleSystemBackPress(){
   return false;
 }
 window.handleSystemBackPress=handleSystemBackPress;
-
-async function ensureMicPermission(){try{const s=await navigator.mediaDevices.getUserMedia({audio:true});s.getTracks().forEach(t=>t.stop())}catch(e){}}
 
 function initAudioWakeLoop(){
   silentLoop.src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
@@ -103,10 +99,10 @@ function onYTStateChange(e){if(e.data===YT.PlayerState.PLAYING)setVisualState(tr
 function setupAndroidMediaSession(){
   if('mediaSession' in navigator){
     try{
-      navigator.mediaSession.setActionHandler('play',()=>{onNativePlay()});
-      navigator.mediaSession.setActionHandler('pause',()=>{onNativePause()});
-      navigator.mediaSession.setActionHandler('previoustrack',()=>{onNativePrev()});
-      navigator.mediaSession.setActionHandler('nexttrack',()=>{onNativeNext()});
+      navigator.mediaSession.setActionHandler('play',()=>onNativePlay());
+      navigator.mediaSession.setActionHandler('pause',()=>onNativePause());
+      navigator.mediaSession.setActionHandler('previoustrack',()=>onNativePrev());
+      navigator.mediaSession.setActionHandler('nexttrack',()=>onNativeNext());
       navigator.mediaSession.setActionHandler('seekto',d=>{if(d.seekTime!==undefined)seekAudioTo(d.seekTime)});
     }catch(e){}
   }
@@ -149,10 +145,48 @@ window.handleNativeMediaAction=function(action){
     case 'PREV':onNativePrev();break;
   }
 };
-window.handleNativeSeek=function(positionMs){
-  const seconds=positionMs/1000;
-  seekAudioTo(seconds);
-};
+window.handleNativeSeek=function(positionMs){seekAudioTo(positionMs/1000)};
+
+window.onNativePermissionResult=function(){checkPermissionsStatus()};
+
+function checkPermissionsStatus(){
+  const banner=document.getElementById('permWarningBanner');
+  const text=document.getElementById('permWarningText');
+  const micStatus=document.getElementById('micPermStatus');
+  const notifStatus=document.getElementById('notifPermStatus');
+  if(!window.AndroidNativeBridge){if(banner)banner.classList.remove('show');return}
+  let missing=[];
+  try{
+    const hasMic=window.AndroidNativeBridge.hasMicPermission();
+    const hasNotif=window.AndroidNativeBridge.hasNotificationPermission();
+    if(micStatus)micStatus.innerText=hasMic?'Granted':'Denied';
+    if(notifStatus)notifStatus.innerText=hasNotif?'Granted':'Denied';
+    if(micStatus)micStatus.style.color=hasMic?'#10b981':'#ef4444';
+    if(notifStatus)notifStatus.style.color=hasNotif?'#10b981':'#ef4444';
+    if(!hasMic)missing.push('Microphone');
+    if(!hasNotif)missing.push('Notifications');
+  }catch(e){}
+  if(missing.length>0&&banner&&text){
+    text.innerText=`${missing.join(' & ')} permission needed. Tap to enable.`;
+    banner.classList.add('show');
+  }else if(banner){banner.classList.remove('show')}
+}
+
+function handlePermissionBannerClick(){
+  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}
+  else showToast('Open Profile > Permissions to enable');
+}
+
+function requestPermsFromNative(){
+  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.requestPermissions){window.AndroidNativeBridge.requestPermissions()}
+  else showToast('Open app settings');
+  setTimeout(checkPermissionsStatus,800);
+}
+
+function openAppSettingsNative(){
+  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.openAppSettings){window.AndroidNativeBridge.openAppSettings()}
+  else showToast('Native settings not available');
+}
 
 function updateMediaSessionMetadata(track){
   if(!track)return;
@@ -163,9 +197,7 @@ function updateMediaSessionMetadata(track){
       navigator.mediaSession.playbackState=isPlayingAudio?'playing':'paused';
     }catch(e){}
   }
-  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.updateNotification){
-    try{window.AndroidNativeBridge.updateNotification(track.title||'Vaultify',track.artist||'',track.cover||'',isPlayingAudio)}catch(e){}
-  }
+  if(window.AndroidNativeBridge&&window.AndroidNativeBridge.updateNotification){try{window.AndroidNativeBridge.updateNotification(track.title||'Vaultify',track.artist||'',track.cover||'',isPlayingAudio)}catch(e){}}
 }
 
 function setupTimelineDraggableEngine(){
@@ -189,15 +221,15 @@ function toggleVideoCanvasView(){
   if(isVideoCanvasActive&&currentPlaylist[currentTrackIndex]){
     const t=currentPlaylist[currentTrackIndex];
     img.style.display='none';
-    if(t.id.startsWith('http')||t.id.startsWith('blob:')){v.style.display='block';v.muted=true;v.src=t.id;v.currentTime=mainAudio.currentTime;if(isPlayingAudio)v.play().catch(()=>{})}
-    showToast("Video Sync");
+    if(t.id&&t.id.length===11&&/^[a-zA-Z0-9_-]+$/.test(t.id)){v.style.display='block';v.muted=true;v.src=`https://www.youtube.com/embed/${t.id}?autoplay=1&mute=1`;v.play().catch(()=>{})}
+    showToast("Video Mode");
   }else{v.style.display='none';v.pause();v.src='';img.style.display='block';showToast("Audio Mode")}
 }
 
 async function saavnSearch(q,limit=20){
   for(const base of SAAVN_APIS){
     try{
-      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),7000);
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),6000);
       const r=await fetch(`${base}/api/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`,{signal:ctrl.signal});
       clearTimeout(tm);if(!r.ok)continue;
       const d=await r.json();
@@ -210,7 +242,7 @@ async function saavnSearch(q,limit=20){
 async function saavnSongById(id){
   for(const base of SAAVN_APIS){
     try{
-      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),7000);
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),6000);
       const r=await fetch(`${base}/api/songs/${id}`,{signal:ctrl.signal});clearTimeout(tm);
       if(!r.ok)continue;
       const d=await r.json();
@@ -234,25 +266,10 @@ async function searchSaavn(q){
   }catch(e){return[]}
 }
 
-async function searchSoundCloud(query,limit=15){
-  try{
-    const url=`${SOUNDCLOUD_API}/search/tracks?q=${encodeURIComponent(query)}&client_id=${SOUNDCLOUD_CLIENT_ID}&limit=${limit}&linked_partitioning=1`;
-    const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),6000);
-    const r=await fetch(url,{signal:ctrl.signal});clearTimeout(tm);
-    if(!r.ok)throw new Error('SC fail');
-    const data=await r.json();
-    const tracks=data.collection||[];
-    return tracks.map(t=>{
-      const streamUrl=t.stream_url?`${t.stream_url}?client_id=${SOUNDCLOUD_CLIENT_ID}`:null;
-      return{id:'sc_'+t.id,title:t.title||'Unknown',artist:t.user?.username||'SoundCloud',cover:t.artwork_url?t.artwork_url.replace('-large','-t500x500'):'vaultify.png',duration:Math.floor((t.duration||0)/1000),source:'soundcloud',_directStream:streamUrl};
-    }).filter(t=>t._directStream);
-  }catch(e){console.warn('SC error:',e);return[]}
-}
-
 async function searchPiped(q){
   const promises=PRIMARY_API_GATEWAYS.map(async h=>{
     try{
-      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4500);
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4000);
       const r=await fetch(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`,{signal:ctrl.signal});clearTimeout(tm);
       if(!r.ok)return null;
       const d=await r.json();
@@ -268,7 +285,7 @@ async function searchPiped(q){
 async function searchInvidious(q){
   const promises=INVIDIOUS_GATEWAYS.map(async h=>{
     try{
-      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4500);
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4000);
       const r=await fetch(`${h}/api/v1/search?q=${encodeURIComponent(q)}&type=video`,{signal:ctrl.signal});clearTimeout(tm);
       if(!r.ok)return null;
       const d=await r.json();
@@ -281,14 +298,36 @@ async function searchInvidious(q){
   return[];
 }
 
+async function searchAll(q){
+  const results=await Promise.allSettled([searchSaavn(q),searchPiped(q),searchInvidious(q)]);
+  const all=[];const seen=new Set();
+  results.forEach(r=>{if(r.status==='fulfilled'&&r.value)r.value.forEach(t=>{const k=(t.id||t.title||'').toString().toLowerCase().trim();if(k&&!seen.has(k)){seen.add(k);all.push(t)}})});
+  return all;
+}
+
 async function fetchTrendingSongs(limit=10){
-  const queries=['trending hindi 2026','top hits india 2026','viral songs 2026','bollywood hits','punjabi hits 2026'];
+  const queries=['trending hindi 2026','top hits india 2026','viral songs 2026','latest bollywood songs','punjabi hits 2026','arijit singh latest','atif aslam hits','new pakistani songs'];
   const q=queries[Math.floor(Math.random()*queries.length)];
-  try{const sc=await searchSoundCloud(q,limit);if(sc.length)return sc}catch(e){}
-  try{const piped=await searchPiped(q);if(piped.length)return piped.slice(0,limit)}catch(e){}
-  try{const inv=await searchInvidious(q);if(inv.length)return inv.slice(0,limit)}catch(e){}
-  try{const saavn=await searchSaavn(q);if(saavn.length)return saavn.slice(0,limit)}catch(e){}
+  const piped=await searchPiped(q);
+  if(piped.length)return piped.slice(0,limit);
+  const inv=await searchInvidious(q);
+  if(inv.length)return inv.slice(0,limit);
+  const saavn=await searchSaavn(q);
+  if(saavn.length)return saavn.slice(0,limit);
   return[];
+}
+
+function extractYouTubeId(url){
+  const m=url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
+  return m?m[1]:null;
+}
+function extractPlaylistId(url){
+  const m=url.match(/[?&]list=([^"&?\s]+)/);
+  return m?m[1]:null;
+}
+function extractSpotifyTrackId(url){
+  const m=url.match(/spotify\.com\/track\/([a-zA-Z0-9]+)/);
+  return m?m[1]:null;
 }
 
 async function executeLiveSearch(isAuto=false){
@@ -303,41 +342,77 @@ async function executeLiveSearch(isAuto=false){
   const l=document.getElementById('searchLoadingIndicator');
   const rc=document.getElementById('searchResultsContainer');
   l.style.display='block';
-  l.innerHTML='<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching Saavn + YouTube + SoundCloud...</div>';
-  const startTime=Date.now();
-  const results=await Promise.allSettled([searchSaavn(q),searchPiped(q),searchInvidious(q),searchSoundCloud(q)]);
-  const allResults=[];
-  results.forEach(r=>{if(r.status==='fulfilled'&&r.value&&r.value.length>0)allResults.push(...r.value)});
-  const seen=new Set();
-  const uniqueResults=[];
-  allResults.forEach(t=>{const key=(t.id||t.title||'').toString().toLowerCase().trim();if(key&&!seen.has(key)){seen.add(key);uniqueResults.push(t)}});
-  const saavnResults=uniqueResults.filter(t=>t.source==='saavn');
-  const ytResults=uniqueResults.filter(t=>t.source!=='saavn');
-  const mixed=[];
-  const maxLen=Math.max(saavnResults.length,ytResults.length);
-  for(let i=0;i<maxLen;i++){if(saavnResults[i])mixed.push(saavnResults[i]);if(ytResults[i])mixed.push(ytResults[i])}
-  const found=mixed.slice(0,30);
-  const elapsed=((Date.now()-startTime)/1000).toFixed(1);
+  l.innerHTML='<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
+  
+  const ytId=extractYouTubeId(q);
+  if(ytId){
+    const meta=await getYouTubeVideoMeta(ytId);
+    if(meta){playSearchedTrackImmediately(encodeURIComponent(meta.id),encodeURIComponent(meta.title),encodeURIComponent(meta.artist),encodeURIComponent(meta.cover),'');l.style.display='none';return}
+  }
+  
+  const plId=extractPlaylistId(q);
+  if(plId){
+    const pl=await fetchPlaylistItems(plId);
+    if(pl&&pl.length){showToast(`Loaded ${pl.length} playlist songs`);renderSearchResults(pl);l.style.display='none';return}
+  }
+  
+  const allResults=await searchAll(q);
+  const found=allResults.slice(0,30);
   l.style.display='none';
   if(found.length>0){
     renderSearchResults(found);
-    if(!isAuto)showToast(`✅ ${found.length} tracks (${elapsed}s)`);
+    if(!isAuto)showToast(`✅ ${found.length} results`);
     setTimeout(renderRecommendedSection,2000);
   }else{
-    rc.innerHTML='<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila. Try different keywords.</p>';
+    rc.innerHTML='<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila.</p>';
   }
+}
+
+async function getYouTubeVideoMeta(vid){
+  try{
+    for(const h of INVIDIOUS_GATEWAYS){
+      try{
+        const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),3500);
+        const r=await fetch(`${h}/api/v1/videos/${vid}`,{signal:ctrl.signal});clearTimeout(tm);
+        if(!r.ok)continue;
+        const d=await r.json();
+        return{id:vid,title:d.title,artist:d.author||'YouTube',cover:`https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,duration:d.lengthSeconds||0,source:'youtube'};
+      }catch(e){}
+    }
+    for(const h of PRIMARY_API_GATEWAYS){
+      try{
+        const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),3500);
+        const r=await fetch(`${h}/streams/${vid}`,{signal:ctrl.signal});clearTimeout(tm);
+        if(!r.ok)continue;
+        const d=await r.json();
+        return{id:vid,title:d.title,artist:d.uploader||'YouTube',cover:d.thumbnailUrl,source:'youtube'};
+      }catch(e){}
+    }
+  }catch(e){}
+  return{id:vid,title:'YouTube Track',artist:'YouTube',cover:`https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,source:'youtube'};
+}
+
+async function fetchPlaylistItems(playlistId){
+  for(const h of INVIDIOUS_GATEWAYS){
+    try{
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),5000);
+      const r=await fetch(`${h}/api/v1/playlists/${playlistId}`,{signal:ctrl.signal});clearTimeout(tm);
+      if(!r.ok)continue;
+      const d=await r.json();
+      if(!d.videos)continue;
+      return d.videos.map(v=>({id:v.videoId,title:v.title,artist:v.author||'Unknown',cover:`https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,duration:v.lengthSeconds||0,source:'youtube'}));
+    }catch(e){}
+  }
+  return null;
 }
 
 function renderSearchResults(tracks){
   const c=document.getElementById('searchResultsContainer');
   c.innerHTML=tracks.map(t=>{
-    const src=t.source||'youtube';
-    const srcIcon={youtube:'fa-brands fa-youtube',saavn:'fa-solid fa-music',soundcloud:'fa-brands fa-soundcloud'}[src]||'fa-solid fa-music';
-    const srcColor={youtube:'#ef4444',saavn:'#10b981',soundcloud:'#ff5500'}[src]||'var(--accent-neon)';
     const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');
     const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'vaultify.png');
     const safeDirect=t._directStream?encodeURIComponent(t._directStream):'';
-    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p><i class="${srcIcon}" style="color:${srcColor};font-size:10px;margin-right:4px"></i>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
   }).join('');
 }
 
@@ -348,7 +423,9 @@ function playSearchedTrackImmediately(idEnc,title,artist,cover,directEnc){
   if(realDirect)t._directStream=realDirect;
   const existingIdx=currentPlaylist.findIndex(x=>x.id===t.id);
   if(existingIdx>=0){currentTrackIndex=existingIdx;renderHomeQueue();playTrack(existingIdx);return}
-  currentPlaylist.splice(currentTrackIndex+1,0,t);renderHomeQueue();playTrack(currentTrackIndex+1);
+  currentPlaylist.splice(currentTrackIndex+1,0,t);
+  renderHomeQueue();
+  playTrack(currentTrackIndex+1);
 }
 
 function renderSearchHistoryTags(){
@@ -373,7 +450,7 @@ async function fetchFromPiped(vid){
   for(let a=0;a<PRIMARY_API_GATEWAYS.length;a++){
     const h=PRIMARY_API_GATEWAYS[(activeHostIndex+a)%PRIMARY_API_GATEWAYS.length];
     try{
-      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4000);
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),3500);
       const r=await fetch(`${h}/streams/${vid}`,{signal:ctrl.signal});clearTimeout(tm);
       if(r.ok){const d=await r.json();if(d.audioStreams?.length){const best=d.audioStreams.sort((a,b)=>(b.bitrate||0)-(a.bitrate||0))[0];if(best?.url){activeHostIndex=PRIMARY_API_GATEWAYS.indexOf(h);return best.url}}}
     }catch(e){}
@@ -383,9 +460,10 @@ async function fetchFromPiped(vid){
 async function fetchFromInvidious(vid){
   for(const h of INVIDIOUS_GATEWAYS){
     try{
-      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),5000);
+      const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4500);
       const r=await fetch(`${h}/api/v1/videos/${vid}`,{signal:ctrl.signal});clearTimeout(tm);
-      if(!r.ok)continue;const d=await r.json();
+      if(!r.ok)continue;
+      const d=await r.json();
       const af=(d.adaptiveFormats||[]).filter(f=>f.type?.includes('audio'));
       af.sort((a,b)=>(b.bitrate||0)-(a.bitrate||0));
       if(af[0]?.url)return af[0].url;
@@ -405,7 +483,7 @@ async function playTrack(index,broadcast=true){
   if(!silentLoopStarted){silentLoop.play().catch(()=>{});silentLoopStarted=true}
   if(broadcast&&duoChannel)duoChannel.postMessage({type:'SYNC_PLAY',track});
   setTimeout(()=>preCacheNextTracks(index,2),10000);
-  setTimeout(()=>autoExtendQueue(track),15000);
+  setTimeout(()=>autoExtendQueue(track),12000);
   let streamUrl=null;
   if(track._directStream&&track._directStream.startsWith('http'))streamUrl=track._directStream;
   if(!streamUrl){const c=trackBlobCache.get(track.id);if(c&&c.startsWith('blob:'))streamUrl=c}
@@ -414,18 +492,23 @@ async function playTrack(index,broadcast=true){
   if(!streamUrl){fallbackToYouTubeBridge(track.id);return}
   activeStreamEngine='direct';
   try{if(ytPlayerReady&&ytPlayer&&ytPlayer.stopVideo)ytPlayer.stopVideo()}catch(e){}
-  mainAudio.src=streamUrl;mainAudio.load();
+  mainAudio.src=streamUrl;
+  mainAudio.load();
   try{await mainAudio.play();setVisualState(true);setTimeout(()=>cacheTrackInBackground(track),12000)}catch(e){fallbackToYouTubeBridge(track.id)}
 }
 
 async function autoExtendQueue(track){
   if(autoMixFetching||!track)return;
   const remaining=currentPlaylist.length-currentTrackIndex-1;
-  if(remaining>1)return;
+  if(remaining>2)return;
   autoMixFetching=true;
   try{
     const related=await fetchRelatedSongs(track);
-    if(related.length){related.forEach(t=>currentPlaylist.push(t));renderHomeQueue();showToast(`➕ ${related.length} related songs added`)}
+    if(related.length){
+      related.forEach(t=>{if(!currentPlaylist.some(x=>x.id===t.id))currentPlaylist.push(t)});
+      renderHomeQueue();
+      showToast(`➕ ${related.length} related songs`);
+    }
   }catch(e){}
   autoMixFetching=false;
 }
@@ -433,40 +516,39 @@ async function autoExtendQueue(track){
 async function fetchRelatedSongs(seedTrack){
   if(!seedTrack)return[];
   const now=Date.now();
-  if(now-lastAutoFetchTime<8000)return[];
+  if(now-lastAutoFetchTime<5000)return[];
   lastAutoFetchTime=now;
-  let artist=(seedTrack.artist||'').replace(/vevo|official|records|channel|music|topic/gi,'').trim();
-  if(artist===lastFetchedArtist){artist=(seedTrack.title||'').split(' ').slice(0,3).join(' ')}
-  else{lastFetchedArtist=artist}
-  const q=artist&&artist.length>2?`${artist} top songs`:`${seedTrack.title||'trending'} similar`;
-  const existingIds=new Set(currentPlaylist.map(t=>t.id));
-  let results=[];
-  try{
-    const saavnResults=await saavnSearch(q,15);
-    if(saavnResults?.length){
-      results=saavnResults.map(s=>{const direct=saavnExtractDirect(s);return{id:'saavn_'+s.id,title:decodeHtmlEntities(s.name||s.title||'Unknown'),artist:(s.artists?.primary?.map(a=>a.name).join(', '))||s.primaryArtists||'Unknown',cover:s.image?.[2]?.url||s.image?.[1]?.url||'',duration:s.duration||0,source:'saavn',_directStream:direct}}).filter(t=>t._directStream&&!existingIds.has(t.id));
-    }
-  }catch(e){}
-  if(!results.length){
-    for(let n=0;n<PRIMARY_API_GATEWAYS.length;n++){
-      const h=PRIMARY_API_GATEWAYS[(activeHostIndex+n)%PRIMARY_API_GATEWAYS.length];
-      try{
-        const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),4500);
-        const r=await fetch(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`,{signal:ctrl.signal});clearTimeout(tm);
-        if(r.ok){const d=await r.json();if(d.items?.length){results=d.items.filter(i=>i.type==='stream').map(i=>({id:i.url.replace('/watch?v=',''),title:i.title,artist:i.uploaderName||'Artist',cover:i.thumbnail,duration:i.duration||0,source:'youtube'})).filter(t=>!existingIds.has(t.id));if(results.length)break}}
-      }catch(e){}
-    }
+  let artist=(seedTrack.artist||'').replace(/vevo|official|records|channel|music|topic|entertainment/gi,'').trim();
+  let query='';
+  if(artist&&artist.length>2&&artist!==lastFetchedArtist){
+    query=`${artist} top songs`;
+    lastFetchedArtist=artist;
+  }else{
+    const titleWords=(seedTrack.title||'').split(' ').slice(0,4).join(' ').replace(/[\(\)\[\]]/g,'').trim();
+    query=`${titleWords} similar songs`;
   }
-  results=results.sort(()=>Math.random()-0.5).slice(0,8);
-  return results;
+  const existingIds=new Set(currentPlaylist.map(t=>t.id));
+  const results=await searchAll(query);
+  const filtered=results.filter(t=>!existingIds.has(t.id)).slice(0,10);
+  return filtered.sort(()=>Math.random()-0.5).slice(0,8);
 }
 
 function fallbackToYouTubeBridge(vid){
   if(!vid||!/^[a-zA-Z0-9_-]{11}$/.test(vid)){showToast('❌ Play fail');return}
   activeStreamEngine='yt_engine';
   try{mainAudio.pause()}catch(e){}
-  if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){ytPlayer.loadVideoById(vid);ytPlayer.playVideo();setVisualState(true)}
-  else showToast("Audio bridge...");
+  if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){
+    ytPlayer.loadVideoById(vid);
+    ytPlayer.playVideo();
+    setVisualState(true);
+  }else{
+    showToast("YT Engine loading...");
+    setTimeout(()=>{
+      if(ytPlayerReady&&ytPlayer&&ytPlayer.loadVideoById){
+        ytPlayer.loadVideoById(vid);ytPlayer.playVideo();setVisualState(true);
+      }
+    },1500);
+  }
 }
 function togglePlaybackState(broadcast=true){
   if(activeStreamEngine==='direct'){
@@ -478,24 +560,25 @@ function togglePlaybackState(broadcast=true){
   if(broadcast&&duoChannel)duoChannel.postMessage({type:'SYNC_TOGGLE'});
 }
 function setVisualState(playing){
-  isPlayingAudio=playing;if(playing)requestHardwareWakeLock();
+  isPlayingAudio=playing;
+  if(playing)requestHardwareWakeLock();
   const mi=document.getElementById('miniPlayIcon');if(mi)mi.className=playing?'fa-solid fa-pause':'fa-solid fa-play';
   const fi=document.getElementById('fullPlayIcon');if(fi)fi.className=playing?'fa-solid fa-pause':'fa-solid fa-play';
   if('mediaSession' in navigator)navigator.mediaSession.playbackState=playing?'playing':'paused';
   const t=currentPlaylist[currentTrackIndex];
   if(t&&window.AndroidNativeBridge&&window.AndroidNativeBridge.updateNotification){try{window.AndroidNativeBridge.updateNotification(t.title||'Vaultify',t.artist||'',t.cover||'',playing)}catch(e){}}
-  const q=document.getElementById('modalQueueDrawer');if(q&&q.classList.contains('open'))renderHomeQueue();
+  const q=document.getElementById('modalQueueDrawer');
+  if(q&&q.classList.contains('open'))renderHomeQueue();
 }
 async function playNext(){
   if(currentPlaylist.length===0)return;
   const remaining=currentPlaylist.length-currentTrackIndex-1;
-  if(remaining===0){
+  if(remaining<2){
     const currentTrack=currentPlaylist[currentTrackIndex];
-    showToast('🔄 Loading related songs...');
+    showToast('🔄 Loading related...');
     autoMixFetching=false;
     const related=await fetchRelatedSongs(currentTrack);
-    if(related.length){related.forEach(t=>currentPlaylist.push(t));renderHomeQueue()}
-    else{showToast('❌ No more songs');return}
+    if(related.length){related.forEach(t=>{if(!currentPlaylist.some(x=>x.id===t.id))currentPlaylist.push(t)});renderHomeQueue()}
   }
   if(isShuffle)currentTrackIndex=Math.floor(Math.random()*currentPlaylist.length);
   else currentTrackIndex=(currentTrackIndex+1)%currentPlaylist.length;
@@ -522,7 +605,7 @@ function shareCurrentTrack(){
 
 async function cacheTrackInBackground(track){
   if(!track)return;
-  if(track.id.startsWith('saavn_')||track.id.startsWith('blob:')||track.id.startsWith('sc_'))return;
+  if(track.id.startsWith('saavn_')||track.id.startsWith('blob:'))return;
   if(trackBlobCache.has(track.id))return;
   const existing=await cacheGet(track.id);
   if(existing?.url){trackBlobCache.set(track.id,existing.url);return}
@@ -538,7 +621,7 @@ async function cacheTrackInBackground(track){
     if(currentLibraryTab==='cached'&&document.getElementById('tabLibrary').classList.contains('active'))renderLibrary();
   }catch(e){hideDownloadIndicator()}
 }
-function preCacheNextTracks(startIdx,count=2){for(let i=1;i<=count;i++){const idx=startIdx+i;if(idx<currentPlaylist.length){const t=currentPlaylist[idx];setTimeout(()=>cacheTrackInBackground(t),i*8000)}}}
+function preCacheNextTracks(startIdx,count=2){for(let i=1;i<=count;i++){const idx=startIdx+i;if(idx<currentPlaylist.length){const t=currentPlaylist[idx];setTimeout(()=>cacheTrackInBackground(t),i*6000)}}}
 
 async function downloadCurrentTrack(){
   if(currentPlaylist.length===0)return showToast("No track!");
@@ -559,6 +642,11 @@ async function downloadCurrentTrack(){
 }
 
 async function requestMicAndListen(){
+  if(window.AndroidNativeBridge&&!window.AndroidNativeBridge.hasMicPermission()){
+    if(window.AndroidNativeBridge.requestPermissions)window.AndroidNativeBridge.requestPermissions();
+    showToast('Mic permission needed — grant and retry');
+    return;
+  }
   const b=document.getElementById('voiceMicTrigger');
   try{const s=await navigator.mediaDevices.getUserMedia({audio:true});s.getTracks().forEach(t=>t.stop())}
   catch(e){return showToast("Mic permission denied!")}
@@ -579,18 +667,12 @@ function initLiveSearchInputListener(){
   f.addEventListener('input',()=>{
     clearTimeout(liveSearchDebounceTimer);
     const q=f.value.trim();
-    if(q.length>=3){
-      liveSearchDebounceTimer=setTimeout(()=>{
-        if(f.value.trim()===q)executeLiveSearch(true);
-      },3000);
+    if(q.length>=4){
+      liveSearchDebounceTimer=setTimeout(()=>{if(f.value.trim()===q)executeLiveSearch(true)},2000);
     }
   });
   f.addEventListener('keydown',(e)=>{
-    if(e.key==='Enter'){
-      clearTimeout(liveSearchDebounceTimer);
-      e.preventDefault();
-      executeLiveSearch(false);
-    }
+    if(e.key==='Enter'){clearTimeout(liveSearchDebounceTimer);e.preventDefault();executeLiveSearch(false)}
   });
 }
 
@@ -619,34 +701,26 @@ function buildRecommendationQuery(){
   playbackHistoryList.slice(0,5).forEach(t=>{if(t.artist)tokens.push(t.artist.replace(/vevo|official|channel|records|music/gi,'').trim())});
   searchHistoryList.slice(0,3).forEach(s=>tokens.push(s));
   const u=[...new Set(tokens.filter(t=>t&&t.length>2))];
-  if(u.length===0)return"trending hindi songs 2026";
+  if(u.length===0)return"trending songs 2026";
   return u.slice(0,3).join(' ')+" songs";
 }
 
 async function renderRecommendedSection(){
   const container=document.getElementById('recommendedContainer');
   if(!container)return;
-  let found=[];
-  let headerText='Recommended For You';
+  let found=[];let headerText='Trending Now';
   if(playbackHistoryList.length===0&&searchHistoryList.length===0){
-    headerText='Trending Now';
-    container.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0"><i class="fa-solid fa-spinner fa-spin"></i> Loading trending songs...</p>`;
     found=await fetchTrendingSongs(8);
-    if(found.length===0){
-      container.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Trending load nahi hua. Check connection.</p>`;
-      return;
-    }
   }else{
+    headerText='Recommended For You';
     const q=buildRecommendationQuery();
     const seen=new Set(playbackHistoryList.map(t=>t.id));
-    const saavnResults=await saavnSearch(q,10);
-    if(saavnResults?.length){
-      found=saavnResults.map(s=>{const direct=saavnExtractDirect(s);return{id:'saavn_'+s.id,title:decodeHtmlEntities(s.name||''),artist:(s.artists?.primary?.map(a=>a.name).join(', '))||'Unknown',cover:s.image?.[2]?.url||'',source:'saavn',_directStream:direct}}).filter(t=>t._directStream&&!seen.has(t.id)).slice(0,5);
-    }
+    const all=await searchAll(q);
+    found=all.filter(t=>!seen.has(t.id)).slice(0,6);
   }
   const headerEl=document.querySelector('.recommended-header span');
   if(headerEl)headerEl.innerText=headerText;
-  if(found.length===0){container.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`;return}
+  if(found.length===0){container.innerHTML=`<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions. Play something first.</p>`;return}
   container.innerHTML=found.map(t=>{const safeId=encodeURIComponent(t.id),safeTitle=encodeURIComponent(t.title||'');const safeArtist=encodeURIComponent(t.artist||''),safeCover=encodeURIComponent(t.cover||'');const safeDirect=t._directStream?encodeURIComponent(t._directStream):'';return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon);font-size:13px"></i></div>`}).join('');
 }
 
@@ -677,6 +751,7 @@ function switchNavTab(tab,th=true){
   if(th&&navigationHistory[navigationHistory.length-1]!==tab)navigationHistory.push(tab);
   if(tab==='home')setTimeout(renderRecommendedSection,300);
   if(tab==='library')renderLibrary();
+  if(tab==='profile')checkPermissionsStatus();
 }
 function openFullPlayer(){document.getElementById('fullPlayerModal').classList.add('open')}
 function closeFullPlayer(){document.getElementById('fullPlayerModal').classList.remove('open')}
@@ -696,8 +771,8 @@ function sendSupportMail(){
   const subject=`Vaultify Support - ${n}`;
   const body=`Name: ${n}\nEmail: ${e}\nUser: ${loggedInUser?.username||'guest'}\n\nProblem:\n${m}`;
   const mailtoUrl=`mailto:akshat594kumar@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  try{window.location.href=mailtoUrl;pushNotification({title:'Support',message:'Mail app khul raha hai...',icon:'fa-solid fa-headset',iconColor:'#10b981'});showToast('📧 Mail app khul raha hai')}
-  catch(err){navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(()=>{showToast('✅ Email details copied.');pushNotification({title:'Support',message:'Email details copied.',icon:'fa-solid fa-copy',iconColor:'#fbbf24'})}).catch(()=>{const details=`To: akshat594kumar@gmail.com\n\n${body}`;const tm=document.createElement('div');tm.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999999;display:flex;align-items:center;justify-content:center;padding:20px;';tm.innerHTML=`<div style="background:#0d0317;border:1px solid var(--accent-neon);border-radius:20px;padding:20px;max-width:400px;width:100%;text-align:center;"><h3 style="color:var(--accent-neon);margin-bottom:12px;">Manual Email Required</h3><textarea style="width:100%;height:150px;background:#190529;border:1px solid var(--border);color:#fff;padding:8px;border-radius:8px;font-size:11px;" readonly>${details}</textarea><button onclick="navigator.clipboard.writeText(\`${details}\`);this.innerText='Copied!';setTimeout(()=>this.innerText='Copy Details',1500);" style="margin-top:10px;width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer;">Copy Details</button><button onclick="this.closest('div[style]').remove();" style="margin-top:8px;width:100%;padding:10px;background:transparent;color:var(--text-sub);border:1px solid var(--border);border-radius:10px;cursor:pointer;">Close</button></div>`;document.body.appendChild(tm);showToast('📧 Please copy the details manually.')})}
+  try{window.location.href=mailtoUrl;showToast('📧 Mail app khul raha hai')}
+  catch(err){navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(()=>showToast('✅ Email copied')).catch(()=>{const details=`To: akshat594kumar@gmail.com\n\n${body}`;const tm=document.createElement('div');tm.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999999;display:flex;align-items:center;justify-content:center;padding:20px;';tm.innerHTML=`<div style="background:#0d0317;border:1px solid var(--accent-neon);border-radius:20px;padding:20px;max-width:400px;width:100%;text-align:center;"><h3 style="color:var(--accent-neon);margin-bottom:12px;">Manual Email</h3><textarea style="width:100%;height:150px;background:#190529;border:1px solid var(--border);color:#fff;padding:8px;border-radius:8px;font-size:11px;" readonly>${details}</textarea><button onclick="this.closest('div[style]').remove();" style="margin-top:10px;width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer;">Close</button></div>`;document.body.appendChild(tm)})}
 }
 
 async function savePlaybackState(){
@@ -808,8 +883,7 @@ async function broadcastNotification(title,message){
   localStorage.setItem('vaultify_broadcasts',JSON.stringify(allBroadcasts));
   localStorage.setItem('vaultify_latest_broadcast',JSON.stringify(broadcast));
   if(duoChannel){try{duoChannel.postMessage({type:'GLOBAL_BROADCAST',broadcast})}catch(e){}}
-  const db=getUserDB();
-  let sentCount=0;
+  const db=getUserDB();let sentCount=0;
   for(const key in db){
     const u=db[key];
     if(!u.notifications)u.notifications=[];
@@ -845,9 +919,7 @@ function checkIncomingBroadcasts(){
   }
   renderWhatsNewBadge();
 }
-
 function getBroadcastHistory(){return JSON.parse(localStorage.getItem('vaultify_broadcasts')||'[]')}
-
 function renderWhatsNewBadge(){
   const history=getBroadcastHistory();
   const lastSeen=localStorage.getItem('vaultify_whatsnew_seen');
@@ -856,7 +928,6 @@ function renderWhatsNewBadge(){
   const unread=history.filter(b=>!lastSeen||b.id!==lastSeen).length;
   if(unread>0){badge.innerText=unread;badge.style.display='flex'}else{badge.style.display='none'}
 }
-
 function openWhatsNewModal(){
   const history=getBroadcastHistory();
   const container=document.getElementById('whatsNewList');
@@ -1033,10 +1104,14 @@ async function executePasswordReset(){
   const db=getUserDB();db[found.key].passwordHash=newHash;db[found.key].salt=newSalt;saveUserDB(db);
   closeModal('modalForgotPass');openModal('modalAuthGate');showToast("✅ Password updated!");
 }
-function triggerDpPicker(){const picker=document.getElementById('avatarPicker');if(picker)picker.click()}
+function triggerDpPicker(){
+  const picker=document.getElementById('avatarPicker');
+  if(picker)picker.click();
+  else showToast('Picker not found');
+}
 function handleDpUpload(e){
   const f=e.target.files[0];if(!f)return;
-  if(f.size>2*1024*1024){showToast("Max 2MB");return}
+  if(f.size>3*1024*1024){showToast("Max 3MB");return}
   if(!f.type.startsWith('image/')){showToast("Image only");return}
   const r=new FileReader();
   r.onload=ev=>{
@@ -1046,6 +1121,7 @@ function handleDpUpload(e){
     showToast("✅ DP Updated!");
   };
   r.readAsDataURL(f);
+  e.target.value='';
 }
 function saveProfileData(){
   if(!loggedInUser)return;
@@ -1152,15 +1228,13 @@ function acceptPartnerRequest(fromUsername){
   from.partnerCode=from.partnerCode||generatePartnerCode(fromUsername);
   me.partnerRequests=(me.partnerRequests||[]).filter(r=>r.from!==fromUsername);
   from.partnerRequestsSent=(from.partnerRequestsSent||[]).filter(r=>r.to!==loggedInUser.username);
-  db[loggedInUser.username]=me;
-  db[fromUsername]=from;
+  db[loggedInUser.username]=me;db[fromUsername]=from;
   saveUserDB(db);
   loggedInUser=me;
   localStorage.setItem('vaultify_active_user',JSON.stringify(loggedInUser));
   pushNotification({title:'💕 Partner Connected',message:`${from.displayName||from.username} ke saath sync ready!`,icon:'fa-solid fa-heart',iconColor:'#ec4899'});
   showToast(`💕 Connected with ${from.displayName||from.username}`);
-  renderPartnerRequests();
-  syncUserPartnerCode();
+  renderPartnerRequests();syncUserPartnerCode();
   const chatBox=document.getElementById('activePartnerChat');
   if(chatBox)chatBox.style.display='block';
 }
@@ -1184,7 +1258,7 @@ function renderPartnerRequests(){
   const db=getUserDB();
   const me=db[loggedInUser.username];
   if(!me||!me.partnerRequests||me.partnerRequests.length===0){container.innerHTML='<p style="font-size:11px;color:var(--text-sub);text-align:center;padding:8px 0">No pending requests.</p>';return}
-  container.innerHTML=me.partnerRequests.filter(r=>r.status==='pending').map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.3);border-radius:12px;margin-bottom:8px"><img src="${r.fromAvatar||'vaultify.png'}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid var(--partner-pink)" onerror="this.src='vaultify.png'" /><div style="flex:1;overflow:hidden"><div style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.fromName)}</div><div style="font-size:10.5px;color:#f9a8d4;margin-top:2px">wants to sync music with you</div></div><div style="display:flex;gap:6px"><button onclick="acceptPartnerRequest('${r.from}')" style="background:linear-gradient(135deg,#10b981,#059669);border:none;color:#fff;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer"><i class="fa-solid fa-check"></i></button><button onclick="declinePartnerRequest('${r.from}')" style="background:rgba(239,68,68,.15);border:1px solid #ef4444;color:#ef4444;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer"><i class="fa-solid fa-xmark"></i></button></div></div>`).join('');
+  container.innerHTML=me.partnerRequests.filter(r=>r.status==='pending').map(r=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.3);border-radius:12px;margin-bottom:8px"><img src="${r.fromAvatar||'vaultify.png'}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid var(--partner-pink)" onerror="this.src='vaultify.png'" /><div style="flex:1;overflow:hidden"><div style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.fromName)}</div><div style="font-size:10.5px;color:#f9a8d4;margin-top:2px">wants to sync</div></div><div style="display:flex;gap:6px"><button onclick="acceptPartnerRequest('${r.from}')" style="background:linear-gradient(135deg,#10b981,#059669);border:none;color:#fff;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer"><i class="fa-solid fa-check"></i></button><button onclick="declinePartnerRequest('${r.from}')" style="background:rgba(239,68,68,.15);border:1px solid #ef4444;color:#ef4444;padding:6px 10px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer"><i class="fa-solid fa-xmark"></i></button></div></div>`).join('');
 }
 function pairPartner(){
   const card=document.getElementById('partnerProfileCard');
@@ -1206,7 +1280,7 @@ function handleDuoBroadcastMessage(e){
     renderWhatsNewBadge();
   }else if(d.type==='PARTNER_REQUEST'){
     if(loggedInUser&&d.to===loggedInUser.username){
-      pushNotification({title:'💕 Partner Request',message:`${d.fromName} wants to sync music with you`,icon:'fa-solid fa-heart',iconColor:'#ec4899'});
+      pushNotification({title:'💕 Partner Request',message:`${d.fromName} wants to sync`,icon:'fa-solid fa-heart',iconColor:'#ec4899'});
       renderPartnerRequests();
     }
   }else if(d.type==='DUO_CHAT'){
@@ -1253,6 +1327,8 @@ function resetEqSliders(){['eq60','eq230','eq910','eq4k','eq14k'].forEach(id=>{c
 function changeAppLanguage(lang){appLanguage=lang;localStorage.setItem('vaultify_app_lang',lang);showToast(lang==='hi'?"हिंदी चुनी गई":"English Selected")}
 (function restoreTheme(){const saved=localStorage.getItem('vaultify_theme');if(saved&&saved!=='theme-violet')document.body.classList.add(saved)})();
 
+setInterval(checkPermissionsStatus,5000);
+
 Object.assign(window,{
   switchNavTab,switchLibraryTab,openModal,closeModal,openFullPlayer,closeFullPlayer,
   openPartnerModal,openSupportModal,openNotificationModal,clearAllNotifications,executeLiveSearch,
@@ -1270,5 +1346,6 @@ Object.assign(window,{
   onNativePlay,onNativePause,onNativeNext,onNativePrev,
   handleNativeMediaAction,handleNativeSeek,
   broadcastNotification,openWhatsNewModal,checkIncomingBroadcasts,getBroadcastHistory,
-  renderWhatsNewBadge,sendBroadcastFromForm,fetchTrendingSongs,searchSoundCloud
+  renderWhatsNewBadge,sendBroadcastFromForm,fetchTrendingSongs,
+  requestPermsFromNative,openAppSettingsNative,handlePermissionBannerClick
 });
