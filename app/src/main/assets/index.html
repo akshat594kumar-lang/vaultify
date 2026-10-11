@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="grid-history-vault" id="homeRecentGrid"></div>
         <div class="recommended-section">
           <div class="recommended-header"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Recommended For You</span></div>
-          <div id="recommendedContainer"><p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Play some songs — recommendations will appear here.</p></div>
+          <div id="recommendedContainer"><p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Loading...</p></div>
         </div>
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-top:14px;box-shadow:0 0 14px var(--accent-glow)" onclick="openModal('modalQueueDrawer')">
           <div style="display:flex;align-items:center;gap:10px">
@@ -380,7 +380,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <h3 style="font-size:16px;color:#10b981;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-bullhorn"></i> Broadcast to All Users</h3>
         <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalBroadcast')"></i>
       </div>
-      <p style="font-size:11.5px;color:var(--text-sub);margin-bottom:12px;line-height:1.5">Ye message app ke <b style="color:#10b981">saare users</b> ko notification me jayega. Sirf owner send kar sakta hai.</p>
+      <p style="font-size:11.5px;color:var(--text-sub);margin-bottom:12px;line-height:1.5">Ye message app ke <b style="color:#10b981">saare users</b> ko notification me jayega.</p>
       <input class="form-input" id="bcTitle" placeholder="Notification Title" autocomplete="off" maxlength="60" />
       <textarea class="form-input" id="bcMessage" placeholder="Kya message bhejna hai? (max 300)" style="min-height:100px" maxlength="300"></textarea>
       <button class="submit-btn" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700" onclick="sendBroadcastFromForm()">
@@ -444,4 +444,4 @@ document.addEventListener('DOMContentLoaded', function() {
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="./script.js"></script>
 </body>
-</html>
+  </html>
