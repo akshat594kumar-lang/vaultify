@@ -29,8 +29,7 @@ public class MusicService extends Service {
 
     private MediaSessionCompat mediaSession;
     private Bitmap currentArtwork = null;
-
-    private String currentTitle = "Vaultify Pro";
+    private String currentTitle = "Vaultify";
     private String currentArtist = "Ready to play";
     private boolean isPlaying = false;
     private long currentPosition = 0;
@@ -41,31 +40,19 @@ public class MusicService extends Service {
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-
         mediaSession = new MediaSessionCompat(this, "VaultifySession");
         mediaSession.setCallback(new MediaSessionCompat.Callback() {
-            @Override
-            public void onPlay() { sendAction("PLAY"); }
-
-            @Override
-            public void onPause() { sendAction("PAUSE"); }
-
-            @Override
-            public void onSkipToNext() { sendAction("NEXT"); }
-
-            @Override
-            public void onSkipToPrevious() { sendAction("PREV"); }
-
-            @Override
-            public void onSeekTo(long pos) {
+            @Override public void onPlay() { sendAction("PLAY"); }
+            @Override public void onPause() { sendAction("PAUSE"); }
+            @Override public void onSkipToNext() { sendAction("NEXT"); }
+            @Override public void onSkipToPrevious() { sendAction("PREV"); }
+            @Override public void onSeekTo(long pos) {
                 Intent intent = new Intent("VAULTIFY_SEEK");
                 intent.putExtra("position", pos);
                 sendBroadcast(intent);
             }
         });
         mediaSession.setActive(true);
-
-        // Initial notification (foreground requirement)
         buildAndShowNotification();
     }
 
@@ -78,21 +65,15 @@ public class MusicService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Vaultify Playback",
-                    NotificationManager.IMPORTANCE_LOW
-            );
+                CHANNEL_ID, "Vaultify Playback", NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Music playback controls");
             channel.setShowBadge(false);
             channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             channel.enableLights(false);
             channel.enableVibration(false);
             channel.setSound(null, null);
-
             NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
+            if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
@@ -102,26 +83,20 @@ public class MusicService extends Service {
             String action = intent.getAction();
             if ("UPDATE_NOTIFICATION".equals(action)) {
                 updateNotification(
-                        intent.getStringExtra("title"),
-                        intent.getStringExtra("artist"),
-                        intent.getStringExtra("cover"),
-                        intent.getBooleanExtra("playing", false)
-                );
+                    intent.getStringExtra("title"),
+                    intent.getStringExtra("artist"),
+                    intent.getStringExtra("cover"),
+                    intent.getBooleanExtra("playing", false));
             } else if ("UPDATE_PROGRESS".equals(action)) {
-                updateProgress(
-                        intent.getLongExtra("position", 0),
-                        intent.getLongExtra("duration", 0)
-                );
+                updateProgress(intent.getLongExtra("position", 0),
+                               intent.getLongExtra("duration", 0));
             } else if ("STOP_NOTIFICATION".equals(action)) {
                 stopForeground(true);
                 foregroundStarted = false;
                 NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                if (manager != null) {
-                    manager.cancel(NOTIFICATION_ID);
-                }
+                if (manager != null) manager.cancel(NOTIFICATION_ID);
                 stopSelf();
             } else {
-                // Service started without action — show initial notification
                 buildAndShowNotification();
             }
         }
@@ -129,16 +104,14 @@ public class MusicService extends Service {
     }
 
     public void updateNotification(String title, String artist, String artworkUrl, boolean playing) {
-        this.currentTitle = (title != null && !title.isEmpty()) ? title : "Vaultify Pro";
+        this.currentTitle = (title != null && !title.isEmpty()) ? title : "Vaultify";
         this.currentArtist = (artist != null && !artist.isEmpty()) ? artist : "Ready to play";
         this.isPlaying = playing;
 
         if (artworkUrl != null && !artworkUrl.isEmpty()) {
             new Thread(() -> {
                 Bitmap bmp = loadBitmapFromUrl(artworkUrl);
-                if (bmp != null) {
-                    currentArtwork = bmp;
-                }
+                if (bmp != null) currentArtwork = bmp;
                 buildAndShowNotification();
             }).start();
         } else {
@@ -149,109 +122,76 @@ public class MusicService extends Service {
     public void updateProgress(long positionMs, long durationMs) {
         this.currentPosition = positionMs;
         this.totalDuration = durationMs;
-
         if (mediaSession != null) {
             PlaybackStateCompat state = new PlaybackStateCompat.Builder()
-                    .setActions(PlaybackStateCompat.ACTION_PLAY |
-                            PlaybackStateCompat.ACTION_PAUSE |
-                            PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
-                            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
-                            PlaybackStateCompat.ACTION_SEEK_TO)
-                    .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
-                            positionMs, 1.0f)
-                    .build();
+                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                        PlaybackStateCompat.ACTION_PAUSE |
+                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
+                        PlaybackStateCompat.ACTION_SEEK_TO)
+                .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING :
+                        PlaybackStateCompat.STATE_PAUSED, positionMs, 1.0f)
+                .build();
             mediaSession.setPlaybackState(state);
         }
     }
 
     private void buildAndShowNotification() {
-        // Content intent
         Intent contentIntent = new Intent(this, MainActivity.class);
         contentIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            piFlags |= PendingIntent.FLAG_IMMUTABLE;
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
         PendingIntent contentPending = PendingIntent.getActivity(this, 0, contentIntent, piFlags);
 
-        // Prev
-        PendingIntent prevPending = PendingIntent.getBroadcast(
-                this, 1,
-                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "PREV"),
-                piFlags
-        );
+        PendingIntent prevPending = PendingIntent.getBroadcast(this, 1,
+                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "PREV"), piFlags);
 
-        // Play/Pause
-        int playPauseIcon = isPlaying
-                ? android.R.drawable.ic_media_pause
-                : android.R.drawable.ic_media_play;
+        int playPauseIcon = isPlaying ? android.R.drawable.ic_media_pause :
+                android.R.drawable.ic_media_play;
         String playPauseAction = isPlaying ? "PAUSE" : "PLAY";
-        PendingIntent playPausePending = PendingIntent.getBroadcast(
-                this, 2,
-                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", playPauseAction),
-                piFlags
-        );
+        PendingIntent playPausePending = PendingIntent.getBroadcast(this, 2,
+                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", playPauseAction), piFlags);
 
-        // Next
-        PendingIntent nextPending = PendingIntent.getBroadcast(
-                this, 3,
-                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "NEXT"),
-                piFlags
-        );
+        PendingIntent nextPending = PendingIntent.getBroadcast(this, 3,
+                new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "NEXT"), piFlags);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle(currentTitle)
-                .setContentText(currentArtist)
-                .setContentIntent(contentPending)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOnlyAlertOnce(true)
-                .setShowWhen(false)
-                .setOngoing(isPlaying)
-                .setSilent(true)
-                .addAction(android.R.drawable.ic_media_previous, "Previous", prevPending)
-                .addAction(playPauseIcon, isPlaying ? "Pause" : "Play", playPausePending)
-                .addAction(android.R.drawable.ic_media_next, "Next", nextPending);
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(currentTitle)
+            .setContentText(currentArtist)
+            .setContentIntent(contentPending)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setOngoing(isPlaying)
+            .setSilent(true)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", prevPending)
+            .addAction(playPauseIcon, isPlaying ? "Pause" : "Play", playPausePending)
+            .addAction(android.R.drawable.ic_media_next, "Next", nextPending);
 
-        // MediaStyle if available
         try {
             androidx.media.app.NotificationCompat.MediaStyle style =
-                    new androidx.media.app.NotificationCompat.MediaStyle()
-                            .setMediaSession(mediaSession.getSessionToken())
-                            .setShowActionsInCompactView(0, 1, 2);
+                new androidx.media.app.NotificationCompat.MediaStyle()
+                    .setMediaSession(mediaSession.getSessionToken())
+                    .setShowActionsInCompactView(0, 1, 2);
             builder.setStyle(style);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) {}
 
-        if (currentArtwork != null) {
-            builder.setLargeIcon(currentArtwork);
-        } else {
-            try {
-                builder.setLargeIcon(BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher));
-            } catch (Exception e) {}
+        if (currentArtwork != null) builder.setLargeIcon(currentArtwork);
+        else {
+            try { builder.setLargeIcon(BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher)); }
+            catch (Exception e) {}
         }
 
         Notification notification = builder.build();
 
         if (mediaSession != null) {
             mediaSession.setMetadata(new MediaMetadataCompat.Builder()
-                    .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
-                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
-                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, totalDuration)
-                    .build());
-
-            PlaybackStateCompat state = new PlaybackStateCompat.Builder()
-                    .setActions(PlaybackStateCompat.ACTION_PLAY |
-                            PlaybackStateCompat.ACTION_PAUSE |
-                            PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
-                            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
-                            PlaybackStateCompat.ACTION_SEEK_TO)
-                    .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED,
-                            currentPosition, 1.0f)
-                    .build();
-            mediaSession.setPlaybackState(state);
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, totalDuration)
+                .build());
         }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -278,23 +218,14 @@ public class MusicService extends Service {
             input.close();
             conn.disconnect();
             return bmp;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
+        } catch (Exception e) { return null; }
     }
 
-    @Nullable
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
-    }
+    @Nullable @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override
     public void onDestroy() {
-        if (mediaSession != null) {
-            mediaSession.release();
-        }
+        if (mediaSession != null) mediaSession.release();
         super.onDestroy();
     }
 }
