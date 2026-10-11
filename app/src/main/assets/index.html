@@ -133,6 +133,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="libraryContent"></div>
       </div>
 
+      <!-- CERTIFICATE - OWNER FIXED -->
       <div class="view-screen" id="tabCert">
         <div style="background:radial-gradient(circle at 10% 10%,rgba(168,85,247,.22),transparent 75%),linear-gradient(135deg,rgba(20,6,32,.98),rgba(9,2,16,.98));border:1px solid rgba(192,132,252,.4);border-radius:18px;padding:18px">
           <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed rgba(168,85,247,.35);padding-bottom:10px;margin-bottom:12px">
@@ -140,16 +141,16 @@ document.addEventListener('DOMContentLoaded', function() {
             <div style="font-size:9.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);padding:3px 8px;border-radius:10px">VERIFIED</div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-            <div><h3 style="font-size:18px;color:#fff" id="certOwnerDisplayName">Guest</h3><p style="font-size:12px;color:var(--accent-neon);margin-top:2px" id="certOwnerHandle">@guest</p></div>
+            <div>
+              <h3 style="font-size:18px;color:#fff">Akshat Kumar</h3>
+              <p style="font-size:12px;color:var(--accent-neon);margin-top:2px">@akshat.kumar_148</p>
+            </div>
             <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:11px;font-weight:600;padding:6px 12px;border-radius:12px;text-decoration:none"><i class="fa-brands fa-instagram"></i> @akshat.kumar_148</a>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:12px 0">
             <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-crown"></i> Founder</span>
             <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-pen-nib"></i> GFX Designer</span>
             <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-wand-magic-sparkles"></i> UI/UX</span>
-          </div>
-          <div style="background:rgba(255,255,255,.04);padding:8px 12px;border-radius:10px;border:1px solid var(--border);font-size:11px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <span>Total Active Users:</span><strong style="color:var(--accent-neon)" id="realUserCountDisplay">Loading...</strong>
           </div>
           <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(168,85,247,.3);display:flex;justify-content:space-between;align-items:center">
             <div>
@@ -172,7 +173,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div style="display:flex;flex-direction:column;gap:6px;flex:1">
               <button type="button" class="submit-btn" style="width:auto;padding:8px 16px;font-size:12px" onclick="triggerDpPicker()"><i class="fa-solid fa-camera"></i> Change DP</button>
               <input type="file" id="avatarPicker" style="display:none" accept="image/*" onchange="handleDpUpload(event)" />
-              <span style="font-size:9.5px;color:var(--text-sub)">JPG/PNG · Max 2MB</span>
+              <span style="font-size:9.5px;color:var(--text-sub)">JPG/PNG · Max 3MB</span>
             </div>
           </div>
           <label style="font-size:11px;color:var(--text-sub)">Display Name</label>
@@ -227,16 +228,6 @@ document.addEventListener('DOMContentLoaded', function() {
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:linear-gradient(135deg,#d4af37,#a855f7);color:#0a0614;grid-column:span 3;font-weight:800" onclick="applyThemeScheme('theme-royal-gold')">👑 Royal Gold</button>
             </div>
           </div>
-        </div>
-
-        <div class="card-popup" id="broadcastBox" style="display:none;margin-bottom:12px;border:1px solid #10b981">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <i class="fa-solid fa-bullhorn" style="color:#10b981;font-size:18px"></i>
-            <div style="font-size:13px;font-weight:700;color:#10b981">Broadcast (Owner Only)</div>
-          </div>
-          <button class="submit-btn" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700" onclick="openModal('modalBroadcast')">
-            <i class="fa-solid fa-paper-plane"></i> Open Broadcast
-          </button>
         </div>
 
         <button class="submit-btn" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444;margin-bottom:20px" onclick="performAppLogout()"><i class="fa-solid fa-arrow-right-from-bracket"></i> Log Out</button>
@@ -394,21 +385,6 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
   </div>
 
-  <div class="modal-overlay" id="modalBroadcast">
-    <div class="card-popup">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="font-size:16px;color:#10b981;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-bullhorn"></i> Broadcast to All Users</h3>
-        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalBroadcast')"></i>
-      </div>
-      <p style="font-size:11.5px;color:var(--text-sub);margin-bottom:12px;line-height:1.5">Ye message app ke <b style="color:#10b981">saare users</b> ko notification me jayega.</p>
-      <input class="form-input" id="bcTitle" placeholder="Notification Title" autocomplete="off" maxlength="60" />
-      <textarea class="form-input" id="bcMessage" placeholder="Kya message bhejna hai? (max 300)" style="min-height:100px" maxlength="300"></textarea>
-      <button class="submit-btn" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700" onclick="sendBroadcastFromForm()">
-        <i class="fa-solid fa-paper-plane"></i> Send to All Users
-      </button>
-    </div>
-  </div>
-
   <div class="modal-overlay" id="modalWhatsNew">
     <div class="card-popup">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -464,4 +440,4 @@ document.addEventListener('DOMContentLoaded', function() {
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="./script.js"></script>
 </body>
-</html>                                      
+  </html>     
