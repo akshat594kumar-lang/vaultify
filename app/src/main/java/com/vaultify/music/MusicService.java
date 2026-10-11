@@ -28,7 +28,7 @@ public class MusicService extends Service {
 
     private BroadcastReceiver controlReceiver;
     private String currentTitle = "Vaultify";
-    private String currentArtist = "Music ready";
+    private String currentArtist = "Unlimited Soundscape";
     private boolean isPlaying = false;
     private Bitmap currentCover = null;
 
@@ -75,8 +75,8 @@ public class MusicService extends Service {
     }
 
     public void updateTrackInfo(String title, String artist, String coverUrl, boolean playing) {
-        this.currentTitle = title != null ? title : "Vaultify";
-        this.currentArtist = artist != null ? artist : "";
+        if (title != null && !title.isEmpty()) this.currentTitle = title;
+        if (artist != null) this.currentArtist = artist;
         this.isPlaying = playing;
         updateNotification();
     }
@@ -88,14 +88,10 @@ public class MusicService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flagsPI |= PendingIntent.FLAG_IMMUTABLE;
         PendingIntent contentPI = PendingIntent.getActivity(this, 0, openApp, flagsPI);
 
-        PendingIntent playPI = PendingIntent.getBroadcast(this, 1,
-                new Intent(ACTION_PLAY).setPackage(getPackageName()), flagsPI);
-        PendingIntent pausePI = PendingIntent.getBroadcast(this, 2,
-                new Intent(ACTION_PAUSE).setPackage(getPackageName()), flagsPI);
-        PendingIntent nextPI = PendingIntent.getBroadcast(this, 3,
-                new Intent(ACTION_NEXT).setPackage(getPackageName()), flagsPI);
-        PendingIntent prevPI = PendingIntent.getBroadcast(this, 4,
-                new Intent(ACTION_PREV).setPackage(getPackageName()), flagsPI);
+        PendingIntent playPI = PendingIntent.getBroadcast(this, 1, new Intent(ACTION_PLAY).setPackage(getPackageName()), flagsPI);
+        PendingIntent pausePI = PendingIntent.getBroadcast(this, 2, new Intent(ACTION_PAUSE).setPackage(getPackageName()), flagsPI);
+        PendingIntent nextPI = PendingIntent.getBroadcast(this, 3, new Intent(ACTION_NEXT).setPackage(getPackageName()), flagsPI);
+        PendingIntent prevPI = PendingIntent.getBroadcast(this, 4, new Intent(ACTION_PREV).setPackage(getPackageName()), flagsPI);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(currentTitle)
@@ -110,19 +106,13 @@ public class MusicService extends Service {
                         isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
                         isPlaying ? "Pause" : "Play",
                         isPlaying ? pausePI : playPI))
-                .addAction(new NotificationCompat.Action(
-                        android.R.drawable.ic_media_next, "Next", nextPI));
+                .addAction(new NotificationCompat.Action(android.R.drawable.ic_media_next, "Next", nextPI));
 
-        MediaStyle style = new MediaStyle()
-                .setShowActionsInCompactView(0, 1);
+        MediaStyle style = new MediaStyle().setShowActionsInCompactView(0, 1);
         builder.setStyle(style);
 
-        if (currentCover != null) {
-            builder.setLargeIcon(currentCover);
-        } else {
-            Bitmap bm = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
-            if (bm != null) builder.setLargeIcon(bm);
-        }
+        Bitmap bm = currentCover != null ? currentCover : BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
+        if (bm != null) builder.setLargeIcon(bm);
 
         Notification notification = builder.build();
         startForeground(NOTIF_ID, notification);
@@ -130,11 +120,7 @@ public class MusicService extends Service {
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Music Playback",
-                    NotificationManager.IMPORTANCE_LOW
-            );
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Music Playback", NotificationManager.IMPORTANCE_LOW);
             channel.setDescription("Vaultify music controls");
             channel.setSound(null, null);
             channel.enableVibration(false);
@@ -151,7 +137,5 @@ public class MusicService extends Service {
 
     @Nullable
     @Override
-    public IBinder onBind(Intent intent) {
-        return null;
-    }
+    public IBinder onBind(Intent intent) { return null; }
 }
