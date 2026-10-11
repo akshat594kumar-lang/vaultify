@@ -24,6 +24,10 @@ input.password-masked{-webkit-text-security:disc !important}
 html,body{height:100%;width:100%;overflow:hidden}
 body{background:#000;color:var(--text);display:flex;justify-content:center;align-items:center;overscroll-behavior:none;-webkit-font-smoothing:antialiased}
 
+.perm-warning-banner{position:fixed;top:0;left:0;right:0;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;padding:10px 16px;font-size:12px;font-weight:600;display:none;align-items:center;gap:10px;z-index:200000;cursor:pointer;box-shadow:0 4px 12px rgba(239,68,68,.4)}
+.perm-warning-banner.show{display:flex}
+.perm-warning-banner i:last-child{margin-left:auto}
+
 body.theme-royal-gold .mobile-frame{background:linear-gradient(135deg,#0a0614 0%,#1a0f2e 50%,#0a0614 100%)}
 body.theme-royal-gold .ambient-flow{background:radial-gradient(circle at 10% 20%,rgba(168,85,247,.35),transparent 45%),radial-gradient(circle at 85% 30%,rgba(212,175,55,.28),transparent 40%),radial-gradient(circle at 50% 85%,rgba(168,85,247,.4),transparent 50%),var(--bg-abyss)}
 body.theme-royal-gold .notch-island{background:linear-gradient(135deg,rgba(45,27,78,.98),rgba(18,10,30,.98));border:1px solid var(--gold);box-shadow:0 8px 24px rgba(0,0,0,.9),0 0 15px var(--gold-glow)}
