@@ -1,26 +1,23 @@
 /* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Final Script (Integrated Local Python + Saavn + YT)      */
-/* PART 1 OF 4: Initialization, Core States, IndexedDB, MediaSession   */
+/* VAULTIFY — Native Client Stream Engine (SimpleTune Pattern)         */
 /* ═══════════════════════════════════════════════════════════════════ */
 
 const CREATOR_ROOT_EMAIL = "akshat594kumar@gmail.com";
-const LOCAL_PY_URL = "http://127.0.0.1:8080";
-let isPythonEngineReady = false;
 let audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
 
-// Active Gateways
-const PRIMARY_API_GATEWAYS = [
-  'https://pipedapi.drgnz.club',
+// Multi-Tier Public YouTube & Audio Stream APIs
+const PIPED_MIRRORS = [
+  'https://pipedapi.kavin.rocks',
   'https://api.piped.privacydev.net',
-  'https://piped-api.lunar.icu'
+  'https://pipedapi.drgnz.club'
 ];
 
-const INVIDIOUS_GATEWAYS = [
+const INVIDIOUS_MIRRORS = [
   'https://inv.tux.pizza',
   'https://invidious.nerdvpn.de',
-  'https://invidious.private.coffee',
   'https://yt.drgnz.club',
-  'https://invidious.jing.rocks'
+  'https://invidious.jing.rocks',
+  'https://invidious.private.coffee'
 ];
 
 const SAAVN_APIS = [
@@ -136,34 +133,14 @@ try { duoChannel = new BroadcastChannel('vaultify_duo_sync'); duoChannel.onmessa
 let searchHistoryList = JSON.parse(localStorage.getItem('vaultify_search_history') || '[]');
 let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_history') || '[]');
 let isDraggingTimeline = false, mixRafId = null, _lastSaveTick = 0, autoMixFetching = false;
-let lastAutoFetchTime = 0, lastFetchedArtist = '';
+let lastAutoFetchTime = 0;
 
 const mainAudio = document.getElementById('vaultifyAudio') || new Audio();
 const silentLoop = document.getElementById('silentAudioLoop') || new Audio();
 
-// In-App Background Python Server Warmup Listener
-async function probeLocalPythonEngine(){
-  for(let i = 0; i < 20; i++){
-    try {
-      const r = await fetch(`${LOCAL_PY_URL}/health`);
-      if(r.ok){
-        isPythonEngineReady = true;
-        console.log("⚡ Local Python (yt-dlp) engine operational!");
-        const intro = document.getElementById('appIntroScreen');
-        if(intro) intro.classList.add('fade-out');
-        return;
-      }
-    } catch(e){}
-    await new Promise(res => setTimeout(res, 600));
-  }
-  const fallbackIntro = document.getElementById('appIntroScreen');
-  if(fallbackIntro) fallbackIntro.classList.add('fade-out');
-}
-
 window.addEventListener('DOMContentLoaded', async () => {
   await initCacheDB();
-  probeLocalPythonEngine();
-  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if(i) i.classList.add('fade-out'); }, 2000);
+  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if(i) i.classList.add('fade-out'); }, 800);
   initAudioWakeLoop(); syncLocalCatalog(); verifyAuthGate(); renderHomeRecentVault(); renderHomeQueue(); renderLibrary(); renderSearchHistoryTags();
   setupAndroidMediaSession(); setupTimelineDraggableEngine(); updateDynamicUserCounter(); renderNotificationCenter();
   initLiveSearchInputListener(); initEmojiRunner(); initEmojiPicker(); renderRecommendedSection();
@@ -345,18 +322,14 @@ function toggleVideoCanvasView(){
     showToast("Audio Mode");
   }
 }
-/*═══════════════ END OF PART 1 ═══════════════ */
-/* ═══════════════════════════════════════════════════════════════════ */
-/* PART 2 OF 4: Search Engines & Resolution (Saavn + Python + Gateways) */
-/* ═══════════════════════════════════════════════════════════════════ */
 
-/* ═══════════════ SAAVN HELPERS ═══════════════ */
+/* ═══════════════ STREAM EXTRACTION RESOLVER ═══════════════ */
 async function saavnSearch(q, limit = 20){
   const cleanQ = encodeURIComponent(q.trim());
   for(const base of SAAVN_APIS){
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 5500);
+      const tm = setTimeout(() => ctrl.abort(), 4000);
       let r = await fetch(`${base}/api/search/songs?query=${cleanQ}&limit=${limit}`, { signal: ctrl.signal });
       if(!r.ok) r = await fetch(`${base}/search/songs?query=${cleanQ}&limit=${limit}`, { signal: ctrl.signal });
       clearTimeout(tm);
@@ -373,7 +346,7 @@ async function saavnSongById(id){
   for(const base of SAAVN_APIS){
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const tm = setTimeout(() => ctrl.abort(), 4000);
       let r = await fetch(`${base}/api/songs/${id}`, { signal: ctrl.signal });
       if(!r.ok) r = await fetch(`${base}/songs?id=${id}`, { signal: ctrl.signal });
       clearTimeout(tm);
@@ -393,6 +366,7 @@ function saavnExtractDirect(s){
   const sorted = urls.slice().sort((a,b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
   return sorted[0]?.url || sorted[0]?.link || null;
 }
+
 function decodeHtmlEntities(str){
   if(!str) return '';
   const ta = document.createElement('textarea');
@@ -400,59 +374,51 @@ function decodeHtmlEntities(str){
   return ta.value;
 }
 
-/* ═══════════════ LOCAL PYTHON EXTRACTOR ═══════════════ */
-async function queryLocalPythonStream(query){
-  if(!isPythonEngineReady) return null;
-  try {
-    const ctrl = new AbortController();
-    const tm = setTimeout(() => ctrl.abort(), 9000);
-    const r = await fetch(`${LOCAL_PY_URL}/stream?q=${encodeURIComponent(query)}`, { signal: ctrl.signal });
-    clearTimeout(tm);
-    if(r.ok){
-      const data = await r.json();
-      if(data && data.url){
-        return {
-          id: data.id || 'py_' + Date.now(),
-          title: data.title || query,
-          artist: data.artist || 'Artist',
-          cover: data.cover || 'vaultify.png',
-          duration: data.duration || 0,
-          source: 'local_python',
-          _directStream: data.url
-        };
-      }
-    }
-  } catch(e){
-    console.warn("Local Python extraction timeout or error:", e);
-  }
-  return null;
-}
-
-/* ═══════════════ PARALLEL SEARCH ═══════════════ */
 async function searchSaavn(q){
   try {
     const results = await saavnSearch(q, 20);
     if(!results?.length) return [];
-    return results.map(s => {
-      const direct = saavnExtractDirect(s);
-      return {
-        id: 'saavn_' + s.id,
-        title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
-        artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
-        cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
-        duration: s.duration || 0,
-        source: 'saavn',
-        _directStream: direct
-      };
-    });
+    return results.map(s => ({
+      id: 'saavn_' + s.id,
+      title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
+      artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
+      cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
+      duration: s.duration || 0,
+      source: 'saavn',
+      _directStream: saavnExtractDirect(s)
+    }));
   } catch(e){ return []; }
 }
 
-async function searchPiped(q){
-  const promises = PRIMARY_API_GATEWAYS.map(async h => {
+async function searchInvidious(q){
+  for(const h of INVIDIOUS_MIRRORS){
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 4000);
+      const tm = setTimeout(() => ctrl.abort(), 3500);
+      const r = await fetch(`${h}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if(!r.ok) continue;
+      const d = await r.json();
+      if(Array.isArray(d) && d.length){
+        return d.slice(0, 20).map(v => ({
+          id: v.videoId,
+          title: v.title,
+          artist: v.author || 'Artist',
+          cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+          duration: v.lengthSeconds || 0,
+          source: 'youtube'
+        }));
+      }
+    } catch(e){}
+  }
+  return [];
+}
+
+async function searchPiped(q){
+  const promises = PIPED_MIRRORS.map(async h => {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 3500);
       const r = await fetch(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`, { signal: ctrl.signal });
       clearTimeout(tm);
       if(!r.ok) return null;
@@ -475,31 +441,6 @@ async function searchPiped(q){
   return [];
 }
 
-async function searchInvidious(q){
-  for(const h of INVIDIOUS_GATEWAYS){
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 4500);
-      const r = await fetch(`${h}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if(!r.ok) continue;
-      const d = await r.json();
-      if(Array.isArray(d) && d.length){
-        return d.slice(0, 20).map(v => ({
-          id: v.videoId,
-          title: v.title,
-          artist: v.author || 'Artist',
-          cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
-          duration: v.lengthSeconds || 0,
-          source: 'youtube'
-        }));
-      }
-    } catch(e){}
-  }
-  return [];
-}
-
-// Multi-engine search prioritizer
 async function executeLiveSearch(isAuto = false){
   const q = document.getElementById('mobileSearchField').value.trim();
   if(!q) return;
@@ -515,7 +456,7 @@ async function executeLiveSearch(isAuto = false){
   const rc = document.getElementById('searchResultsContainer');
 
   l.style.display = 'block';
-  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching local python & cloud...</div>';
+  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching tracks...</div>';
 
   const startTime = Date.now();
   const results = await Promise.allSettled([
@@ -545,18 +486,14 @@ async function executeLiveSearch(isAuto = false){
   if(uniqueResults.length > 0){
     renderSearchResults(uniqueResults.slice(0, 30));
     if(!isAuto) showToast(`✅ ${uniqueResults.length} tracks (${elapsed}s)`);
-    setTimeout(renderRecommendedSection, 2000);
   } else {
-    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila. Try different keywords.</p>';
+    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Koi gaana nahi mila. Dusra keyword search karo.</p>';
   }
 }
 
 function renderSearchResults(tracks){
   const c = document.getElementById('searchResultsContainer');
   c.innerHTML = tracks.map(t => {
-    const src = t.source || 'youtube';
-    const srcIcon = { youtube: 'fa-brands fa-youtube', saavn: 'fa-solid fa-music', local_python: 'fa-brands fa-python' }[src] || 'fa-solid fa-music';
-    const srcColor = { youtube: '#ef4444', saavn: '#10b981', local_python: '#38bdf8' }[src] || 'var(--accent-neon)';
     const safeId = encodeURIComponent(t.id), safeTitle = encodeURIComponent(t.title || '');
     const safeArtist = encodeURIComponent(t.artist || ''), safeCover = encodeURIComponent(t.cover || 'vaultify.png');
     const safeDirect = t._directStream ? encodeURIComponent(t._directStream) : '';
@@ -565,7 +502,7 @@ function renderSearchResults(tracks){
         <img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" />
         <div class="tile-meta">
           <h4>${escapeHtml(t.title)}</h4>
-          <p><i class="${srcIcon}" style="color:${srcColor};font-size:10px;margin-right:4px"></i>${escapeHtml(t.artist)}</p>
+          <p>${escapeHtml(t.artist)}</p>
         </div>
       </div>
       <i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i>
@@ -592,13 +529,10 @@ function renderSearchHistoryTags(){
   b.style.display = 'block';
   tb.innerHTML = searchHistoryList.map(tag => `<span style="font-size:11px;background:rgba(255,255,255,.06);padding:5px 10px;border-radius:10px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mobileSearchField').value='${escapeHtml(tag).replace(/'/g, "\\'")}';executeLiveSearch();">${escapeHtml(tag)}</span>`).join('');
 }
-function clearSearchHistory(){ searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
-/* ═══════════════ END OF PART 2 ═══════════════ */
-/* ═══════════════════════════════════════════════════════════════════ */
-/* PART 3 OF 4: Playback Engine, Python Stream Failover & Queue System  */
-/* ═══════════════════════════════════════════════════════════════════ */
+function clearSearchHistory(){ searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); }
 
-async function fetchDirectAudioStreamUrl(input, title = '', artist = ''){
+/* ═══════════════ DIRECT AUDIO PARSER (AUR / PAKISTANI TRACKS) ═══════════════ */
+async function fetchDirectAudioStreamUrl(input, title, artist){
   if(!input) return null;
   if(input.startsWith('saavn_')){
     const id = input.replace('saavn_', '');
@@ -608,42 +542,13 @@ async function fetchDirectAudioStreamUrl(input, title = '', artist = ''){
   }
   if(input.startsWith('blob:') || input.startsWith('data:')) return input;
 
-  // Local Python yt-dlp first preference for instant extraction
-  if(isPythonEngineReady && (title || /^[a-zA-Z0-9_-]{11}$/.test(input))){
-    const pyExtract = await queryLocalPythonStream(title ? `${title} ${artist}` : input);
-    if(pyExtract && pyExtract._directStream) return pyExtract._directStream;
-  }
-
-  if(/^[a-zA-Z0-9_-]{11}$/.test(input)){
-    const inv = await fetchFromInvidious(input); if(inv) return inv;
-    const piped = await fetchFromPiped(input); if(piped) return piped;
-  }
-  return null;
-}
-
-async function fetchFromPiped(vid){
-  for(let a = 0; a < PRIMARY_API_GATEWAYS.length; a++){
-    const h = PRIMARY_API_GATEWAYS[(activeHostIndex + a) % PRIMARY_API_GATEWAYS.length];
+  // Direct fast stream from Invidious
+  for(const h of INVIDIOUS_MIRRORS){
     try {
-      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 4000);
-      const r = await fetch(`${h}/streams/${vid}`, { signal: ctrl.signal }); clearTimeout(tm);
-      if(r.ok){
-        const d = await r.json();
-        if(d.audioStreams?.length){
-          const best = d.audioStreams.sort((a,b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-          if(best?.url){ activeHostIndex = PRIMARY_API_GATEWAYS.indexOf(h); return best.url; }
-        }
-      }
-    } catch(e){}
-  }
-  return null;
-}
-
-async function fetchFromInvidious(vid){
-  for(const h of INVIDIOUS_GATEWAYS){
-    try {
-      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 4500);
-      const r = await fetch(`${h}/api/v1/videos/${vid}`, { signal: ctrl.signal }); clearTimeout(tm);
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 3500);
+      const r = await fetch(`${h}/api/v1/videos/${input}`, { signal: ctrl.signal });
+      clearTimeout(tm);
       if(!r.ok) continue;
       const d = await r.json();
       const af = (d.adaptiveFormats || []).filter(f => f.type?.includes('audio'));
@@ -651,10 +556,28 @@ async function fetchFromInvidious(vid){
       if(af[0]?.url) return af[0].url;
     } catch(e){}
   }
+
+  // Fallback Piped
+  for(const h of PIPED_MIRRORS){
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 3500);
+      const r = await fetch(`${h}/streams/${input}`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if(r.ok){
+        const d = await r.json();
+        if(d.audioStreams?.length){
+          const best = d.audioStreams.sort((a,b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+          if(best?.url) return best.url;
+        }
+      }
+    } catch(e){}
+  }
+
   return null;
 }
 
-// Master Play Engine
+// Master Playback Handler
 async function playTrack(index, broadcast = true){
   if(index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -673,26 +596,21 @@ async function playTrack(index, broadcast = true){
   if(!streamUrl){ const dbCached = await cacheGet(track.id); if(dbCached && dbCached.url){ streamUrl = dbCached.url; trackBlobCache.set(track.id, streamUrl); } }
   if(!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id, track.title, track.artist);
 
-  // Agar direct stream nahi mili, local python ya youtube bridge
+  // Fallback bridge for AUR / Pakistani Indie tracks
   if(!streamUrl){
     if(track.id.startsWith('saavn_')){
       const cleanTitle = (track.title || '').replace(/[\(\[].*?[\)\]]/g, '').trim();
       const cleanQuery = `${cleanTitle} ${track.artist || ''} audio`;
-
-      // Check Local Python Server
-      if(isPythonEngineReady){
-        const pyResult = await queryLocalPythonStream(cleanQuery);
-        if(pyResult && pyResult._directStream){
-          mainAudio.src = pyResult._directStream;
+      const ytResults = await searchInvidious(cleanQuery);
+      if(ytResults.length && ytResults[0].id){
+        const fallbackUrl = await fetchDirectAudioStreamUrl(ytResults[0].id, track.title, track.artist);
+        if(fallbackUrl){
+          mainAudio.src = fallbackUrl;
           mainAudio.load();
           await mainAudio.play();
           setVisualState(true);
           return;
         }
-      }
-
-      const ytResults = await searchInvidious(cleanQuery);
-      if(ytResults.length && ytResults[0].id){
         fallbackToYouTubeBridge(ytResults[0].id);
         return;
       }
@@ -709,7 +627,7 @@ async function playTrack(index, broadcast = true){
   try {
     await mainAudio.play();
     setVisualState(true);
-    setTimeout(() => cacheTrackInBackground(track), 10000);
+    setTimeout(() => cacheTrackInBackground(track), 8000);
   } catch(e){
     fallbackToYouTubeBridge(track.id);
   }
@@ -717,18 +635,15 @@ async function playTrack(index, broadcast = true){
 
 function fallbackToYouTubeBridge(vid){
   if(!vid) { showToast('❌ Audio bridge unavailable'); return; }
-  let targetId = vid;
-  if(targetId.startsWith('saavn_')) return;
-
   activeStreamEngine = 'yt_engine';
   try { mainAudio.pause(); } catch(e){}
   if(ytPlayerReady && ytPlayer && ytPlayer.loadVideoById){
-    ytPlayer.loadVideoById(targetId);
+    ytPlayer.loadVideoById(vid);
     ytPlayer.playVideo();
     setVisualState(true);
     showToast("▶ YouTube Audio Engine");
   } else {
-    showToast("Connecting audio bridge...");
+    showToast("Connecting audio stream...");
   }
 }
 
@@ -851,26 +766,19 @@ async function fetchRelatedSongs(seedTrack){
   try {
     const saavnResults = await saavnSearch(q, 15);
     if(saavnResults?.length){
-      results = saavnResults.map(s => {
-        const direct = saavnExtractDirect(s);
-        return {
-          id: 'saavn_' + s.id,
-          title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
-          artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
-          cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
-          duration: s.duration || 0,
-          source: 'saavn',
-          _directStream: direct
-        };
-      }).filter(t => !existingIds.has(t.id));
+      results = saavnResults.map(s => ({
+        id: 'saavn_' + s.id,
+        title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
+        artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
+        cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
+        duration: s.duration || 0,
+        source: 'saavn',
+        _directStream: saavnExtractDirect(s)
+      })).filter(t => !existingIds.has(t.id));
     }
   } catch(e){}
   return results.slice(0, 8);
 }
-/* ═══════════════ END OF PART 3 ═══════════════ */
-/* ═══════════════════════════════════════════════════════════════════ */
-/* PART 4 OF 4: Auth Gate, Duo Broadcast, UI Runners, Profile & Export */
-/* ═══════════════════════════════════════════════════════════════════ */
 
 async function requestMicAndListen(){
   const b = document.getElementById('voiceMicTrigger');
@@ -903,7 +811,7 @@ function initLiveSearchInputListener(){
     if(q.length >= 3){
       liveSearchDebounceTimer = setTimeout(() => {
         if(f.value.trim() === q) executeLiveSearch(true);
-      }, 2500);
+      }, 2000);
     }
   });
   f.addEventListener('keydown', e => {
@@ -954,29 +862,29 @@ function playSingleTrackObject(idEnc, title, artist, cover){
   playTrack(currentTrackIndex + 1);
 }
 
+// Home Screen Recommendations: 100% Unique Real Cover Arts
 async function renderRecommendedSection(){
   const c = document.getElementById('recommendedContainer');
   if(!c) return;
-  let q = "trending songs 2026 hindi";
+  
+  // Trending Pakistani Pop / AUR / Viral Hits default query
+  let q = "AUR Pakistani songs 2026";
   if(playbackHistoryList.length > 0 && playbackHistoryList[0].artist){
-    q = `${playbackHistoryList[0].artist} hit songs`;
+    q = `${playbackHistoryList[0].artist} trending`;
   }
   const saavnResults = await saavnSearch(q, 10);
   if(!saavnResults || !saavnResults.length){
-    c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Listen to tracks to personalize recommendations.</p>`;
+    c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Play tracks to customize recommendations.</p>`;
     return;
   }
-  const found = saavnResults.map(s => {
-    const direct = saavnExtractDirect(s);
-    return {
-      id: 'saavn_' + s.id,
-      title: decodeHtmlEntities(s.name || ''),
-      artist: (s.artists?.primary?.map(a => a.name).join(', ')) || 'Unknown',
-      cover: s.image?.[2]?.url || '',
-      source: 'saavn',
-      _directStream: direct
-    };
-  }).slice(0, 6);
+  const found = saavnResults.map(s => ({
+    id: 'saavn_' + s.id,
+    title: decodeHtmlEntities(s.name || ''),
+    artist: (s.artists?.primary?.map(a => a.name).join(', ')) || 'Unknown',
+    cover: s.image?.[2]?.url || s.image?.[1]?.url || 'vaultify.png',
+    source: 'saavn',
+    _directStream: saavnExtractDirect(s)
+  })).slice(0, 8);
 
   c.innerHTML = found.map(t => {
     const safeId = encodeURIComponent(t.id), safeTitle = encodeURIComponent(t.title || '');
@@ -984,7 +892,7 @@ async function renderRecommendedSection(){
     const safeDirect = t._directStream ? encodeURIComponent(t._directStream) : '';
     return `<div class="song-tile" onclick="playSearchedTrackImmediately('${safeId}','${safeTitle}','${safeArtist}','${safeCover}','${safeDirect}')">
       <div class="tile-left">
-        <img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" />
+        <img src="${t.cover}" class="tile-thumb" onerror="this.src='vaultify.png'" />
         <div class="tile-meta">
           <h4>${escapeHtml(t.title)}</h4>
           <p>${escapeHtml(t.artist)}</p>
@@ -1213,114 +1121,6 @@ function createPlaylistAndAdd(){
   if(currentLibraryTab === 'playlists') renderLibrary();
 }
 
-/* ═══════════════ BROADCAST & USER SYSTEM ═══════════════ */
-function isOwner(){ return loggedInUser && loggedInUser.email && loggedInUser.email.toLowerCase() === CREATOR_ROOT_EMAIL.toLowerCase(); }
-
-async function broadcastNotification(title, message){
-  if(!isOwner()) return showToast('❌ Only owner can broadcast');
-  if(!title || !message) return showToast('Title aur message daalo');
-  const broadcast = { title, message, timestamp: Date.now(), from: CREATOR_ROOT_EMAIL, id: 'bc_' + Date.now() };
-  const allBroadcasts = JSON.parse(localStorage.getItem('vaultify_broadcasts') || '[]');
-  allBroadcasts.unshift(broadcast);
-  if(allBroadcasts.length > 30) allBroadcasts.pop();
-  localStorage.setItem('vaultify_broadcasts', JSON.stringify(allBroadcasts));
-  localStorage.setItem('vaultify_latest_broadcast', JSON.stringify(broadcast));
-  if(duoChannel){ try { duoChannel.postMessage({ type: 'GLOBAL_BROADCAST', broadcast }); } catch(e){} }
-  showToast('✅ Broadcast sent');
-}
-
-function sendBroadcastFromForm(){
-  if(!isOwner()) return showToast('❌ Only owner can broadcast');
-  const t = document.getElementById('bcTitle').value.trim();
-  const m = document.getElementById('bcMessage').value.trim();
-  if(!t || !m) return showToast('Fill all fields');
-  broadcastNotification(t, m);
-  document.getElementById('bcTitle').value = '';
-  document.getElementById('bcMessage').value = '';
-  closeModal('modalBroadcast');
-}
-
-function checkIncomingBroadcasts(){
-  const latest = localStorage.getItem('vaultify_latest_broadcast');
-  const lastSeen = localStorage.getItem('vaultify_last_seen_broadcast');
-  if(latest && latest !== lastSeen){
-    try {
-      const bc = JSON.parse(latest);
-      if(!isOwner()) pushNotification({ title: '📢 ' + bc.title, message: bc.message, icon: 'fa-solid fa-bullhorn', iconColor: '#10b981' });
-      localStorage.setItem('vaultify_last_seen_broadcast', latest);
-    } catch(e){}
-  }
-  renderWhatsNewBadge();
-}
-
-function getBroadcastHistory(){ return JSON.parse(localStorage.getItem('vaultify_broadcasts') || '[]'); }
-
-function renderWhatsNewBadge(){
-  const history = getBroadcastHistory();
-  const lastSeen = localStorage.getItem('vaultify_whatsnew_seen');
-  const badge = document.getElementById('whatsNewBadge');
-  if(!badge) return;
-  const unread = history.filter(b => !lastSeen || b.id !== lastSeen).length;
-  if(unread > 0){ badge.innerText = unread; badge.style.display = 'flex'; }
-  else { badge.style.display = 'none'; }
-}
-
-function openWhatsNewModal(){
-  const history = getBroadcastHistory();
-  const container = document.getElementById('whatsNewList');
-  if(container){
-    if(history.length === 0) container.innerHTML = '<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:20px 0">No updates yet.</p>';
-    else {
-      container.innerHTML = history.map(b => `<div style="background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:12px;padding:12px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <div style="font-size:13px;font-weight:700;color:#10b981"><i class="fa-solid fa-bullhorn"></i> ${escapeHtml(b.title)}</div>
-          <span style="font-size:10px;color:var(--text-sub)">${new Date(b.timestamp).toLocaleDateString()}</span>
-        </div>
-        <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5">${escapeHtml(b.message)}</div>
-      </div>`).join('');
-    }
-  }
-  if(history.length > 0) localStorage.setItem('vaultify_whatsnew_seen', history[0].id);
-  renderWhatsNewBadge();
-  openModal('modalWhatsNew');
-}
-
-function getStoredNotifications(){ return JSON.parse(localStorage.getItem('vaultify_notifications_list') || '[]'); }
-function pushNotification(n){
-  const l = getStoredNotifications();
-  l.unshift({ ...n, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), unread: true });
-  if(l.length > 60) l.pop();
-  localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
-  renderNotificationCenter();
-}
-
-function renderNotificationCenter(){
-  const list = getStoredNotifications();
-  const c = document.getElementById('notificationListContainer');
-  const b = document.getElementById('notifBadgeCount');
-  if(b){ const u = list.filter(n => n.unread).length; if(u > 0){ b.innerText = u; b.style.display = 'flex'; } else b.style.display = 'none'; }
-  if(!c) return;
-  if(list.length === 0){ c.innerHTML = `<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:24px 0">No notifications.</p>`; return; }
-  c.innerHTML = list.map(n => `<div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <div style="font-size:13px;font-weight:700;color:#fff"><i class="${n.icon || 'fa-solid fa-bell'}" style="color:${n.iconColor || 'var(--accent-neon)'};margin-right:6px"></i>${escapeHtml(n.title)}</div>
-      <span style="font-size:10px;color:var(--text-sub)">${n.time}</span>
-    </div>
-    <div style="font-size:11.5px;color:var(--text-sub);line-height:1.4">${escapeHtml(n.message)}</div>
-  </div>`).join('');
-}
-
-function openNotificationModal(){
-  const l = getStoredNotifications();
-  l.forEach(n => n.unread = false);
-  localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
-  renderNotificationCenter();
-  openModal('modalNotifications');
-}
-function clearAllNotifications(){ localStorage.removeItem('vaultify_notifications_list'); renderNotificationCenter(); showToast("Cleared!"); }
-function checkBroadcastNotifications(){ setInterval(checkIncomingBroadcasts, 5000); checkIncomingBroadcasts(); }
-function syncLocalCatalog(){ const c = JSON.parse(localStorage.getItem('vaultify_custom_tracks') || '[]'); currentPlaylist = [...c]; }
-
 /* ═══════════════ AUTH LOGIC ═══════════════ */
 const AUTH_ITERATIONS = 100000, AUTH_SALT_BYTES = 16, AUTH_KEY_BYTES = 32;
 function bytesToHex(bytes){ return Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, '0')).join(''); }
@@ -1474,10 +1274,6 @@ function applyUserDataUI(user){
   updateDynamicUserCounter();
   syncUserPartnerCode();
   renderPartnerRequests();
-  const chatBox = document.getElementById('activePartnerChat');
-  if(chatBox) chatBox.style.display = user.partnerUsername ? 'block' : 'none';
-  const creatorBox = document.getElementById('broadcastBox');
-  if(creatorBox) creatorBox.style.display = isOwner() ? 'block' : 'none';
 }
 
 function openForgotPasswordFlow(){ closeModal('modalAuthGate'); openModal('modalForgotPass'); }
@@ -1742,6 +1538,42 @@ function resetEqSliders(){ ['eq60','eq230','eq910','eq4k','eq14k'].forEach(id =>
 function changeAppLanguage(lang){ appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? "हिंदी चुनी गई" : "English Selected"); }
 (function restoreTheme(){ const saved = localStorage.getItem('vaultify_theme'); if(saved && saved !== 'theme-violet') document.body.classList.add(saved); })();
 
+// Broadcast functions
+function isOwner(){ return loggedInUser && loggedInUser.email && loggedInUser.email.toLowerCase() === CREATOR_ROOT_EMAIL.toLowerCase(); }
+function checkIncomingBroadcasts(){ renderWhatsNewBadge(); }
+function getBroadcastHistory(){ return JSON.parse(localStorage.getItem('vaultify_broadcasts') || '[]'); }
+function renderWhatsNewBadge(){
+  const history = getBroadcastHistory();
+  const lastSeen = localStorage.getItem('vaultify_whatsnew_seen');
+  const badge = document.getElementById('whatsNewBadge');
+  if(!badge) return;
+  const unread = history.filter(b => !lastSeen || b.id !== lastSeen).length;
+  if(unread > 0){ badge.innerText = unread; badge.style.display = 'flex'; }
+  else { badge.style.display = 'none'; }
+}
+function openWhatsNewModal(){ openModal('modalWhatsNew'); }
+function getStoredNotifications(){ return JSON.parse(localStorage.getItem('vaultify_notifications_list') || '[]'); }
+function pushNotification(n){
+  const l = getStoredNotifications();
+  l.unshift({ ...n, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), unread: true });
+  localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
+  renderNotificationCenter();
+}
+function renderNotificationCenter(){
+  const list = getStoredNotifications();
+  const c = document.getElementById('notificationListContainer');
+  if(!c) return;
+  if(list.length === 0){ c.innerHTML = `<p style="font-size:12px;color:var(--text-sub);text-align:center;padding:24px 0">No notifications.</p>`; return; }
+  c.innerHTML = list.map(n => `<div style="background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
+    <div style="font-size:13px;font-weight:700;color:#fff">${escapeHtml(n.title)}</div>
+    <div style="font-size:11.5px;color:var(--text-sub);line-height:1.4">${escapeHtml(n.message)}</div>
+  </div>`).join('');
+}
+function openNotificationModal(){ openModal('modalNotifications'); }
+function clearAllNotifications(){ localStorage.removeItem('vaultify_notifications_list'); renderNotificationCenter(); showToast("Cleared!"); }
+function checkBroadcastNotifications(){ setInterval(checkIncomingBroadcasts, 5000); checkIncomingBroadcasts(); }
+function syncLocalCatalog(){ const c = JSON.parse(localStorage.getItem('vaultify_custom_tracks') || '[]'); currentPlaylist = [...c]; }
+
 // Global Window Exports
 Object.assign(window, {
   switchNavTab, switchLibraryTab, openModal, closeModal, openFullPlayer, closeFullPlayer,
@@ -1758,7 +1590,6 @@ Object.assign(window, {
   acceptPartnerRequest, declinePartnerRequest, sendPartnerRequest, syncUserPartnerCode,
   renderPartnerRequests, generatePartnerCode, copyPartnerCode,
   onNativePlay, onNativePause, onNativeNext, onNativePrev,
-  broadcastNotification, openWhatsNewModal, checkIncomingBroadcasts, getBroadcastHistory,
-  renderWhatsNewBadge, sendBroadcastFromForm
+  openWhatsNewModal, checkIncomingBroadcasts, getBroadcastHistory,
+  renderWhatsNewBadge
 });
-/* ═══════════════ END OF PART 4 (FULL SCRIPT COMPLETE) ═══════════════ */
