@@ -49,14 +49,12 @@ public class MusicService extends Service {
         createChannel();
         MainActivity.setMusicService(this);
 
-        // Load default cover from mipmap
         try {
             defaultCover = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
         } catch (Exception e) {
             defaultCover = null;
         }
 
-        // Try to load vaultify.png from assets (better quality)
         try {
             InputStream is = getAssets().open("vaultify.png");
             Bitmap assetLogo = BitmapFactory.decodeStream(is);
