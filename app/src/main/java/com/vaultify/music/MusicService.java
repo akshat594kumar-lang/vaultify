@@ -49,8 +49,6 @@ public class MusicService extends Service {
         super.onCreate();
         createChannel();
         MainActivity.setMusicService(this);
-        
-        // Load default cover from assets
         loadDefaultCover();
 
         controlReceiver = new BroadcastReceiver() {
@@ -82,7 +80,7 @@ public class MusicService extends Service {
             registerReceiver(controlReceiver, filter);
         }
     }
-    
+
     private void loadDefaultCover() {
         try {
             AssetManager am = getAssets();
@@ -104,7 +102,7 @@ public class MusicService extends Service {
         if (title != null && !title.isEmpty()) this.currentTitle = title;
         if (artist != null) this.currentArtist = artist;
         this.isPlaying = playing;
-        
+
         if (coverUrl != null && !coverUrl.isEmpty() && !coverUrl.equals(lastCoverUrl)) {
             lastCoverUrl = coverUrl;
             loadCoverImage(coverUrl);
@@ -114,11 +112,7 @@ public class MusicService extends Service {
     }
 
     private void loadCoverImage(String url) {
-        if (url == null || url.isEmpty()) {
-            updateNotification();
-            return;
-        }
-        if (!url.startsWith("http")) {
+        if (url == null || url.isEmpty() || !url.startsWith("http")) {
             updateNotification();
             return;
         }
