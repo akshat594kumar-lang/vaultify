@@ -1,4 +1,4 @@
-package com.vaultify.music;
+package com.music;
 
 import android.annotation.SuppressLint;
 import android.os.Bundle;
@@ -20,20 +20,23 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. Python runtime ko Main Thread par initialize karo taaki crash na ho
-        if (!Python.isStarted()) {
-            Python.start(new AndroidPlatform(this));
-        }
-
-        // 2. Flask server ko background thread me start karo
-        new Thread(() -> {
-            try {
-                Python py = Python.getInstance();
-                py.getModule("server").callAttr("start_server");
-            } catch (Exception e) {
-                e.printStackTrace();
+        // 1. Python runtime start karo
+        try {
+            if (!Python.isStarted()) {
+                Python.start(new AndroidPlatform(this));
             }
-        }).start();
+            // 2. Background thread me server chalao
+            new Thread(() -> {
+                try {
+                    Python py = Python.getInstance();
+                    py.getModule("server").callAttr("start_server");
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         // 3. Dynamic WebView setup
         webView = new WebView(this);
