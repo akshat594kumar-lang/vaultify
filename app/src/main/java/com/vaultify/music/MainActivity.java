@@ -59,6 +59,15 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (url.startsWith("mailto:") || url.startsWith("tel:") || url.startsWith("sms:") || url.startsWith("whatsapp:") || url.startsWith("intent:")) {
+                    try {
+                        Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                        view.getContext().startActivity(intent);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                    return true;
+                }
                 view.loadUrl(url);
                 return true;
             }
@@ -76,7 +85,6 @@ public class MainActivity extends AppCompatActivity {
                     MainActivity.this.filePathCallback.onReceiveValue(null);
                 }
                 MainActivity.this.filePathCallback = filePathCallback;
-
                 Intent intent = fileChooserParams.createIntent();
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
                 try {
