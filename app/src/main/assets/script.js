@@ -1,11 +1,14 @@
 /* ═══════════════════════════════════════════════════════════════════ */
-/* VAULTIFY — Final Script (Optimized Saavn + YouTube Engine Fix)      */
+/* VAULTIFY — Final Script (Integrated Local Python + Saavn + YT)      */
+/* PART 1 OF 4: Initialization, Core States, IndexedDB, MediaSession   */
 /* ═══════════════════════════════════════════════════════════════════ */
 
 const CREATOR_ROOT_EMAIL = "akshat594kumar@gmail.com";
+const LOCAL_PY_URL = "http://127.0.0.1:8080";
+let isPythonEngineReady = false;
 let audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
 
-// Updated Active Gateways (Purane Dead Instances Removed)
+// Active Gateways
 const PRIMARY_API_GATEWAYS = [
   'https://pipedapi.drgnz.club',
   'https://api.piped.privacydev.net',
@@ -76,6 +79,7 @@ function cacheDelete(id){
       const tx = cacheDB.transaction('songs', 'readwrite');
       tx.objectStore('songs').delete(id);
       tx.oncomplete = () => res(true);
+      tx.onerror = () => res(false);
     } catch(e) { res(false); }
   });
 }
@@ -134,12 +138,32 @@ let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_his
 let isDraggingTimeline = false, mixRafId = null, _lastSaveTick = 0, autoMixFetching = false;
 let lastAutoFetchTime = 0, lastFetchedArtist = '';
 
-const mainAudio = document.getElementById('vaultifyAudio');
-const silentLoop = document.getElementById('silentAudioLoop');
+const mainAudio = document.getElementById('vaultifyAudio') || new Audio();
+const silentLoop = document.getElementById('silentAudioLoop') || new Audio();
+
+// In-App Background Python Server Warmup Listener
+async function probeLocalPythonEngine(){
+  for(let i = 0; i < 20; i++){
+    try {
+      const r = await fetch(`${LOCAL_PY_URL}/health`);
+      if(r.ok){
+        isPythonEngineReady = true;
+        console.log("⚡ Local Python (yt-dlp) engine operational!");
+        const intro = document.getElementById('appIntroScreen');
+        if(intro) intro.classList.add('fade-out');
+        return;
+      }
+    } catch(e){}
+    await new Promise(res => setTimeout(res, 600));
+  }
+  const fallbackIntro = document.getElementById('appIntroScreen');
+  if(fallbackIntro) fallbackIntro.classList.add('fade-out');
+}
 
 window.addEventListener('DOMContentLoaded', async () => {
   await initCacheDB();
-  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if(i) i.classList.add('fade-out'); }, 1200);
+  probeLocalPythonEngine();
+  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if(i) i.classList.add('fade-out'); }, 2000);
   initAudioWakeLoop(); syncLocalCatalog(); verifyAuthGate(); renderHomeRecentVault(); renderHomeQueue(); renderLibrary(); renderSearchHistoryTags();
   setupAndroidMediaSession(); setupTimelineDraggableEngine(); updateDynamicUserCounter(); renderNotificationCenter();
   initLiveSearchInputListener(); initEmojiRunner(); initEmojiPicker(); renderRecommendedSection();
@@ -241,7 +265,6 @@ window.onNativePause = function(){
 window.onNativeNext = function(){ playNext(); };
 window.onNativePrev = function(){ playPrevious(); };
 
-// Notification Artwork ko absolute URL me convert karna taaki Android black box na dikhaye
 function updateMediaSessionMetadata(track){
   if(!track) return;
   let cover = track.cover || 'vaultify.png';
@@ -322,6 +345,10 @@ function toggleVideoCanvasView(){
     showToast("Audio Mode");
   }
 }
+/*═══════════════ END OF PART 1 ═══════════════ */
+/* ═══════════════════════════════════════════════════════════════════ */
+/* PART 2 OF 4: Search Engines & Resolution (Saavn + Python + Gateways) */
+/* ═══════════════════════════════════════════════════════════════════ */
 
 /* ═══════════════ SAAVN HELPERS ═══════════════ */
 async function saavnSearch(q, limit = 20){
@@ -373,6 +400,34 @@ function decodeHtmlEntities(str){
   return ta.value;
 }
 
+/* ═══════════════ LOCAL PYTHON EXTRACTOR ═══════════════ */
+async function queryLocalPythonStream(query){
+  if(!isPythonEngineReady) return null;
+  try {
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 9000);
+    const r = await fetch(`${LOCAL_PY_URL}/stream?q=${encodeURIComponent(query)}`, { signal: ctrl.signal });
+    clearTimeout(tm);
+    if(r.ok){
+      const data = await r.json();
+      if(data && data.url){
+        return {
+          id: data.id || 'py_' + Date.now(),
+          title: data.title || query,
+          artist: data.artist || 'Artist',
+          cover: data.cover || 'vaultify.png',
+          duration: data.duration || 0,
+          source: 'local_python',
+          _directStream: data.url
+        };
+      }
+    }
+  } catch(e){
+    console.warn("Local Python extraction timeout or error:", e);
+  }
+  return null;
+}
+
 /* ═══════════════ PARALLEL SEARCH ═══════════════ */
 async function searchSaavn(q){
   try {
@@ -389,7 +444,7 @@ async function searchSaavn(q){
         source: 'saavn',
         _directStream: direct
       };
-    }); // Pakistani/Indie gaano ko filter mat karo agar directStream null bhi ho toh
+    });
   } catch(e){ return []; }
 }
 
@@ -444,7 +499,7 @@ async function searchInvidious(q){
   return [];
 }
 
-// Pakistani/Viral Songs Priority Search Engine
+// Multi-engine search prioritizer
 async function executeLiveSearch(isAuto = false){
   const q = document.getElementById('mobileSearchField').value.trim();
   if(!q) return;
@@ -460,7 +515,7 @@ async function executeLiveSearch(isAuto = false){
   const rc = document.getElementById('searchResultsContainer');
 
   l.style.display = 'block';
-  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Finding tracks on Saavn + YouTube...</div>';
+  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching local python & cloud...</div>';
 
   const startTime = Date.now();
   const results = await Promise.allSettled([
@@ -492,7 +547,7 @@ async function executeLiveSearch(isAuto = false){
     if(!isAuto) showToast(`✅ ${uniqueResults.length} tracks (${elapsed}s)`);
     setTimeout(renderRecommendedSection, 2000);
   } else {
-    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila. Try different song keywords.</p>';
+    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila. Try different keywords.</p>';
   }
 }
 
@@ -500,8 +555,8 @@ function renderSearchResults(tracks){
   const c = document.getElementById('searchResultsContainer');
   c.innerHTML = tracks.map(t => {
     const src = t.source || 'youtube';
-    const srcIcon = { youtube: 'fa-brands fa-youtube', saavn: 'fa-solid fa-music' }[src] || 'fa-solid fa-music';
-    const srcColor = { youtube: '#ef4444', saavn: '#10b981' }[src] || 'var(--accent-neon)';
+    const srcIcon = { youtube: 'fa-brands fa-youtube', saavn: 'fa-solid fa-music', local_python: 'fa-brands fa-python' }[src] || 'fa-solid fa-music';
+    const srcColor = { youtube: '#ef4444', saavn: '#10b981', local_python: '#38bdf8' }[src] || 'var(--accent-neon)';
     const safeId = encodeURIComponent(t.id), safeTitle = encodeURIComponent(t.title || '');
     const safeArtist = encodeURIComponent(t.artist || ''), safeCover = encodeURIComponent(t.cover || 'vaultify.png');
     const safeDirect = t._directStream ? encodeURIComponent(t._directStream) : '';
@@ -538,8 +593,12 @@ function renderSearchHistoryTags(){
   tb.innerHTML = searchHistoryList.map(tag => `<span style="font-size:11px;background:rgba(255,255,255,.06);padding:5px 10px;border-radius:10px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mobileSearchField').value='${escapeHtml(tag).replace(/'/g, "\\'")}';executeLiveSearch();">${escapeHtml(tag)}</span>`).join('');
 }
 function clearSearchHistory(){ searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
+/* ═══════════════ END OF PART 2 ═══════════════ */
+/* ═══════════════════════════════════════════════════════════════════ */
+/* PART 3 OF 4: Playback Engine, Python Stream Failover & Queue System  */
+/* ═══════════════════════════════════════════════════════════════════ */
 
-async function fetchDirectAudioStreamUrl(input){
+async function fetchDirectAudioStreamUrl(input, title = '', artist = ''){
   if(!input) return null;
   if(input.startsWith('saavn_')){
     const id = input.replace('saavn_', '');
@@ -548,6 +607,13 @@ async function fetchDirectAudioStreamUrl(input){
     if(direct) return direct;
   }
   if(input.startsWith('blob:') || input.startsWith('data:')) return input;
+
+  // Local Python yt-dlp first preference for instant extraction
+  if(isPythonEngineReady && (title || /^[a-zA-Z0-9_-]{11}$/.test(input))){
+    const pyExtract = await queryLocalPythonStream(title ? `${title} ${artist}` : input);
+    if(pyExtract && pyExtract._directStream) return pyExtract._directStream;
+  }
+
   if(/^[a-zA-Z0-9_-]{11}$/.test(input)){
     const inv = await fetchFromInvidious(input); if(inv) return inv;
     const piped = await fetchFromPiped(input); if(piped) return piped;
@@ -588,7 +654,7 @@ async function fetchFromInvidious(vid){
   return null;
 }
 
-// Full Playback Engine with Seamless YouTube Fallback
+// Master Play Engine
 async function playTrack(index, broadcast = true){
   if(index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -605,13 +671,26 @@ async function playTrack(index, broadcast = true){
   if(track._directStream && track._directStream.startsWith('http')) streamUrl = track._directStream;
   if(!streamUrl){ const c = trackBlobCache.get(track.id); if(c && c.startsWith('blob:')) streamUrl = c; }
   if(!streamUrl){ const dbCached = await cacheGet(track.id); if(dbCached && dbCached.url){ streamUrl = dbCached.url; trackBlobCache.set(track.id, streamUrl); } }
-  if(!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
+  if(!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id, track.title, track.artist);
 
-  // Agar Saavn par audio URL nahi mila (e.g. Pakistani songs / AUR) toh YouTube par bridge karo
+  // Agar direct stream nahi mili, local python ya youtube bridge
   if(!streamUrl){
     if(track.id.startsWith('saavn_')){
       const cleanTitle = (track.title || '').replace(/[\(\[].*?[\)\]]/g, '').trim();
       const cleanQuery = `${cleanTitle} ${track.artist || ''} audio`;
+
+      // Check Local Python Server
+      if(isPythonEngineReady){
+        const pyResult = await queryLocalPythonStream(cleanQuery);
+        if(pyResult && pyResult._directStream){
+          mainAudio.src = pyResult._directStream;
+          mainAudio.load();
+          await mainAudio.play();
+          setVisualState(true);
+          return;
+        }
+      }
+
       const ytResults = await searchInvidious(cleanQuery);
       if(ytResults.length && ytResults[0].id){
         fallbackToYouTubeBridge(ytResults[0].id);
@@ -639,7 +718,7 @@ async function playTrack(index, broadcast = true){
 function fallbackToYouTubeBridge(vid){
   if(!vid) { showToast('❌ Audio bridge unavailable'); return; }
   let targetId = vid;
-  if(targetId.startsWith('saavn_')) return; // handled above
+  if(targetId.startsWith('saavn_')) return;
 
   activeStreamEngine = 'yt_engine';
   try { mainAudio.pause(); } catch(e){}
@@ -679,7 +758,7 @@ function setVisualState(playing){
   if(t && window.AndroidNativeBridge && window.AndroidNativeBridge.updateNotification){
     try { window.AndroidNativeBridge.updateNotification(t.title || 'Vaultify', t.artist || '', t.cover || '', playing); } catch(e){}
   }
-  if(document.getElementById('modalQueueDrawer').classList.contains('open')) renderHomeQueue();
+  if(document.getElementById('modalQueueDrawer')?.classList.contains('open')) renderHomeQueue();
 }
 
 async function playNext(){
@@ -735,7 +814,7 @@ async function cacheTrackInBackground(track){
   if(trackBlobCache.has(track.id)) return;
   const existing = await cacheGet(track.id);
   if(existing?.url){ trackBlobCache.set(track.id, existing.url); return; }
-  const url = await fetchDirectAudioStreamUrl(track.id);
+  const url = await fetchDirectAudioStreamUrl(track.id, track.title, track.artist);
   if(!url || !url.startsWith('http')) return;
   try {
     const r = await fetch(url); const blob = await r.blob();
@@ -750,7 +829,7 @@ async function downloadCurrentTrack(){
   showDownloadIndicator('Downloading...');
   try {
     let u = trackBlobCache.get(t.id) || t._directStream;
-    if(!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id);
+    if(!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id, t.title, t.artist);
     if(!u) throw new Error("No URL");
     const r = await fetch(u); const b = await r.blob(); const bu = URL.createObjectURL(b);
     const a = document.createElement('a'); a.style.display = 'none'; a.href = bu;
@@ -788,6 +867,10 @@ async function fetchRelatedSongs(seedTrack){
   } catch(e){}
   return results.slice(0, 8);
 }
+/* ═══════════════ END OF PART 3 ═══════════════ */
+/* ═══════════════════════════════════════════════════════════════════ */
+/* PART 4 OF 4: Auth Gate, Duo Broadcast, UI Runners, Profile & Export */
+/* ═══════════════════════════════════════════════════════════════════ */
 
 async function requestMicAndListen(){
   const b = document.getElementById('voiceMicTrigger');
@@ -871,7 +954,6 @@ function playSingleTrackObject(idEnc, title, artist, cover){
   playTrack(currentTrackIndex + 1);
 }
 
-// Home Screen Recommendations / Trending Hits
 async function renderRecommendedSection(){
   const c = document.getElementById('recommendedContainer');
   if(!c) return;
@@ -1660,6 +1742,7 @@ function resetEqSliders(){ ['eq60','eq230','eq910','eq4k','eq14k'].forEach(id =>
 function changeAppLanguage(lang){ appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? "हिंदी चुनी गई" : "English Selected"); }
 (function restoreTheme(){ const saved = localStorage.getItem('vaultify_theme'); if(saved && saved !== 'theme-violet') document.body.classList.add(saved); })();
 
+// Global Window Exports
 Object.assign(window, {
   switchNavTab, switchLibraryTab, openModal, closeModal, openFullPlayer, closeFullPlayer,
   openPartnerModal, openSupportModal, openNotificationModal, clearAllNotifications, executeLiveSearch,
@@ -1678,3 +1761,4 @@ Object.assign(window, {
   broadcastNotification, openWhatsNewModal, checkIncomingBroadcasts, getBroadcastHistory,
   renderWhatsNewBadge, sendBroadcastFromForm
 });
+/* ═══════════════ END OF PART 4 (FULL SCRIPT COMPLETE) ═══════════════ */
