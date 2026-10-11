@@ -9,7 +9,6 @@ import android.webkit.WebViewClient;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.chaquo.python.Python;
-import com.chaquo.python.android.AndroidPlatform;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -20,12 +19,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 1. Background thread me local Python Flask server run karo
+        // Background thread me Flask server call karo
         new Thread(() -> {
             try {
-                if (!Python.isStarted()) {
-                    Python.start(new AndroidPlatform(MainActivity.this));
-                }
                 Python py = Python.getInstance();
                 py.getModule("server").callAttr("start_server");
             } catch (Exception e) {
@@ -33,7 +29,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }).start();
 
-        // 2. WebView dynamically create karo (kisi XML ID par depend nahi karega)
+        // Dynamic WebView
         webView = new WebView(this);
         webView.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -41,7 +37,6 @@ public class MainActivity extends AppCompatActivity {
         ));
         setContentView(webView);
 
-        // 3. WebView configuration
         WebSettings webSettings = webView.getSettings();
         webSettings.setJavaScriptEnabled(true);
         webSettings.setDomStorageEnabled(true);
