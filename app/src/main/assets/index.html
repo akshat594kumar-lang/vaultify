@@ -40,6 +40,12 @@ document.addEventListener('DOMContentLoaded', function() {
   </div>
 </div>
 
+<div id="permWarningBanner" class="perm-warning-banner" onclick="handlePermissionBannerClick()">
+  <i class="fa-solid fa-triangle-exclamation"></i>
+  <span id="permWarningText">Permissions needed. Tap to enable.</span>
+  <i class="fa-solid fa-chevron-right"></i>
+</div>
+
 <div class="download-indicator" id="downloadIndicator">
   <i class="fa-solid fa-download fa-spin"></i>
   <span id="downloadText">Caching...</span>
@@ -49,7 +55,7 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="ambient-flow" id="gradientFlowBg"></div>
   <audio id="vaultifyAudio" preload="auto" playsinline crossorigin="anonymous"></audio>
   <audio id="silentAudioLoop" loop playsinline></audio>
-  <div id="hiddenYtEngineWrapper" style="position:absolute;width:1px;height:1px;left:-9999px;opacity:.01"><div id="ytEngineSlot"></div></div>
+  <div id="hiddenYtEngineWrapper" style="position:absolute;width:1px;height:1px;left:-9999px;opacity:.01;pointer-events:none"><div id="ytEngineSlot"></div></div>
 
   <div class="notch-island" onclick="openPartnerModal()">
     <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-sub);overflow:hidden;z-index:2">
@@ -87,8 +93,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="section-heading">Recently Played</div>
         <div class="grid-history-vault" id="homeRecentGrid"></div>
         <div class="recommended-section">
-          <div class="recommended-header"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Recommended For You</span></div>
-          <div id="recommendedContainer"><p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">Loading...</p></div>
+          <div class="recommended-header"><i class="fa-solid fa-fire"></i><span>Trending Now</span></div>
+          <div id="recommendedContainer"><p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0"><i class="fa-solid fa-spinner fa-spin"></i> Loading...</p></div>
         </div>
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-top:14px;box-shadow:0 0 14px var(--accent-glow)" onclick="openModal('modalQueueDrawer')">
           <div style="display:flex;align-items:center;gap:10px">
@@ -104,7 +110,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="search-mobile-bar">
           <div class="search-input-box">
             <i class="fa-solid fa-magnifying-glass" style="color:var(--accent-neon);font-size:13px"></i>
-            <input type="text" id="mobileSearchField" placeholder="Search song, artist, or paste URL..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <input type="text" id="mobileSearchField" placeholder="Search songs, artists or paste link..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
             <i class="fa-solid fa-microphone mic-icon-btn" id="voiceMicTrigger" onclick="requestMicAndListen()"></i>
           </div>
           <button class="submit-btn" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="executeLiveSearch()">Go</button>
@@ -113,8 +119,8 @@ document.addEventListener('DOMContentLoaded', function() {
           <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-sub);margin-bottom:6px"><span>Recent Searches</span><span style="cursor:pointer;color:#ef4444" onclick="clearSearchHistory()">Clear</span></div>
           <div id="searchHistoryTags" style="display:flex;flex-wrap:wrap;gap:6px"></div>
         </div>
-        <div id="searchLoadingIndicator" style="display:none;text-align:center;padding:20px;color:var(--accent-neon);font-size:13px"><i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div></div>
-        <div id="searchResultsContainer"><p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type or use mic to find audio.</p></div>
+        <div id="searchLoadingIndicator" style="display:none;text-align:center;padding:20px;color:var(--accent-neon);font-size:13px"></div>
+        <div id="searchResultsContainer"><p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name or paste YouTube link.</p></div>
       </div>
 
       <div class="view-screen" id="tabLibrary">
@@ -179,6 +185,21 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
 
         <div class="card-popup" style="margin-bottom:12px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:10px">Permissions</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
+            <div><div style="font-size:12px;font-weight:600">Microphone</div><div style="font-size:10px;color:var(--text-sub)" id="micPermStatus">Checking...</div></div>
+            <button class="submit-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="requestPermsFromNative()">Request</button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
+            <div><div style="font-size:12px;font-weight:600">Notifications</div><div style="font-size:10px;color:var(--text-sub)" id="notifPermStatus">Checking...</div></div>
+            <button class="submit-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="requestPermsFromNative()">Request</button>
+          </div>
+          <button class="submit-btn" style="background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="openAppSettingsNative()">
+            <i class="fa-solid fa-gear"></i> Open App Settings
+          </button>
+        </div>
+
+        <div class="card-popup" style="margin-bottom:12px">
           <div style="font-size:13px;font-weight:700;margin-bottom:10px">Customization</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
             <div><div style="font-size:12px;font-weight:600">Gradient Flow</div><div style="font-size:10px;color:var(--text-sub)">Background animation</div></div>
@@ -213,7 +234,6 @@ document.addEventListener('DOMContentLoaded', function() {
             <i class="fa-solid fa-bullhorn" style="color:#10b981;font-size:18px"></i>
             <div style="font-size:13px;font-weight:700;color:#10b981">Broadcast (Owner Only)</div>
           </div>
-          <p style="font-size:11px;color:var(--text-sub);margin-bottom:10px">Saare users ko notification bhejo.</p>
           <button class="submit-btn" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;font-weight:700" onclick="openModal('modalBroadcast')">
             <i class="fa-solid fa-paper-plane"></i> Open Broadcast
           </button>
@@ -444,4 +464,4 @@ document.addEventListener('DOMContentLoaded', function() {
 <script src="https://www.youtube.com/iframe_api"></script>
 <script src="./script.js"></script>
 </body>
-  </html>
+                                                                                                                            </html>
