@@ -13,12 +13,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 </head>
 <body>
-
 <script>
-window.onerror = function(msg, url, line) {
-  console.error('❌ ERROR:', msg, 'at', url, ':', line);
-  return false;
-};
+window.onerror = function(msg, url, line) { console.error('❌ ERROR:', msg, 'at', url, ':', line); return false; };
 </script>
 
 <div id="appIntroScreen">
@@ -98,7 +94,7 @@ window.onerror = function(msg, url, line) {
         <div class="search-mobile-bar">
           <div class="search-input-box">
             <i class="fa-solid fa-magnifying-glass" style="color:var(--accent-neon);font-size:13px"></i>
-            <input type="text" id="mobileSearchField" placeholder="Search songs, artists or paste link..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <input type="text" id="mobileSearchField" placeholder="Search songs, artists..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
             <i class="fa-solid fa-microphone mic-icon-btn" id="voiceMicTrigger" onclick="requestMicAndListen()"></i>
           </div>
           <button class="submit-btn" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="executeLiveSearch()">Go</button>
@@ -108,7 +104,7 @@ window.onerror = function(msg, url, line) {
           <div id="searchHistoryTags" style="display:flex;flex-wrap:wrap;gap:6px"></div>
         </div>
         <div id="searchLoadingIndicator" style="display:none;text-align:center;padding:20px;color:var(--accent-neon);font-size:13px"></div>
-        <div id="searchResultsContainer"><p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name or paste YouTube link.</p></div>
+        <div id="searchResultsContainer"><p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p></div>
       </div>
 
       <div class="view-screen" id="tabLibrary">
@@ -134,26 +130,9 @@ window.onerror = function(msg, url, line) {
             </div>
             <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:11px;font-weight:600;padding:6px 12px;border-radius:12px;text-decoration:none"><i class="fa-brands fa-instagram"></i> @akshat.kumar_148</a>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:12px 0">
-            <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-crown"></i> Founder</span>
-            <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-pen-nib"></i> GFX Designer</span>
-            <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-wand-magic-sparkles"></i> UI/UX</span>
-          </div>
-          <div style="background:rgba(255,255,255,.04);padding:12px;border-radius:10px;border:1px solid var(--border);margin-bottom:12px">
+          <div style="background:rgba(255,255,255,.04);padding:12px;border-radius:10px;border:1px solid var(--border);margin:12px 0">
             <div style="font-size:11px;font-weight:700;color:var(--accent-neon);margin-bottom:6px;letter-spacing:1px">📊 LIVE STATS</div>
-            <div id="ipStatsDisplay">
-              <div style="font-size:11px;color:var(--text-sub)">Loading...</div>
-            </div>
-          </div>
-          <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(168,85,247,.3);display:flex;justify-content:space-between;align-items:center">
-            <div>
-              <div style="font-size:9.5px;text-transform:uppercase;color:var(--text-sub);margin-bottom:6px;letter-spacing:1.5px">Signature</div>
-              <div style="background:linear-gradient(135deg,rgba(255,240,248,.96),rgba(255,255,255,.92));border:1px solid rgba(255,192,203,.5);border-radius:12px;padding:6px 16px;box-shadow:0 0 18px rgba(244,114,182,.4);display:inline-flex;justify-content:center;align-items:center;min-width:170px;min-height:70px">
-                <img src="signature.png" alt="Signature" style="width:150px;max-height:55px;object-fit:contain;opacity:.85" onerror="this.style.display='none';document.getElementById('sigFallbackText').style.display='block'" />
-                <div id="sigFallbackText" style="display:none;font-family:'Vacancy',cursive;font-size:32px;font-weight:400;color:#7e22ce;letter-spacing:1px">Akshat Kumar</div>
-              </div>
-            </div>
-            <div style="font-size:11px;color:#a78bfa;text-align:right"><div>Registry: <strong>VK-2026-X99</strong></div><div>Seal: <strong>Authentic</strong></div></div>
+            <div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div>
           </div>
         </div>
       </div>
@@ -166,15 +145,12 @@ window.onerror = function(msg, url, line) {
             <div style="display:flex;flex-direction:column;gap:6px;flex:1">
               <button type="button" class="submit-btn" style="width:auto;padding:8px 16px;font-size:12px" onclick="triggerDpPicker()"><i class="fa-solid fa-camera"></i> Change DP</button>
               <input type="file" id="avatarPicker" style="display:none" accept="image/*" onchange="handleDpUpload(event)" />
-              <span style="font-size:9.5px;color:var(--text-sub)">JPG/PNG · Max 3MB</span>
             </div>
           </div>
           <label style="font-size:11px;color:var(--text-sub)">Display Name</label>
           <input type="text" id="editDisplayName" class="form-input" style="margin-top:4px" autocomplete="off" />
           <label style="font-size:11px;color:var(--text-sub);margin-top:8px;display:block">Bio</label>
           <textarea id="editBio" class="form-input" style="margin-top:4px;min-height:60px" placeholder="Tell others about you..." maxlength="150"></textarea>
-          <label style="font-size:11px;color:var(--text-sub);margin-top:8px;display:block">Language</label>
-          <select id="profileLanguageSelect" class="form-input" style="margin-top:4px" onchange="changeAppLanguage(this.value)"><option value="en">English</option><option value="hi">हिंदी</option></select>
           <button class="submit-btn" onclick="saveProfileData()">Save Changes</button>
         </div>
 
@@ -188,9 +164,7 @@ window.onerror = function(msg, url, line) {
             <div><div style="font-size:12px;font-weight:600">Notifications</div><div style="font-size:10px;color:var(--text-sub)" id="notifPermStatus">Checking...</div></div>
             <button class="submit-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="requestPermsFromNative()">Request</button>
           </div>
-          <button class="submit-btn" style="background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="openAppSettingsNative()">
-            <i class="fa-solid fa-gear"></i> Open App Settings
-          </button>
+          <button class="submit-btn" style="background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="openAppSettingsNative()"><i class="fa-solid fa-gear"></i> Open App Settings</button>
         </div>
 
         <div class="card-popup" style="margin-bottom:12px">
@@ -199,17 +173,7 @@ window.onerror = function(msg, url, line) {
             <div><div style="font-size:12px;font-weight:600">Gradient Flow</div><div style="font-size:10px;color:var(--text-sub)">Background animation</div></div>
             <button class="submit-btn" id="gradientToggleBtn" style="width:auto;padding:6px 14px;font-size:11px" onclick="toggleAmbientMotion()">Enabled</button>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
-            <div><div style="font-size:12px;font-weight:600">Notch Runner</div><div style="font-size:10px;color:var(--text-sub)">Top island animation</div></div>
-            <button class="submit-btn" id="runnerToggleBtn" style="width:auto;padding:6px 14px;font-size:11px" onclick="toggleRunnerVisibility()">Enabled</button>
-          </div>
           <div style="margin-bottom:10px">
-            <div style="font-size:11px;color:var(--text-sub);margin-bottom:6px">Runner Emojis</div>
-            <div class="emoji-picker-row" id="emojiPickerRow"></div>
-            <input type="text" id="customEmojiInput" class="form-input" style="margin-top:6px;font-size:12px" placeholder="Add custom emoji" maxlength="4" autocomplete="off" />
-            <button class="submit-btn" style="width:auto;padding:6px 14px;font-size:11px;margin-top:2px" onclick="addCustomEmoji()">+ Add</button>
-          </div>
-          <div>
             <div style="font-size:11px;color:var(--text-sub);margin-bottom:6px">Theme</div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#8b5cf6" onclick="applyThemeScheme('theme-violet')">Violet</button>
@@ -218,25 +182,8 @@ window.onerror = function(msg, url, line) {
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#f3e8ff;color:#000" onclick="applyThemeScheme('theme-amethyst-light')">Light</button>
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#059669" onclick="applyThemeScheme('theme-emerald-neon')">Emerald</button>
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#d97706" onclick="applyThemeScheme('theme-cyberpunk-amber')">Amber</button>
-              <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:linear-gradient(135deg,#d4af37,#a855f7);color:#0a0614;grid-column:span 3;font-weight:800" onclick="applyThemeScheme('theme-royal-gold')">👑 Royal Gold</button>
             </div>
           </div>
-        </div>
-
-        <div class="card-popup" style="margin-bottom:12px;border:1px solid #fbbf24;background:linear-gradient(135deg,rgba(251,191,36,.08),rgba(168,85,247,.08))">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <i class="fa-solid fa-rocket" style="color:#fbbf24;font-size:20px"></i>
-            <div style="font-size:13px;font-weight:700;color:#fbbf24">Coming Soon</div>
-          </div>
-          <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:10px">
-            <b style="color:#fff">🎧 Partner Mode Sync</b> — alag phones pe gaana sync<br>
-            <b style="color:#fff">👥 Team Mode</b> — 2+ log ek saath sune<br>
-            <b style="color:#fff">📢 Global Broadcast</b> — sab users ko message<br>
-            <b style="color:#fff">📊 Live User Count</b> — real-time stats
-          </div>
-          <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:700;padding:10px;border-radius:10px;text-decoration:none">
-            <i class="fa-brands fa-instagram"></i> Follow @akshat.kumar_148
-          </a>
         </div>
 
         <button class="submit-btn" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444;margin-bottom:20px" onclick="performAppLogout()"><i class="fa-solid fa-arrow-right-from-bracket"></i> Log Out</button>
@@ -276,9 +223,7 @@ window.onerror = function(msg, url, line) {
         <i class="fa-solid fa-layer-group" style="font-size:18px;cursor:pointer;color:var(--accent-neon)" onclick="openModal('modalQueueDrawer')"></i>
       </div>
     </div>
-    <div class="full-art-box" id="mediaCanvasBox">
-      <img src="vaultify.png" id="fullArtImg" alt="" onerror="this.src='vaultify.png'" />
-    </div>
+    <div class="full-art-box"><img src="vaultify.png" id="fullArtImg" alt="" onerror="this.src='vaultify.png'" /></div>
     <div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <div style="max-width:76%;overflow:hidden">
@@ -341,12 +286,8 @@ window.onerror = function(msg, url, line) {
       <div style="padding:16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px;text-align:center;margin-bottom:14px">
         <i class="fa-solid fa-rocket" style="font-size:36px;color:#fbbf24;margin-bottom:10px"></i>
         <div style="font-size:16px;font-weight:800;color:#fbbf24;margin-bottom:6px">Coming Soon</div>
-        <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:12px">
-          Partner Mode alag phones pe gaana sync karega.
-        </div>
-        <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:700;padding:10px;border-radius:10px;text-decoration:none">
-          <i class="fa-brands fa-instagram"></i> Follow @akshat.kumar_148
-        </a>
+        <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:12px">Partner Mode alag phones pe gaana sync karega.</div>
+        <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:700;padding:10px;border-radius:10px;text-decoration:none"><i class="fa-brands fa-instagram"></i> Follow @akshat.kumar_148</a>
       </div>
     </div>
   </div>
@@ -359,7 +300,6 @@ window.onerror = function(msg, url, line) {
       <input class="form-input" id="supEmail" placeholder="Your Email" autocomplete="off" />
       <textarea class="form-input" id="supMsg" placeholder="Kya problem hai?" style="min-height:100px"></textarea>
       <button class="submit-btn" onclick="sendSupportMail()"><i class="fa-solid fa-envelope"></i> Send Support Mail</button>
-      <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:block;text-align:center;margin-top:10px;font-size:11px;color:var(--partner-pink);text-decoration:none">Instagram @akshat.kumar_148</a>
     </div>
   </div>
 
@@ -393,6 +333,7 @@ window.onerror = function(msg, url, line) {
   <div class="toast-pill" id="toastPill">Message</div>
 </div>
 
+<script src="./proxies.js"></script>
 <script src="./script.js"></script>
 </body>
-  </html>
+            </html>
