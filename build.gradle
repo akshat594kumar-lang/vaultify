@@ -1,13 +1,11 @@
-// Top-level build file
+// Top-level build file — Vaultify
 buildscript {
     repositories {
         google()
         mavenCentral()
-        maven { url = uri("https://chaquo.com/maven") }
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.2.0'
-        classpath 'com.chaquo.python:gradle:15.0.1'
     }
 }
 
