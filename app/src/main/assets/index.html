@@ -8,12 +8,13 @@
 <title>Vaultify</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 <link rel="stylesheet" href="./style.css" />
-</head>
-<body>
 
+<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+</head>
+<body>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -150,6 +151,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-pen-nib"></i> GFX Designer</span>
             <span style="font-size:10px;font-weight:600;padding:4px 8px;border-radius:10px;display:inline-flex;align-items:center;gap:4px;background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.4);color:#c084fc"><i class="fa-solid fa-wand-magic-sparkles"></i> UI/UX</span>
           </div>
+          <div style="background:rgba(255,255,255,.04);padding:12px;border-radius:10px;border:1px solid var(--border);margin-bottom:12px">
+            <div style="font-size:11px;font-weight:700;color:var(--accent-neon);margin-bottom:6px;letter-spacing:1px">📊 LIVE STATS</div>
+            <div id="ipStatsDisplay">
+              <div style="font-size:11px;color:var(--text-sub)">Loading...</div>
+            </div>
+          </div>
           <div style="margin-top:14px;padding-top:10px;border-top:1px dashed rgba(168,85,247,.3);display:flex;justify-content:space-between;align-items:center">
             <div>
               <div style="font-size:9.5px;text-transform:uppercase;color:var(--text-sub);margin-bottom:6px;letter-spacing:1.5px">Signature</div>
@@ -226,21 +233,6 @@ document.addEventListener('DOMContentLoaded', function() {
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:linear-gradient(135deg,#d4af37,#a855f7);color:#0a0614;grid-column:span 3;font-weight:800" onclick="applyThemeScheme('theme-royal-gold')">👑 Royal Gold</button>
             </div>
           </div>
-        </div>
-
-        <div class="card-popup" style="margin-bottom:12px;border:1px solid #fbbf24;background:linear-gradient(135deg,rgba(251,191,36,.08),rgba(168,85,247,.08))">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <i class="fa-solid fa-rocket" style="color:#fbbf24;font-size:20px"></i>
-            <div style="font-size:13px;font-weight:700;color:#fbbf24">Coming Soon</div>
-          </div>
-          <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:10px">
-            <b style="color:#fff">🎧 Partner Mode Sync</b> — alag phones pe gaana sync<br>
-            <b style="color:#fff">📢 Global Broadcast</b> — sab users ko message<br>
-            <b style="color:#fff">🎵 Audius Music</b> — legal indie library
-          </div>
-          <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:700;padding:10px;border-radius:10px;text-decoration:none">
-            <i class="fa-brands fa-instagram"></i> Follow @akshat.kumar_148
-          </a>
         </div>
 
         <button class="submit-btn" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444;margin-bottom:20px" onclick="performAppLogout()"><i class="fa-solid fa-arrow-right-from-bracket"></i> Log Out</button>
@@ -339,19 +331,52 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="modal-overlay" id="modalPartner">
     <div class="card-popup">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="font-size:16px;color:var(--partner-pink)"><i class="fa-solid fa-heart"></i> Duo Partner</h3>
+        <h3 style="font-size:16px;color:var(--partner-pink)"><i class="fa-solid fa-heart"></i> Partner Mode</h3>
         <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalPartner')"></i>
       </div>
-      <div style="padding:16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px;text-align:center;margin-bottom:14px">
-        <i class="fa-solid fa-rocket" style="font-size:36px;color:#fbbf24;margin-bottom:10px"></i>
-        <div style="font-size:16px;font-weight:800;color:#fbbf24;margin-bottom:6px">Coming Soon</div>
-        <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:12px">
-          Partner Mode alag phones pe gaana sync karega.
-        </div>
-        <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:700;padding:10px;border-radius:10px;text-decoration:none">
-          <i class="fa-brands fa-instagram"></i> Follow @akshat.kumar_148
-        </a>
+      <div style="padding:12px;background:linear-gradient(135deg,rgba(236,72,153,.15),rgba(168,85,247,.15));border:1px solid var(--partner-pink);border-radius:12px;text-align:center;margin-bottom:14px">
+        <div style="font-size:10px;color:#f9a8d4;letter-spacing:1.5px;text-transform:uppercase">YOUR PARTNER CODE</div>
+        <div id="myPartnerCodeDisplay" style="font-size:22px;font-weight:800;color:#fff;letter-spacing:3px;margin-top:6px;font-family:monospace">VAULT-XXXXXX</div>
       </div>
+      <div id="partnerStatusText" style="text-align:center;font-size:12px;color:var(--text-sub);margin-bottom:12px">Offline</div>
+      <div style="background:rgba(255,255,255,.04);border-radius:12px;padding:10px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--text-sub)">Host: <b style="color:#fff" id="partnerHostName">-</b></div>
+        <div style="font-size:11px;color:var(--text-sub);margin-top:4px">Guest: <b style="color:#fff" id="partnerGuestName">-</b></div>
+      </div>
+      <button class="submit-btn" style="background:linear-gradient(135deg,#ec4899,#a855f7);color:#fff;margin-bottom:8px" onclick="partnerHostBtnClick()">
+        <i class="fa-solid fa-crown"></i> Host Session
+      </button>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input type="text" id="partnerJoinInput" class="form-input" style="margin-bottom:0;flex:1" placeholder="Enter partner code" autocomplete="off" />
+        <button class="submit-btn" style="width:auto;padding:0 14px" onclick="partnerJoinBtnClick()">Join</button>
+      </div>
+      <button class="submit-btn" style="background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="leavePartnerSession();closeModal('modalPartner')">Leave Session</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modalTeam">
+    <div class="card-popup">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-size:16px;color:var(--accent-neon)"><i class="fa-solid fa-users"></i> Team Mode</h3>
+        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalTeam')"></i>
+      </div>
+      <div style="padding:12px;background:linear-gradient(135deg,rgba(139,92,246,.15),rgba(236,72,153,.15));border:1px solid var(--accent-neon);border-radius:12px;text-align:center;margin-bottom:14px">
+        <div style="font-size:10px;color:#c084fc;letter-spacing:1.5px;text-transform:uppercase">YOUR TEAM CODE</div>
+        <div id="myTeamCodeDisplay" style="font-size:22px;font-weight:800;color:#fff;letter-spacing:3px;margin-top:6px;font-family:monospace">TEAM-XXXXXX</div>
+        <button onclick="copyTeamCode()" style="margin-top:8px;background:rgba(255,255,255,.1);border:1px solid var(--border);color:#fff;padding:5px 12px;border-radius:8px;font-size:10.5px;cursor:pointer">
+          <i class="fa-solid fa-copy"></i> Copy
+        </button>
+      </div>
+      <button class="submit-btn" style="background:linear-gradient(135deg,#8b5cf6,#ec4899);color:#fff;margin-bottom:8px" onclick="teamHostBtnClick()">
+        <i class="fa-solid fa-plus"></i> Create Team
+      </button>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input type="text" id="teamJoinInput" class="form-input" style="margin-bottom:0;flex:1" placeholder="Enter team code" autocomplete="off" />
+        <button class="submit-btn" style="width:auto;padding:0 14px" onclick="teamJoinBtnClick()">Join</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-sub);margin-bottom:6px">Members: <b style="color:#fff" id="teamMemberCount">0</b>/10</div>
+      <div id="teamMembersList" style="max-height:200px;overflow-y:auto;margin-bottom:12px"></div>
+      <button class="submit-btn" style="background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="leaveTeamSession();closeModal('modalTeam')">Leave Team</button>
     </div>
   </div>
 
@@ -397,6 +422,22 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="toast-pill" id="toastPill">Message</div>
 </div>
 
+<!-- ═══════════ SCRIPT LOAD ORDER (IMPORTANT) ═══════════ -->
+<!-- 1. Firebase core (must be first) -->
+<script src="./firebase.js"></script>
+<!-- 2. Utilities + UI -->
+<script src="./ui.js"></script>
+<!-- 3. IP counter -->
+<script src="./ipcounter.js"></script>
+<!-- 4. Auth system -->
+<script src="./auth.js"></script>
+<!-- 5. Music system -->
+<script src="./music.js"></script>
+<!-- 6. Partner mode -->
+<script src="./partner.js"></script>
+<!-- 7. Team mode -->
+<script src="./team.js"></script>
+<!-- 8. Main entry (must be last) -->
 <script src="./script.js"></script>
 </body>
-                                                                                                                                                                                                                                             </html>
+</html>
