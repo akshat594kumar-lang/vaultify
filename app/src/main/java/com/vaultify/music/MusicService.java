@@ -29,15 +29,23 @@ public class MusicService extends Service {
     private boolean isPlaying = false;
     private long currentPosition = 0;
     private long currentDuration = 0;
+    private boolean foregroundStarted = false;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        // ⚡ CRITICAL: Start as foreground IMMEDIATELY to avoid timeout crash
+        startForegroundSafely();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // ⚡ CRITICAL: Always call startForeground first thing
+        if (!foregroundStarted) {
+            startForegroundSafely();
+        }
+
         if (intent != null && intent.getAction() != null) {
             String action = intent.getAction();
             switch (action) {
@@ -55,11 +63,38 @@ public class MusicService extends Service {
                     break;
                 case "STOP_NOTIFICATION":
                     stopForeground(true);
+                    foregroundStarted = false;
                     stopSelf();
                     break;
             }
         }
         return START_STICKY;
+    }
+
+    private void startForegroundSafely() {
+        try {
+            // Create minimal notification immediately
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
+                    .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
+                    .setContentText(currentArtist != null ? currentArtist : "Ready")
+                    .setSmallIcon(android.R.drawable.ic_media_play)
+                    .setOngoing(true)
+                    .setPriority(Notification.PRIORITY_LOW);
+                startForeground(NOTIFICATION_ID, builder.build());
+            } else {
+                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
+                    .setContentText(currentArtist != null ? currentArtist : "Ready")
+                    .setSmallIcon(android.R.drawable.ic_media_play)
+                    .setOngoing(true)
+                    .setPriority(NotificationCompat.PRIORITY_LOW);
+                startForeground(NOTIFICATION_ID, builder.build());
+            }
+            foregroundStarted = true;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void createNotificationChannel() {
@@ -73,61 +108,65 @@ public class MusicService extends Service {
     }
 
     private void updateNotification() {
-        Intent notificationIntent = new Intent(this, MainActivity.class);
-        notificationIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, piFlags);
+        try {
+            Intent notificationIntent = new Intent(this, MainActivity.class);
+            notificationIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, piFlags);
 
-        PendingIntent prevIntent = buildActionPendingIntent("PREV", 1);
-        PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
-        PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
+            PendingIntent prevIntent = buildActionPendingIntent("PREV", 1);
+            PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
+            PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
-            .setContentText(currentArtist != null ? currentArtist : "")
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentIntent(pendingIntent)
-            .setOngoing(isPlaying)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
-            .addAction(isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, isPlaying ? "Pause" : "Play", playPauseIntent)
-            .addAction(android.R.drawable.ic_media_next, "Next", nextIntent);
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
+                .setContentText(currentArtist != null ? currentArtist : "")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentIntent(pendingIntent)
+                .setOngoing(isPlaying)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
+                .addAction(isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, isPlaying ? "Pause" : "Play", playPauseIntent)
+                .addAction(android.R.drawable.ic_media_next, "Next", nextIntent);
 
-        if (currentDuration > 0) {
-            builder.setProgress(100, (int) ((currentPosition * 100) / currentDuration), false);
-        }
+            if (currentDuration > 0) {
+                builder.setProgress(100, (int) ((currentPosition * 100) / currentDuration), false);
+            }
 
-        if (currentCover != null && currentCover.startsWith("http")) {
-            new Thread(() -> {
-                try {
-                    URL url = new URL(currentCover);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setDoInput(true);
-                    conn.setConnectTimeout(5000);
-                    conn.setReadTimeout(5000);
-                    conn.connect();
-                    InputStream input = conn.getInputStream();
-                    Bitmap bitmap = BitmapFactory.decodeStream(input);
-                    input.close();
-                    if (bitmap != null) {
-                        builder.setLargeIcon(bitmap);
-                        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                        if (manager != null) manager.notify(NOTIFICATION_ID, builder.build());
-                    }
-                } catch (Exception e) {}
-            }).start();
-        }
+            Notification notification = builder.build();
 
-        Notification notification = builder.build();
-        if (isPlaying) {
+            // ⚡ Always update foreground — never just notify
             startForeground(NOTIFICATION_ID, notification);
-        } else {
-            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (manager != null) manager.notify(NOTIFICATION_ID, notification);
+            foregroundStarted = true;
+
+            // Try to load cover art in background
+            if (currentCover != null && currentCover.startsWith("http")) {
+                final String coverUrl = currentCover;
+                new Thread(() -> {
+                    try {
+                        URL url = new URL(coverUrl);
+                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                        conn.setDoInput(true);
+                        conn.setConnectTimeout(5000);
+                        conn.setReadTimeout(5000);
+                        conn.connect();
+                        InputStream input = conn.getInputStream();
+                        Bitmap bitmap = BitmapFactory.decodeStream(input);
+                        input.close();
+                        if (bitmap != null) {
+                            builder.setLargeIcon(bitmap);
+                            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                            if (manager != null) manager.notify(NOTIFICATION_ID, builder.build());
+                        }
+                    } catch (Exception e) {}
+                }).start();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
