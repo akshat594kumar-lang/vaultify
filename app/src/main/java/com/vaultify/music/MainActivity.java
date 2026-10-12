@@ -31,6 +31,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST_CODE = 100;
     private static final int FILE_CHOOSER_CODE = 103;
+    private static final int EQ_REQUEST_CODE = 5001;
 
     private WebView webView;
     private BroadcastReceiver mediaActionReceiver;
@@ -289,6 +290,26 @@ public class MainActivity extends AppCompatActivity {
                 Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                 intent.setData(Uri.parse("package:" + getPackageName()));
                 startActivity(intent);
+            });
+        }
+
+        @JavascriptInterface
+        public void openSystemEqualizer() {
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent("android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL");
+                    intent.putExtra("android.media.extra.AUDIO_SESSION", 0);
+                    intent.putExtra("android.media.extra.CONTENT_TYPE", 0);
+                    startActivityForResult(intent, EQ_REQUEST_CODE);
+                } catch (Exception e) {
+                    try {
+                        Intent fallback = new Intent(Settings.ACTION_SOUND_SETTINGS);
+                        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(fallback);
+                    } catch (Exception e2) {
+                        Toast.makeText(MainActivity.this, "Equalizer not available", Toast.LENGTH_SHORT).show();
+                    }
+                }
             });
         }
     }
