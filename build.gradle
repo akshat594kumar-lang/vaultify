@@ -1,4 +1,3 @@
-// Top-level build file — Vaultify
 buildscript {
     repositories {
         google()
