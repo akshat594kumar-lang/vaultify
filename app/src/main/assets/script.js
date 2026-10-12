@@ -1,5 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — SPOTIFY SEARCH + JIOSAAVN STREAM                     */
+/* VAULTIFY — FULL FINAL                                           */
+/* YouTube Search + JioSaavn Stream                                */
+/* Auto-skip BAND | Turnable Recently Played                       */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -113,7 +115,7 @@ async function checkWorker() {
 
 async function workerSearch(query, limit = 25) {
   try {
-    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 15000 });
+    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 20000 });
     const data = await r.json();
     return data.results || [];
   } catch (e) { return []; }
@@ -127,7 +129,7 @@ async function workerStreamUrl(id, meta) {
       if (meta.artist) url += `&artist=${encodeURIComponent(meta.artist)}`;
       if (meta.duration) url += `&dur=${meta.duration}`;
     }
-    const r = await proxyFetch(url, { timeout: 25000 });
+    const r = await proxyFetch(url, { timeout: 30000 });
     const data = await r.json();
     return data.url || null;
   } catch (e) { return null; }
@@ -575,6 +577,7 @@ async function requestHardwareWakeLock() {
   } catch (e) {}
 }
 
+/* ═══════════ MEDIA SESSION — NO AUTO-SKIP ═══════════ */
 function setupMediaSession() {
   if (!mainAudio) return;
   if ('mediaSession' in navigator) {
@@ -586,7 +589,13 @@ function setupMediaSession() {
       navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime !== undefined) seekAudioTo(d.seekTime); });
     } catch (e) {}
   }
-  mainAudio.addEventListener('error', () => { showToast('⚠️ Audio error — try again'); setVisualState(false); });
+
+  // Auto-skip BAND — error pe ruk jayega
+  mainAudio.addEventListener('error', () => {
+    showToast('⚠️ Audio error — try again');
+    setVisualState(false);
+  });
+
   mainAudio.addEventListener('timeupdate', () => {
     if (!mainAudio.duration || isDraggingTimeline) return;
     const pos = mainAudio.currentTime, dur = mainAudio.duration;
@@ -602,11 +611,17 @@ function setupMediaSession() {
       try { window.AndroidNativeBridge.updateProgress(Math.floor(pos * 1000), Math.floor(dur * 1000)); } catch (e) {}
     }
   });
+
   mainAudio.addEventListener('loadedmetadata', () => {
     const d = document.getElementById('labelTotalDuration');
     if (d) d.innerText = formatClock(mainAudio.duration);
   });
-  mainAudio.addEventListener('ended', () => { setVisualState(false); showToast('⏹ Song ended'); });
+
+  // Auto-skip BAND — gaana khatam hone pe ruk jayega
+  mainAudio.addEventListener('ended', () => {
+    setVisualState(false);
+    showToast('⏹ Song ended');
+  });
 }
 
 window.onNativePlay = function () { if (mainAudio && mainAudio.paused) mainAudio.play().catch(() => {}); setVisualState(true); };
@@ -678,7 +693,7 @@ async function searchAll(q) {
 async function fetchTrendingSongs(limit = 10) {
   if (!workerReady) await checkWorker();
   if (workerReady) {
-    const trending = await workerSearch('arijit singh', limit);
+    const trending = await workerSearch('arijit singh hits', limit);
     if (trending.length >= 3) return trending.slice(0, limit);
     const hindi = await workerSearch('bollywood hits', limit);
     if (hindi.length >= 3) return hindi.slice(0, limit);
@@ -696,7 +711,7 @@ async function fetchDirectAudioStreamUrl(input, meta) {
   return null;
 }
 
-/* ═══════════ PLAY TRACK ═══════════ */
+/* ═══════════ PLAY TRACK — NO AUTO-SKIP ═══════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -746,6 +761,7 @@ async function playTrack(index, broadcast = true) {
     try { await mainAudio.play(); setVisualState(true); setTimeout(() => cacheTrackInBackground(track), 10000); return; } catch (e) {}
   }
 
+  // No auto-skip
   showToast('⚠️ Playback failed — try again');
   setVisualState(false);
 }
@@ -954,6 +970,7 @@ function logPlaybackHistory(track) {
   if (currentLibraryTab === 'history') renderLibrary();
 }
 
+/* ═══════════ TURNABLE RECENTLY PLAYED ═══════════ */
 function renderHomeRecentVault() {
   const c = document.getElementById('homeRecentGrid');
   if (!c) return;
@@ -1473,6 +1490,36 @@ async function savePlaybackState() {
 }
 
 setInterval(() => { if (!isPlayingAudio) return; _lastSaveTick += 1000; if (_lastSaveTick >= 10000) { _lastSaveTick = 0; savePlaybackState(); } }, 1000);
+
+/* ═══════════ EQ FIX ═══════════ */
+async function applyEqNow() {
+  try {
+    if (!audioContextNode) initForegroundAudioBridge();
+    if (!eqNodes) initEqChain();
+    if (!eqNodes) return showToast('EQ not ready');
+    const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'];
+    ids.forEach((id, i) => {
+      const el = document.getElementById(id);
+      if (el && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0;
+    });
+    saveEqToStorage();
+    showToast('✅ EQ applied');
+    closeModal('modalEqualizer');
+  } catch (e) { showToast('EQ fail'); }
+}
+
+setTimeout(() => {
+  ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', () => {
+        if (eqNodes && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0;
+      });
+      el.addEventListener('change', saveEqToStorage);
+    }
+  });
+  loadEqFromStorage();
+}, 2000);
 
 /* ═══════════ BOOT ═══════════ */
 window.addEventListener('DOMContentLoaded', () => {
