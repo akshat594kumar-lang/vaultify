@@ -36,15 +36,15 @@ public class MainActivity extends AppCompatActivity {
     private BroadcastReceiver mediaActionReceiver;
     private BroadcastReceiver seekReceiver;
     private ValueCallback<Uri[]> filePathCallback;
+    private boolean musicServiceStarted = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         setupWebView();
-        startMusicService();
-        setupReceivers();
         requestAllPermissions();
+        setupReceivers();
     }
 
     private void setupWebView() {
@@ -103,6 +103,21 @@ public class MainActivity extends AppCompatActivity {
         });
 
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    private void startMusicServiceIfNeeded() {
+        if (musicServiceStarted) return;
+        try {
+            Intent serviceIntent = new Intent(this, MusicService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+            musicServiceStarted = true;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void setupReceivers() {
@@ -186,22 +201,12 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
     }
 
-    private void startMusicService() {
-        Intent serviceIntent = new Intent(this, MusicService.class);
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
     public class NativeBridge {
+
         @JavascriptInterface
         public void updateNotification(String title, String artist, String cover, boolean playing) {
+            // ⚡ Lazy start — only when first track plays
+            if (!musicServiceStarted) startMusicServiceIfNeeded();
             runOnUiThread(() -> {
                 Intent intent = new Intent(MainActivity.this, MusicService.class);
                 intent.setAction("UPDATE_NOTIFICATION");
@@ -210,35 +215,51 @@ public class MainActivity extends AppCompatActivity {
                 intent.putExtra("cover", cover);
                 intent.putExtra("playing", playing);
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-                    else startService(intent);
-                } catch (Exception e) { e.printStackTrace(); }
+                    // ⚡ Always use startService for updates (service already foreground)
+                    // startForegroundService only used first time
+                    if (!musicServiceStarted) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent);
+                        } else {
+                            startService(intent);
+                        }
+                        musicServiceStarted = true;
+                    } else {
+                        startService(intent);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             });
         }
 
         @JavascriptInterface
         public void updateProgress(long positionMs, long durationMs) {
+            if (!musicServiceStarted) return;
             runOnUiThread(() -> {
                 Intent intent = new Intent(MainActivity.this, MusicService.class);
                 intent.setAction("UPDATE_PROGRESS");
                 intent.putExtra("position", positionMs);
                 intent.putExtra("duration", durationMs);
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-                    else startService(intent);
-                } catch (Exception e) { e.printStackTrace(); }
+                    startService(intent);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             });
         }
 
         @JavascriptInterface
         public void stopNotification() {
+            if (!musicServiceStarted) return;
             runOnUiThread(() -> {
                 Intent intent = new Intent(MainActivity.this, MusicService.class);
                 intent.setAction("STOP_NOTIFICATION");
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-                    else startService(intent);
-                } catch (Exception e) { e.printStackTrace(); }
+                    startService(intent);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             });
         }
 
@@ -336,4 +357,4 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onResume() { super.onResume(); if (webView != null) webView.onResume(); }
-}
+    }
