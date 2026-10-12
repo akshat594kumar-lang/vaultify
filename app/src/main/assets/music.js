@@ -1,29 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — MUSIC SYSTEM                                         */
-/* Search, streams, player, queue, EQ, cache, download             */
+/* VAULTIFY — MUSIC SYSTEM (SAAVN ONLY)                            */
+/* YouTube gateways dead hain, isliye Saavn use kar rahe hain      */
+/* Background play 100% working                                    */
 /* ═══════════════════════════════════════════════════════════════ */
-
-/* ═══════════ API GATEWAYS ═══════════ */
-const PRIMARY_API_GATEWAYS = [
-  'https://pipedapi.reallyaweso.me',
-  'https://pipedapi.adminforge.de',
-  'https://pipedapi.ducks.party',
-  'https://pipedapi.drgnz.club',
-  'https://pipedapi.leptons.xyz',
-  'https://piped-api.lunar.icu',
-  'https://api.piped.privacydev.net'
-];
-
-const INVIDIOUS_GATEWAYS = [
-  'https://invidious.nerdvpn.de',
-  'https://yewtu.be',
-  'https://invidious.privacyredirect.com',
-  'https://inv.tux.pizza',
-  'https://invidious.flokinet.to',
-  'https://iv.melmac.space',
-  'https://iv.datura.network',
-  'https://invidious.f5.si'
-];
 
 const SAAVN_APIS = [
   'https://saavn.dev',
@@ -47,7 +26,6 @@ let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_his
 
 const trackBlobCache = new Map();
 
-let activeHostIndex = 0;
 let isDraggingTimeline = false;
 let autoMixFetching = false;
 let lastAutoFetchTime = 0;
@@ -75,7 +53,7 @@ function detectLanguage(text) {
   if (URDU_CHARS.test(text)) return 'urdu';
   if (PUNJABI_CHARS.test(text)) return 'punjabi';
   const lower = text.toLowerCase();
-  const hindiKeywords = ['arijit', 'atif', 'shreya', 'sonu', 'kishore', 'lata', 'asha', 'rafi', 'kumar sanu', 'udit', 'alka', 'sunidhi', 'neha kakkar', 'honey singh', 'badshah', 'diljit', 'guru randhawa', 'jass manak', 'karan aujla', 'ap dhillon', 'sidhu moose', 'divine', 'emiway', 'raftaar', 'jubin', 'darshan raval', 'armaan malik', 'sonakshi', 'tony kakkar', 'rahat fateh', 'nusrat', 'coke studio', 'bollywood', 'hindi', 'desi', 'punjabi', 'pal pal'];
+  const hindiKeywords = ['arijit', 'atif', 'shreya', 'sonu', 'kishore', 'lata', 'asha', 'rafi', 'kumar sanu', 'udit', 'alka', 'sunidhi', 'neha kakkar', 'honey singh', 'badshah', 'diljit', 'guru randhawa', 'jass manak', 'karan aujla', 'ap dhillon', 'sidhu moose', 'divine', 'emiway', 'raftaar', 'jubin', 'darshan raval', 'armaan malik', 'sonakshi', 'tony kakkar', 'rahat fateh', 'nusrat', 'coke studio', 'bollywood', 'hindi', 'desi', 'punjabi', 'pal pal', 'aur', 'vital signs'];
   const englishKeywords = ['taylor swift', 'ed sheeran', 'drake', 'justin bieber', 'ariana grande', 'billie eilish', 'post malone', 'the weeknd', 'eminem', 'rihanna', 'adele', 'bruno mars', 'coldplay', 'imagine dragons', 'maroon 5', 'edm', 'pop', 'rock', 'english', 'western'];
   let h = 0, e = 0;
   hindiKeywords.forEach(k => { if (lower.includes(k)) h++; });
@@ -84,10 +62,10 @@ function detectLanguage(text) {
 }
 
 function getLanguageQueries(lang) {
-  if (lang === 'hindi') return ['trending hindi songs 2026', 'best bollywood hits', 'arijit singh top songs', 'atif aslam best', 'punjabi hits 2026', 'new hindi songs'];
-  if (lang === 'urdu') return ['trending pakistani songs 2026', 'atif aslam hits', 'coke studio pakistan', 'nusrat fateh ali'];
-  if (lang === 'punjabi') return ['punjabi hits 2026', 'diljit dosanjh songs', 'ap dhillon hits', 'karan aujla'];
-  return ['top english hits 2026', 'billboard hot 100', 'taylor swift songs', 'ed sheeran hits', 'pop hits 2026'];
+  if (lang === 'hindi') return ['arijit singh hits', 'atif aslam songs', 'bollywood hits 2026', 'punjabi hits', 'new hindi songs', 'romantic hindi'];
+  if (lang === 'urdu') return ['atif aslam hits', 'coke studio pakistan', 'nusrat fateh ali', 'rahat fateh ali khan', 'aur band'];
+  if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla', 'sidhu moose wala', 'punjabi hits'];
+  return ['top english hits', 'taylor swift', 'ed sheeran', 'pop hits', 'billboard'];
 }
 
 /* ═══════════ CACHE (IndexedDB) ═══════════ */
@@ -312,8 +290,9 @@ function setupMediaSession() {
   }
 
   mainAudio.addEventListener('ended', () => autoplayNext());
+
   mainAudio.addEventListener('error', () => {
-    if (currentPlaylist[currentTrackIndex]) showToast('Stream error — next');
+    console.log('Audio error, skipping...');
     setTimeout(autoplayNext, 800);
   });
 
@@ -340,20 +319,20 @@ function setupMediaSession() {
   });
 }
 
-window.onNativePlay = function() {
+window.onNativePlay = function () {
   if (mainAudio.paused) mainAudio.play().catch(() => {});
   setVisualState(true);
 };
 
-window.onNativePause = function() {
+window.onNativePause = function () {
   mainAudio.pause();
   setVisualState(false);
 };
 
-window.onNativeNext = function() { playNext(); };
-window.onNativePrev = function() { playPrevious(); };
+window.onNativeNext = function () { playNext(); };
+window.onNativePrev = function () { playPrevious(); };
 
-window.handleNativeMediaAction = function(action) {
+window.handleNativeMediaAction = function (action) {
   switch (action) {
     case 'PLAY': onNativePlay(); break;
     case 'PAUSE': onNativePause(); break;
@@ -362,7 +341,7 @@ window.handleNativeMediaAction = function(action) {
   }
 };
 
-window.handleNativeSeek = function(ms) { seekAudioTo(ms / 1000); };
+window.handleNativeSeek = function (ms) { seekAudioTo(ms / 1000); };
 
 function updateMediaSessionMetadata(track) {
   if (!track) return;
@@ -437,12 +416,12 @@ function seekAudioTo(s) {
   if (mainAudio.duration) mainAudio.currentTime = s;
 }
 
-/* ═══════════ SEARCH: SAAVN ═══════════ */
-async function saavnSearch(q, limit = 20) {
+/* ═══════════ SAAVN SEARCH ═══════════ */
+async function saavnSearch(q, limit = 25) {
   for (const base of SAAVN_APIS) {
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const tm = setTimeout(() => ctrl.abort(), 7000);
       const r = await fetch(`${base}/api/search/songs?query=${encodeURIComponent(q)}&limit=${limit}`, { signal: ctrl.signal });
       clearTimeout(tm);
       if (!r.ok) continue;
@@ -458,7 +437,7 @@ async function saavnSongById(id) {
   for (const base of SAAVN_APIS) {
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const tm = setTimeout(() => ctrl.abort(), 7000);
       const r = await fetch(`${base}/api/songs/${id}`, { signal: ctrl.signal });
       clearTimeout(tm);
       if (!r.ok) continue;
@@ -487,15 +466,15 @@ function decodeHtmlEntities(str) {
 
 async function searchSaavn(q) {
   try {
-    const results = await saavnSearch(q, 20);
+    const results = await saavnSearch(q, 25);
     if (!results?.length) return [];
     return results.map(s => {
       const direct = saavnExtractDirect(s);
       return {
         id: 'saavn_' + s.id,
         title: decodeHtmlEntities(s.name || s.title || 'Unknown'),
-        artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || 'Unknown',
-        cover: s.image?.[2]?.url || s.image?.[1]?.url || '',
+        artist: (s.artists?.primary?.map(a => a.name).join(', ')) || s.primaryArtists || s.primaryArtistsId || 'Unknown',
+        cover: s.image?.[2]?.url || s.image?.[1]?.url || s.image?.[0]?.url || '',
         duration: s.duration || 0,
         source: 'saavn',
         _directStream: direct
@@ -506,66 +485,9 @@ async function searchSaavn(q) {
   }
 }
 
-/* ═══════════ SEARCH: PIPED ═══════════ */
-async function searchPiped(q) {
-  const promises = PRIMARY_API_GATEWAYS.map(async h => {
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${h}/search?q=${encodeURIComponent(q)}&filter=music_songs`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (!d.items?.length) return null;
-      return d.items.filter(i => i.type === 'stream').map(i => ({
-        id: i.url.replace('/watch?v=', ''),
-        title: i.title,
-        artist: i.uploaderName || 'Artist',
-        cover: i.thumbnail,
-        duration: i.duration || 0,
-        source: 'youtube'
-      }));
-    } catch (e) { return null; }
-  });
-  const results = await Promise.allSettled(promises);
-  for (const r of results) {
-    if (r.status === 'fulfilled' && r.value && r.value.length > 0) return r.value;
-  }
-  return [];
-}
-
-/* ═══════════ SEARCH: INVIDIOUS ═══════════ */
-async function searchInvidious(q) {
-  const promises = INVIDIOUS_GATEWAYS.map(async h => {
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${h}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (!Array.isArray(d) || !d.length) return null;
-      return d.slice(0, 20).map(v => ({
-        id: v.videoId,
-        title: v.title,
-        artist: v.author || 'Unknown',
-        cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
-        duration: v.lengthSeconds || 0,
-        source: 'youtube'
-      }));
-    } catch (e) { return null; }
-  });
-  const results = await Promise.allSettled(promises);
-  for (const r of results) {
-    if (r.status === 'fulfilled' && r.value && r.value.length > 0) return r.value;
-  }
-  return [];
-}
-
+/* ═══════════ SEARCH ALL (SAAVN ONLY) ═══════════ */
 async function searchAll(q) {
   const results = await Promise.allSettled([
-    searchPiped(q),
-    searchInvidious(q),
     searchSaavn(q)
   ]);
   const all = [];
@@ -584,20 +506,19 @@ async function searchAll(q) {
   return all;
 }
 
-/* ═══════════ TRENDING ═══════════ */
+/* ═══════════ TRENDING (SAAVN ONLY) ═══════════ */
 async function fetchTrendingSongs(limit = 10) {
   const queries = getLanguageQueries(currentLanguage);
   const shuffled = queries.sort(() => Math.random() - 0.5);
   for (const q of shuffled) {
-    const p = await searchPiped(q);
-    if (p.length) return p.slice(0, limit);
-    const i = await searchInvidious(q);
-    if (i.length) return i.slice(0, limit);
+    const result = await searchSaavn(q);
+    if (result.length >= 5) return result.slice(0, limit);
   }
-  return await searchSaavn('trending ' + currentLanguage);
+  const fallback = await searchSaavn('trending hindi songs 2026');
+  return fallback.slice(0, limit);
 }
 
-/* ═══════════ YT URL / PLAYLIST ═══════════ */
+/* ═══════════ YT URL / PLAYLIST (metadata only) ═══════════ */
 function extractYouTubeId(url) {
   const m = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
   return m ? m[1] : null;
@@ -608,60 +529,7 @@ function extractPlaylistId(url) {
   return m ? m[1] : null;
 }
 
-async function getYouTubeVideoMeta(vid) {
-  try {
-    for (const h of INVIDIOUS_GATEWAYS) {
-      try {
-        const ctrl = new AbortController();
-        const tm = setTimeout(() => ctrl.abort(), 3000);
-        const r = await fetch(`${h}/api/v1/videos/${vid}`, { signal: ctrl.signal });
-        clearTimeout(tm);
-        if (!r.ok) continue;
-        const d = await r.json();
-        return {
-          id: vid,
-          title: d.title,
-          artist: d.author || 'YouTube',
-          cover: `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
-          duration: d.lengthSeconds || 0,
-          source: 'youtube'
-        };
-      } catch (e) {}
-    }
-  } catch (e) {}
-  return {
-    id: vid,
-    title: 'YouTube Track',
-    artist: 'YouTube',
-    cover: `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
-    source: 'youtube'
-  };
-}
-
-async function fetchPlaylistItems(playlistId) {
-  for (const h of INVIDIOUS_GATEWAYS) {
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 4000);
-      const r = await fetch(`${h}/api/v1/playlists/${playlistId}`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if (!r.ok) continue;
-      const d = await r.json();
-      if (!d.videos) continue;
-      return d.videos.map(v => ({
-        id: v.videoId,
-        title: v.title,
-        artist: v.author || 'Unknown',
-        cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
-        duration: v.lengthSeconds || 0,
-        source: 'youtube'
-      }));
-    } catch (e) {}
-  }
-  return null;
-}
-
-/* ═══════════ STREAM URL FETCH ═══════════ */
+/* ═══════════ STREAM URL FETCH (SAAVN ONLY) ═══════════ */
 async function fetchDirectAudioStreamUrl(input) {
   if (!input) return null;
   if (input.startsWith('saavn_')) {
@@ -670,53 +538,6 @@ async function fetchDirectAudioStreamUrl(input) {
     return saavnExtractDirect(s);
   }
   if (input.startsWith('blob:') || input.startsWith('data:')) return input;
-  if (/^[a-zA-Z0-9_-]{11}$/.test(input)) {
-    const inv = await fetchFromInvidious(input);
-    if (inv) return inv;
-    const p = await fetchFromPiped(input);
-    if (p) return p;
-  }
-  return null;
-}
-
-async function fetchFromInvidious(vid) {
-  const instances = INVIDIOUS_GATEWAYS.slice().sort(() => Math.random() - 0.5);
-  for (const h of instances) {
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 3500);
-      const r = await fetch(`${h}/api/v1/videos/${vid}`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if (!r.ok) continue;
-      const d = await r.json();
-      const af = (d.adaptiveFormats || []).filter(f => f.type?.includes('audio') && f.url);
-      if (af.length) {
-        af.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        if (af[0]?.url) return af[0].url;
-      }
-    } catch (e) { continue; }
-  }
-  return null;
-}
-
-async function fetchFromPiped(vid) {
-  const instances = PRIMARY_API_GATEWAYS.slice().sort(() => Math.random() - 0.5);
-  for (const h of instances) {
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 3000);
-      const r = await fetch(`${h}/streams/${vid}`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if (!r.ok) continue;
-      const d = await r.json();
-      if (d.audioStreams?.length) {
-        const best = d.audioStreams
-          .filter(s => s.url && s.mimeType && s.mimeType.includes('audio'))
-          .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-        if (best?.url) return best.url;
-      }
-    } catch (e) { continue; }
-  }
   return null;
 }
 
@@ -752,26 +573,24 @@ async function playTrack(index, broadcast = true) {
     return;
   }
 
-  // Saavn direct
+  // Saavn direct stream
   if (track.id.startsWith('saavn_') && track._directStream) {
     mainAudio.src = track._directStream;
     mainAudio.load();
     try {
       await mainAudio.play();
       setVisualState(true);
+      setTimeout(() => cacheTrackInBackground(track), 10000);
+      return;
     } catch (e) {
-      showToast('❌ Stream failed');
-      setTimeout(autoplayNext, 1500);
+      console.log('Saavn direct fail, trying cached...');
     }
-    return;
   }
 
+  // Try cache
   let streamUrl = null;
-  if (track._directStream && track._directStream.startsWith('http')) streamUrl = track._directStream;
-  if (!streamUrl) {
-    const c = trackBlobCache.get(track.id);
-    if (c && c.startsWith('blob:')) streamUrl = c;
-  }
+  const c = trackBlobCache.get(track.id);
+  if (c && c.startsWith('blob:')) streamUrl = c;
   if (!streamUrl) {
     const db = await cacheGet(track.id);
     if (db && db.url) {
@@ -779,11 +598,10 @@ async function playTrack(index, broadcast = true) {
       trackBlobCache.set(track.id, streamUrl);
     }
   }
+
+  // Try fresh fetch
   if (!streamUrl) {
-    streamUrl = await Promise.race([
-      fetchDirectAudioStreamUrl(track.id),
-      new Promise(r => setTimeout(() => r(null), 8000))
-    ]);
+    streamUrl = await fetchDirectAudioStreamUrl(track.id);
   }
 
   if (streamUrl && streamUrl.startsWith('http')) {
@@ -792,18 +610,17 @@ async function playTrack(index, broadcast = true) {
     try {
       await mainAudio.play();
       setVisualState(true);
-      setTimeout(() => cacheTrackInBackground(track), 12000);
       return;
     } catch (e) {
-      console.log('Direct audio fail');
+      console.log('Stream fail');
     }
   }
 
-  showToast('⚠️ Skipping (no background stream)');
+  // Nothing worked — skip
+  showToast('⚠️ Song skip');
   setTimeout(() => {
     if (currentPlaylist.length > 1) autoplayNext();
-    else showToast('❌ No playable songs');
-  }, 1200);
+  }, 800);
 }
 
 /* ═══════════ AUTOPLAY + QUEUE ═══════════ */
@@ -861,29 +678,31 @@ async function fetchRelatedSongs(seedTrack) {
 
   let artist = (seedTrack.artist || '')
     .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios/gi, '')
-    .replace(/[-_]/g, ' ')
+    .replace(/[-_,]/g, ' ')
     .trim();
 
   const existingIds = new Set(currentPlaylist.map(t => t.id));
   let results = [];
   const queries = [];
 
+  // Same artist first
   if (artist && artist.length > 2 && artist !== lastFetchedArtist) {
-    queries.push(`${artist} songs`);
-    queries.push(`${artist} top hits`);
+    queries.push(artist);
     lastFetchedArtist = artist;
   }
 
+  // Same language trending
   const langQ = getLanguageQueries(seedLang);
   queries.push(langQ[Math.floor(Math.random() * langQ.length)]);
 
+  // Similar title
   const titleWords = (seedTrack.title || '').split(' ').slice(0, 3).join(' ').replace(/[\(\)\[\]]/g, '').trim();
-  if (titleWords.length > 3) queries.push(`${titleWords} similar`);
+  if (titleWords.length > 3) queries.push(titleWords);
 
   for (const q of queries) {
     if (results.length >= 12) break;
     try {
-      const batch = await searchAll(q);
+      const batch = await searchSaavn(q);
       batch.forEach(t => {
         if (!existingIds.has(t.id) && !results.some(r => r.id === t.id)) {
           const tL = detectLanguage((t.title || '') + ' ' + (t.artist || ''));
@@ -1004,7 +823,7 @@ function shareCurrentTrack() {
 /* ═══════════ CACHE / DOWNLOAD ═══════════ */
 async function cacheTrackInBackground(track) {
   if (!track) return;
-  if (track.id.startsWith('saavn_') || track.id.startsWith('blob:')) return;
+  if (track.id.startsWith('blob:')) return;
   if (trackBlobCache.has(track.id)) return;
 
   const existing = await cacheGet(track.id);
@@ -1207,30 +1026,6 @@ async function executeLiveSearch(isAuto = false) {
   l.style.display = 'block';
   l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
 
-  const ytId = extractYouTubeId(q);
-  if (ytId) {
-    const meta = await getYouTubeVideoMeta(ytId);
-    if (meta) {
-      l.style.display = 'none';
-      playSearchedTrackImmediately(
-        encodeURIComponent(meta.id), encodeURIComponent(meta.title),
-        encodeURIComponent(meta.artist), encodeURIComponent(meta.cover), ''
-      );
-      return;
-    }
-  }
-
-  const plId = extractPlaylistId(q);
-  if (plId) {
-    const pl = await fetchPlaylistItems(plId);
-    if (pl && pl.length) {
-      showToast(`Loaded ${pl.length} playlist songs`);
-      l.style.display = 'none';
-      renderSearchResults(pl);
-      return;
-    }
-  }
-
   const all = await searchAll(q);
   const found = all.slice(0, 30);
   l.style.display = 'none';
@@ -1246,6 +1041,10 @@ async function executeLiveSearch(isAuto = false) {
 
 function renderSearchResults(tracks) {
   const c = document.getElementById('searchResultsContainer');
+  if (tracks.length === 0) {
+    c.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No results.</p>';
+    return;
+  }
   c.innerHTML = tracks.map(t => {
     const sId = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || 'vaultify.png');
@@ -1283,10 +1082,10 @@ function initLiveSearchInputListener() {
     if (q.length >= 2) {
       liveSearchDebounceTimer = setTimeout(() => {
         if (f.value.trim() === q) instantSearch(q);
-      }, 350);
+      }, 400);
     } else if (q.length === 0) {
       const rc = document.getElementById('searchResultsContainer');
-      if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name or paste YouTube link.</p>';
+      if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p>';
     }
   });
 
@@ -1310,26 +1109,12 @@ async function instantSearch(q) {
     l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>';
   }
 
-  const results = await Promise.allSettled([searchPiped(q), searchInvidious(q), searchSaavn(q)]);
+  const results = await searchSaavn(q);
   if (myId !== liveSearchRequestId) return;
 
   if (l) l.style.display = 'none';
 
-  const all = [];
-  const seen = new Set();
-  results.forEach(r => {
-    if (r.status === 'fulfilled' && r.value) {
-      r.value.forEach(t => {
-        const k = (t.id || t.title || '').toString().toLowerCase().trim();
-        if (k && !seen.has(k)) {
-          seen.add(k);
-          all.push(t);
-        }
-      });
-    }
-  });
-
-  const found = all.slice(0, 20);
+  const found = results.slice(0, 20);
   if (found.length > 0) renderSearchResults(found);
   else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
 }
@@ -1361,7 +1146,7 @@ function buildRecommendationQuery() {
   searchHistoryList.slice(0, 3).forEach(s => tokens.push(s));
   const u = [...new Set(tokens.filter(t => t && t.length > 2))];
   if (u.length === 0) return getLanguageQueries(currentLanguage)[0];
-  return u.slice(0, 3).join(' ') + ' songs';
+  return u.slice(0, 3).join(' ');
 }
 
 async function renderRecommendedSection() {
@@ -1377,7 +1162,7 @@ async function renderRecommendedSection() {
     headerText = 'Recommended For You';
     const q = buildRecommendationQuery();
     const seen = new Set(playbackHistoryList.map(t => t.id));
-    const all = await searchAll(q);
+    const all = await searchSaavn(q);
     const lf = all.filter(t => detectLanguage((t.title || '') + ' ' + (t.artist || '')) === currentLanguage);
     found = lf.length >= 4 ? lf.slice(0, 6) : all.filter(t => !seen.has(t.id)).slice(0, 6);
   }
@@ -1577,14 +1362,9 @@ setInterval(() => {
 window.addEventListener('beforeunload', savePlaybackState);
 window.addEventListener('pagehide', savePlaybackState);
 
-/* ═══════════ BINDINGS THAT NEED DOMContentLoaded ═══════════ */
+/* ═══════════ BOOT ═══════════ */
 window.addEventListener('DOMContentLoaded', () => {
   initCacheDB();
-  setTimeout(() => {
-    const i = document.getElementById('appIntroScreen');
-    if (i) i.classList.add('fade-out');
-  }, 1200);
-
   setupMediaSession();
   setupTimelineDraggableEngine();
   initLiveSearchInputListener();
@@ -1612,8 +1392,6 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ═══════════ EXPORT TO WINDOW ═══════════ */
-window.PRIMARY_API_GATEWAYS = PRIMARY_API_GATEWAYS;
-window.INVIDIOUS_GATEWAYS = INVIDIOUS_GATEWAYS;
 window.SAAVN_APIS = SAAVN_APIS;
 window.currentPlaylist = currentPlaylist;
 window.currentTrackIndex = currentTrackIndex;
@@ -1630,6 +1408,8 @@ window.playbackHistoryList = playbackHistoryList;
 window.trackBlobCache = trackBlobCache;
 window.detectLanguage = detectLanguage;
 window.getLanguageQueries = getLanguageQueries;
+window.searchSaavn = searchSaavn;
+window.searchAll = searchAll;
 window.fetchTrendingSongs = fetchTrendingSongs;
 window.executeLiveSearch = executeLiveSearch;
 window.instantSearch = instantSearch;
