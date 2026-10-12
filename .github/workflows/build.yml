@@ -29,26 +29,31 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Grant execute permission for gradlew
+      - name: Grant execute permission
         run: chmod +x gradlew
         continue-on-error: true
 
-      - name: Setup Gradle
-        uses: gradle/gradle-build-action@v2
-        with:
-          gradle-version: '8.2'
+      - name: Generate Gradle Wrapper
+        run: |
+          gradle wrapper --gradle-version 8.2
+        continue-on-error: true
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: vaultify-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
 
-      - name: Show APK info
+      - name: Show build output
+        if: always()
         run: |
-          echo "✅ Build complete!"
-          ls -la app/build/outputs/apk/debug/
+          echo "Build directory:"
+          find app/build/outputs -type f 2>/dev/null || echo "No output found"
