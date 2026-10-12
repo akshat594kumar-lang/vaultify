@@ -10,7 +10,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.view.KeyEvent;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -42,7 +41,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-
         setupWebView();
         startMusicService();
         setupReceivers();
@@ -58,6 +56,8 @@ public class MainActivity extends AppCompatActivity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
+        settings.setAllowUniversalAccessFromFileURLs(true);
+        settings.setAllowFileAccessFromFileURLs(true);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
@@ -86,8 +86,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public boolean onShowFileChooser(WebView wv, ValueCallback<Uri[]> cb,
-                                             FileChooserParams params) {
+            public boolean onShowFileChooser(WebView wv, ValueCallback<Uri[]> cb, FileChooserParams params) {
                 if (MainActivity.this.filePathCallback != null) {
                     MainActivity.this.filePathCallback.onReceiveValue(null);
                 }
@@ -144,24 +143,20 @@ public class MainActivity extends AppCompatActivity {
 
     private void requestAllPermissions() {
         ArrayList<String> perms = new ArrayList<>();
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             perms.add(Manifest.permission.RECORD_AUDIO);
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 perms.add(Manifest.permission.POST_NOTIFICATIONS);
             }
         }
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
-                    != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 perms.add(Manifest.permission.READ_EXTERNAL_STORAGE);
             }
         } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO)
-                    != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 perms.add(Manifest.permission.READ_MEDIA_AUDIO);
             }
         }
@@ -171,12 +166,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (webView != null) {
             webView.post(() -> webView.evaluateJavascript(
-                    "if(window.onNativePermissionResult) window.onNativePermissionResult();", null));
+                "if(window.onNativePermissionResult) window.onNativePermissionResult();", null));
         }
     }
 
@@ -184,8 +178,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == FILE_CHOOSER_CODE) {
             if (filePathCallback != null) {
-                filePathCallback.onReceiveValue(
-                        WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                filePathCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
                 filePathCallback = null;
             }
             return;
@@ -207,7 +200,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public class NativeBridge {
-
         @JavascriptInterface
         public void updateNotification(String title, String artist, String cover, boolean playing) {
             runOnUiThread(() -> {
@@ -218,11 +210,8 @@ public class MainActivity extends AppCompatActivity {
                 intent.putExtra("cover", cover);
                 intent.putExtra("playing", playing);
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent);
-                    } else {
-                        startService(intent);
-                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
+                    else startService(intent);
                 } catch (Exception e) { e.printStackTrace(); }
             });
         }
@@ -235,11 +224,8 @@ public class MainActivity extends AppCompatActivity {
                 intent.putExtra("position", positionMs);
                 intent.putExtra("duration", durationMs);
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent);
-                    } else {
-                        startService(intent);
-                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
+                    else startService(intent);
                 } catch (Exception e) { e.printStackTrace(); }
             });
         }
@@ -250,11 +236,8 @@ public class MainActivity extends AppCompatActivity {
                 Intent intent = new Intent(MainActivity.this, MusicService.class);
                 intent.setAction("STOP_NOTIFICATION");
                 try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(intent);
-                    } else {
-                        startService(intent);
-                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
+                    else startService(intent);
                 } catch (Exception e) { e.printStackTrace(); }
             });
         }
@@ -271,15 +254,13 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public boolean hasMicPermission() {
-            return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                    == PackageManager.PERMISSION_GRANTED;
+            return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         }
 
         @JavascriptInterface
         public boolean hasNotificationPermission() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                return ContextCompat.checkSelfPermission(MainActivity.this,
-                        Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+                return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
             }
             return true;
         }
@@ -312,15 +293,30 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         }
+
+        @JavascriptInterface
+        public void minimizeApp() {
+            runOnUiThread(() -> {
+                Intent startMain = new Intent(Intent.ACTION_MAIN);
+                startMain.addCategory(Intent.CATEGORY_HOME);
+                startMain.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(startMain);
+            });
+        }
     }
 
     @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webView != null && webView.canGoBack()) {
+    public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
+        if (keyCode == android.view.KeyEvent.KEYCODE_BACK && webView != null) {
             webView.evaluateJavascript(
                 "(function(){ try { return handleSystemBackPress() ? 'handled' : 'unhandled'; } catch(e) { return 'unhandled'; } })();",
                 value -> {
-                    if (value != null && value.contains("unhandled")) webView.goBack();
+                    if (value != null && value.contains("unhandled")) {
+                        Intent startMain = new Intent(Intent.ACTION_MAIN);
+                        startMain.addCategory(Intent.CATEGORY_HOME);
+                        startMain.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(startMain);
+                    }
                 });
             return true;
         }
