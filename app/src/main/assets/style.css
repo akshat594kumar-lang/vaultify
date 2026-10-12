@@ -74,7 +74,31 @@ body{background:#000;color:var(--text);display:flex;justify-content:center;align
 .mic-icon-btn.recording{color:#ef4444;animation:pulseMic .8s infinite alternate}
 @keyframes pulseMic{to{transform:scale(1.3);filter:drop-shadow(0 0 8px #ef4444)}}
 
-.grid-history-vault{display:grid !important;grid-template-columns:repeat(2,1fr) !important;gap:10px !important;margin-bottom:16px !important}
+/* ═══════════ TURNABLE RECENTLY PLAYED ═══════════ */
+.grid-history-vault{
+  display:flex !important;
+  overflow-x:auto !important;
+  overflow-y:hidden !important;
+  gap:12px !important;
+  padding-bottom:8px !important;
+  margin-bottom:16px !important;
+  scroll-snap-type:x mandatory;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+  grid-template-columns:none !important;
+}
+.grid-history-vault::-webkit-scrollbar{display:none}
+
+.history-card-turnable{
+  min-width:120px;
+  width:120px;
+  flex-shrink:0;
+  scroll-snap-align:start;
+  transition:transform .2s ease;
+  cursor:pointer;
+}
+.history-card-turnable:active{transform:scale(.95)}
+
 .history-card{cursor:pointer;display:flex;align-items:center;gap:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:7px 10px;transition:transform .15s}
 .history-card:active{transform:scale(.95)}
 .history-art{width:52px;height:52px;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:#140525;flex-shrink:0}
