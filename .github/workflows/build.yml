@@ -1,31 +1,54 @@
-name: Build APK
-on: [push, workflow_dispatch]
+name: Build Vaultify APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: '17'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Setup Android Environment
-      run: |
-        echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-        echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
-        echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Setup Gradle 8.2
-      uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: '8.2'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-    - name: Build APK
-      run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+        continue-on-error: true
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Vaultify-APK
-        path: app/build/outputs/apk/debug/*.apk
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: '8.2'
+
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaultify-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Show APK info
+        run: |
+          echo "✅ Build complete!"
+          ls -la app/build/outputs/apk/debug/
