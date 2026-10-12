@@ -28,21 +28,6 @@ body{background:#000;color:var(--text);display:flex;justify-content:center;align
 .perm-warning-banner.show{display:flex}
 .perm-warning-banner i:last-child{margin-left:auto}
 
-body.theme-royal-gold .mobile-frame{background:linear-gradient(135deg,#0a0614 0%,#1a0f2e 50%,#0a0614 100%)}
-body.theme-royal-gold .ambient-flow{background:radial-gradient(circle at 10% 20%,rgba(168,85,247,.35),transparent 45%),radial-gradient(circle at 85% 30%,rgba(212,175,55,.28),transparent 40%),radial-gradient(circle at 50% 85%,rgba(168,85,247,.4),transparent 50%),var(--bg-abyss)}
-body.theme-royal-gold .notch-island{background:linear-gradient(135deg,rgba(45,27,78,.98),rgba(18,10,30,.98));border:1px solid var(--gold);box-shadow:0 8px 24px rgba(0,0,0,.9),0 0 15px var(--gold-glow)}
-body.theme-royal-gold .logo-font{background:linear-gradient(135deg,#f4e4bc,#d4af37,#a855f7,#f4e4bc);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
-body.theme-royal-gold .mini-dock{background:linear-gradient(135deg,rgba(30,18,48,.98),rgba(45,27,78,.98));border:1px solid var(--gold);box-shadow:0 10px 30px rgba(0,0,0,.9),0 0 25px var(--gold-glow)}
-body.theme-royal-gold .mini-play-btn{background:linear-gradient(135deg,#d4af37,#a855f7);color:#0a0614;box-shadow:0 0 18px var(--gold-glow)}
-body.theme-royal-gold .nav-btn.active{color:var(--gold);background:rgba(212,175,55,.15)}
-body.theme-royal-gold .submit-btn{background:linear-gradient(135deg,#d4af37,#a855f7);color:#0a0614;box-shadow:0 6px 20px var(--gold-glow)}
-body.theme-royal-gold .song-tile{border:1px solid rgba(212,175,55,.25)}
-body.theme-royal-gold .song-tile.playing{border:1px solid var(--gold);background:linear-gradient(135deg,rgba(212,175,55,.12),rgba(168,85,247,.12));box-shadow:0 0 15px var(--gold-glow)}
-body.theme-royal-gold .card-popup{background:linear-gradient(135deg,rgba(18,10,30,.98),rgba(30,18,48,.98));border:1px solid var(--gold);box-shadow:0 0 35px var(--gold-glow)}
-body.theme-royal-gold .form-input:focus{border-color:var(--gold);box-shadow:0 0 15px var(--gold-glow)}
-body.theme-royal-gold .recommended-section{background:linear-gradient(135deg,rgba(212,175,55,.12),rgba(168,85,247,.12));border:1px solid var(--gold);box-shadow:0 0 22px var(--gold-glow)}
-body.theme-royal-gold #fullPlayerModal{background:radial-gradient(circle at 50% 15%,#2d1b4e,#0a0614 85%)}
-
 #appIntroScreen{position:fixed;inset:0;background:radial-gradient(circle at 50% 35%,#240a3d,#040108 90%);z-index:9999999;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .5s ease,visibility .5s}
 #appIntroScreen.fade-out{opacity:0;visibility:hidden;pointer-events:none}
 .intro-logo-box{display:flex;flex-direction:column;align-items:center;opacity:0;transform:scale(.85);animation:introLogoFadeIn .8s ease .1s forwards}
@@ -144,11 +129,6 @@ textarea.form-input{resize:vertical;font-family:inherit}
 .toast-pill{position:fixed;bottom:76px;left:50%;transform:translateX(-50%) translateY(40px);background:rgba(22,6,36,.98);border:1px solid var(--accent-neon);color:#fff;padding:8px 16px;border-radius:20px;font-size:12px;opacity:0;pointer-events:none;transition:.25s;z-index:100000;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis;box-shadow:0 0 18px var(--accent-glow)}
 .toast-pill.show{transform:translateX(-50%) translateY(0);opacity:1}
 
-.duo-chat-box{height:140px;background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:12px;padding:10px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin:12px 0}
-.duo-chat-bubble{max-width:80%;padding:6px 12px;border-radius:10px;font-size:11.5px;line-height:1.4}
-.duo-chat-bubble.me{background:linear-gradient(135deg,var(--partner-pink),#9333ea);color:#fff;align-self:flex-end}
-.duo-chat-bubble.partner{background:rgba(255,255,255,.1);color:#e9d5ff;align-self:flex-start}
-
 .emoji-picker-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
 .emoji-chip{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid var(--border);cursor:pointer;font-size:20px;transition:.15s}
 .emoji-chip.active{border-color:var(--accent-neon);box-shadow:0 0 14px var(--accent-glow);transform:scale(1.1)}
@@ -160,7 +140,7 @@ textarea.form-input{resize:vertical;font-family:inherit}
 #modalAuthGate.open{display:flex !important}
 body.auth-locked .mobile-frame{pointer-events:none}
 #modalAuthGate,#modalAuthGate *{pointer-events:auto !important}
-#modalAuthGate input,#modalAuthGate textarea,#modalAuthGate select{user-select:text !important;-webkit-user-select:text !important;pointer-events:auto !important;touch-action:manipulation !important;-webkit-user-modify:read-write !important}
+#modalAuthGate input,#modalAuthGate textarea,#modalAuthGate select{user-select:text !important;-webkit-user-select:text !important;pointer-events:auto !important;touch-action:manipulation !important}
 #modalAuthGate .card-popup{pointer-events:auto !important}
 #modalAuthGate input{-webkit-text-security:none !important}
 #modalAuthGate input.password-masked{-webkit-text-security:disc !important}
