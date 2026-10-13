@@ -13,7 +13,6 @@ import android.os.IBinder;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import androidx.media.app.NotificationCompat.MediaStyle;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -42,9 +41,7 @@ public class MusicService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (!foregroundStarted) {
-            startForegroundSafely();
-        }
+        if (!foregroundStarted) startForegroundSafely();
 
         if (intent != null && intent.getAction() != null) {
             String action = intent.getAction();
@@ -54,7 +51,11 @@ public class MusicService extends Service {
                     currentArtist = intent.getStringExtra("artist");
                     currentCover = intent.getStringExtra("cover");
                     isPlaying = intent.getBooleanExtra("playing", false);
-                    updateNotification();
+                    if (currentLargeIcon == null && currentCover != null && currentCover.startsWith("http")) {
+                        loadCoverAndUpdate();
+                    } else {
+                        updateNotification();
+                    }
                     break;
                 case "UPDATE_PROGRESS":
                     currentPosition = intent.getLongExtra("position", 0);
@@ -117,12 +118,11 @@ public class MusicService extends Service {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, piFlags);
 
-            // Action buttons
             PendingIntent prevIntent = buildActionPendingIntent("PREV", 1);
             PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
             PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
 
-            // MediaStyle — simpletune jaisa
+            // MediaStyle — SimpleTune jaisa
             androidx.media.app.NotificationCompat.MediaStyle mediaStyle =
                 new androidx.media.app.NotificationCompat.MediaStyle()
                     .setShowActionsInCompactView(0, 1, 2);
@@ -137,14 +137,23 @@ public class MusicService extends Service {
                 .setShowWhen(false)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setColorized(true)
+                .setColor(0xFF0D2E35)
                 .setStyle(mediaStyle);
 
-            // Large album art — SimpleTune jaisa
+            // Large album art
             if (currentLargeIcon != null) {
                 builder.setLargeIcon(currentLargeIcon);
-            } else if (currentCover != null && currentCover.startsWith("http")) {
-                // Load cover in background
-                loadCoverAndUpdate();
+            }
+
+            // BigPictureStyle when we have art
+            if (currentLargeIcon != null) {
+                NotificationCompat.BigPictureStyle bigStyle = new NotificationCompat.BigPictureStyle()
+                    .bigPicture(currentLargeIcon)
+                    .bigLargeIcon((Bitmap) null)
+                    .setBigContentTitle(currentTitle)
+                    .setSummaryText(currentArtist);
+                builder.setStyle(bigStyle);
             }
 
             // Progress bar with time
@@ -154,7 +163,7 @@ public class MusicService extends Service {
                 builder.setSubText(formatTime(currentPosition) + " / " + formatTime(currentDuration));
             }
 
-            // Add actions
+            // Actions
             builder.addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent);
             if (isPlaying) {
                 builder.addAction(android.R.drawable.ic_media_pause, "Pause", playPauseIntent);
@@ -189,46 +198,8 @@ public class MusicService extends Service {
 
                 if (bitmap != null) {
                     currentLargeIcon = bitmap;
-                    // Update notification with large icon
-                    Intent notificationIntent = new Intent(MusicService.this, MainActivity.class);
-                    notificationIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                    int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
-                    PendingIntent pendingIntent = PendingIntent.getActivity(MusicService.this, 0, notificationIntent, piFlags);
-
-                    PendingIntent prevIntent = buildActionPendingIntent("PREV", 1);
-                    PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
-                    PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
-
-                    androidx.media.app.NotificationCompat.MediaStyle mediaStyle =
-                        new androidx.media.app.NotificationCompat.MediaStyle()
-                            .setShowActionsInCompactView(0, 1, 2);
-
-                    NotificationCompat.Builder builder = new NotificationCompat.Builder(MusicService.this, CHANNEL_ID)
-                        .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
-                        .setContentText(currentArtist != null ? currentArtist : "")
-                        .setSmallIcon(android.R.drawable.ic_media_play)
-                        .setLargeIcon(bitmap)
-                        .setContentIntent(pendingIntent)
-                        .setOngoing(isPlaying)
-                        .setOnlyAlertOnce(true)
-                        .setShowWhen(false)
-                        .setPriority(NotificationCompat.PRIORITY_LOW)
-                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                        .setStyle(mediaStyle)
-                        .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
-                        .addAction(isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
-                                   isPlaying ? "Pause" : "Play", playPauseIntent)
-                        .addAction(android.R.drawable.ic_media_next, "Next", nextIntent);
-
-                    if (currentDuration > 0) {
-                        int progress = (int) ((currentPosition * 100) / currentDuration);
-                        builder.setProgress(100, progress, false);
-                        builder.setSubText(formatTime(currentPosition) + " / " + formatTime(currentDuration));
-                    }
-
-                    NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                    if (manager != null) manager.notify(NOTIFICATION_ID, builder.build());
+                    // Update UI on main thread
+                    new android.os.Handler(getMainLooper()).post(() -> updateNotification());
                 }
             } catch (Exception e) {
                 e.printStackTrace();
