@@ -13,6 +13,7 @@ import android.os.IBinder;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.media.app.NotificationCompat.MediaStyle;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -30,18 +31,17 @@ public class MusicService extends Service {
     private long currentPosition = 0;
     private long currentDuration = 0;
     private boolean foregroundStarted = false;
+    private Bitmap currentLargeIcon = null;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
-        // ⚡ CRITICAL: Start as foreground IMMEDIATELY to avoid timeout crash
         startForegroundSafely();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // ⚡ CRITICAL: Always call startForeground first thing
         if (!foregroundStarted) {
             startForegroundSafely();
         }
@@ -73,24 +73,19 @@ public class MusicService extends Service {
 
     private void startForegroundSafely() {
         try {
-            // Create minimal notification immediately
+            Notification.Builder builder;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
-                    .setContentText(currentArtist != null ? currentArtist : "Ready")
-                    .setSmallIcon(android.R.drawable.ic_media_play)
-                    .setOngoing(true)
-                    .setPriority(Notification.PRIORITY_LOW);
-                startForeground(NOTIFICATION_ID, builder.build());
+                builder = new Notification.Builder(this, CHANNEL_ID);
             } else {
-                NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                    .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
-                    .setContentText(currentArtist != null ? currentArtist : "Ready")
-                    .setSmallIcon(android.R.drawable.ic_media_play)
-                    .setOngoing(true)
-                    .setPriority(NotificationCompat.PRIORITY_LOW);
-                startForeground(NOTIFICATION_ID, builder.build());
+                builder = new Notification.Builder(this);
             }
+            builder.setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
+                .setContentText(currentArtist != null ? currentArtist : "Ready")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setOngoing(true)
+                .setPriority(Notification.PRIORITY_LOW);
+
+            startForeground(NOTIFICATION_ID, builder.build());
             foregroundStarted = true;
         } catch (Exception e) {
             e.printStackTrace();
@@ -99,9 +94,16 @@ public class MusicService extends Service {
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Vaultify Music", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                "Vaultify Music",
+                NotificationManager.IMPORTANCE_LOW
+            );
             channel.setDescription("Music playback controls");
             channel.setShowBadge(false);
+            channel.setSound(null, null);
+            channel.enableVibration(false);
+            channel.enableLights(false);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
@@ -115,9 +117,15 @@ public class MusicService extends Service {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, piFlags);
 
+            // Action buttons
             PendingIntent prevIntent = buildActionPendingIntent("PREV", 1);
             PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
             PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
+
+            // MediaStyle — simpletune jaisa
+            androidx.media.app.NotificationCompat.MediaStyle mediaStyle =
+                new androidx.media.app.NotificationCompat.MediaStyle()
+                    .setShowActionsInCompactView(0, 1, 2);
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
@@ -129,45 +137,110 @@ public class MusicService extends Service {
                 .setShowWhen(false)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
-                .addAction(isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, isPlaying ? "Pause" : "Play", playPauseIntent)
-                .addAction(android.R.drawable.ic_media_next, "Next", nextIntent);
+                .setStyle(mediaStyle);
 
-            if (currentDuration > 0) {
-                builder.setProgress(100, (int) ((currentPosition * 100) / currentDuration), false);
+            // Large album art — SimpleTune jaisa
+            if (currentLargeIcon != null) {
+                builder.setLargeIcon(currentLargeIcon);
+            } else if (currentCover != null && currentCover.startsWith("http")) {
+                // Load cover in background
+                loadCoverAndUpdate();
             }
+
+            // Progress bar with time
+            if (currentDuration > 0) {
+                int progress = (int) ((currentPosition * 100) / currentDuration);
+                builder.setProgress(100, progress, false);
+                builder.setSubText(formatTime(currentPosition) + " / " + formatTime(currentDuration));
+            }
+
+            // Add actions
+            builder.addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent);
+            if (isPlaying) {
+                builder.addAction(android.R.drawable.ic_media_pause, "Pause", playPauseIntent);
+            } else {
+                builder.addAction(android.R.drawable.ic_media_play, "Play", playPauseIntent);
+            }
+            builder.addAction(android.R.drawable.ic_media_next, "Next", nextIntent);
 
             Notification notification = builder.build();
-
-            // ⚡ Always update foreground — never just notify
             startForeground(NOTIFICATION_ID, notification);
             foregroundStarted = true;
-
-            // Try to load cover art in background
-            if (currentCover != null && currentCover.startsWith("http")) {
-                final String coverUrl = currentCover;
-                new Thread(() -> {
-                    try {
-                        URL url = new URL(coverUrl);
-                        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                        conn.setDoInput(true);
-                        conn.setConnectTimeout(5000);
-                        conn.setReadTimeout(5000);
-                        conn.connect();
-                        InputStream input = conn.getInputStream();
-                        Bitmap bitmap = BitmapFactory.decodeStream(input);
-                        input.close();
-                        if (bitmap != null) {
-                            builder.setLargeIcon(bitmap);
-                            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-                            if (manager != null) manager.notify(NOTIFICATION_ID, builder.build());
-                        }
-                    } catch (Exception e) {}
-                }).start();
-            }
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private void loadCoverAndUpdate() {
+        final String coverUrl = currentCover;
+        if (coverUrl == null || !coverUrl.startsWith("http")) return;
+
+        new Thread(() -> {
+            try {
+                URL url = new URL(coverUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setDoInput(true);
+                conn.setConnectTimeout(6000);
+                conn.setReadTimeout(6000);
+                conn.connect();
+                InputStream input = conn.getInputStream();
+                Bitmap bitmap = BitmapFactory.decodeStream(input);
+                input.close();
+
+                if (bitmap != null) {
+                    currentLargeIcon = bitmap;
+                    // Update notification with large icon
+                    Intent notificationIntent = new Intent(MusicService.this, MainActivity.class);
+                    notificationIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
+                    PendingIntent pendingIntent = PendingIntent.getActivity(MusicService.this, 0, notificationIntent, piFlags);
+
+                    PendingIntent prevIntent = buildActionPendingIntent("PREV", 1);
+                    PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
+                    PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
+
+                    androidx.media.app.NotificationCompat.MediaStyle mediaStyle =
+                        new androidx.media.app.NotificationCompat.MediaStyle()
+                            .setShowActionsInCompactView(0, 1, 2);
+
+                    NotificationCompat.Builder builder = new NotificationCompat.Builder(MusicService.this, CHANNEL_ID)
+                        .setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
+                        .setContentText(currentArtist != null ? currentArtist : "")
+                        .setSmallIcon(android.R.drawable.ic_media_play)
+                        .setLargeIcon(bitmap)
+                        .setContentIntent(pendingIntent)
+                        .setOngoing(isPlaying)
+                        .setOnlyAlertOnce(true)
+                        .setShowWhen(false)
+                        .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                        .setStyle(mediaStyle)
+                        .addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent)
+                        .addAction(isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                                   isPlaying ? "Pause" : "Play", playPauseIntent)
+                        .addAction(android.R.drawable.ic_media_next, "Next", nextIntent);
+
+                    if (currentDuration > 0) {
+                        int progress = (int) ((currentPosition * 100) / currentDuration);
+                        builder.setProgress(100, progress, false);
+                        builder.setSubText(formatTime(currentPosition) + " / " + formatTime(currentDuration));
+                    }
+
+                    NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                    if (manager != null) manager.notify(NOTIFICATION_ID, builder.build());
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
+
+    private String formatTime(long millis) {
+        long totalSec = millis / 1000;
+        long min = totalSec / 60;
+        long sec = totalSec % 60;
+        return String.format("%02d:%02d", min, sec);
     }
 
     private PendingIntent buildActionPendingIntent(String action, int reqCode) {
