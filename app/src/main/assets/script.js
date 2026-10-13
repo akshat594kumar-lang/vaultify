@@ -1,5 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════ */
 /* VAULTIFY — FULL FINAL                                           */
+/* Instant Playback | Silent Cache | Queue Persistence             */
+/* No Auto-Skip | Turnable Recently Played                         */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -733,7 +735,7 @@ async function fetchDirectAudioStreamUrl(input) {
   return null;
 }
 
-/* ═══════════ PLAY TRACK ═══════════ */
+/* ═══════════ PLAY TRACK — INSTANT ═══════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -744,14 +746,18 @@ async function playTrack(index, broadcast = true) {
   updateMediaSessionMetadata(track);
   logPlaybackHistory(track);
   renderHomeRecentVault();
-  showToast(`Loading: ${(track.title || '').slice(0, 30)}`);
 
   setTimeout(() => initForegroundAudioBridge(), 0);
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
-  setTimeout(() => preCacheNextTracks(index, 2), 10000);
-  setTimeout(() => autoExtendQueue(track), 800);
 
+  // ⚡ Pre-cache NEXT songs (after 20 sec — no spam)
+  setTimeout(() => preCacheNextTracks(index, 1), 20000);
+  setTimeout(() => autoExtendQueue(track), 2000);
+
+  // ═══ INSTANT PLAYBACK PATH ═══
+
+  // 1. Blob cache
   if (track.id.startsWith('blob:')) {
     mainAudio.src = track.id;
     mainAudio.load();
@@ -759,26 +765,39 @@ async function playTrack(index, broadcast = true) {
     return;
   }
 
+  // 2. Direct stream from search response (FASTEST — no API call)
   if (track._directStream && track._directStream.startsWith('http')) {
     mainAudio.src = track._directStream;
     mainAudio.load();
-    try { await mainAudio.play(); setVisualState(true); setTimeout(() => cacheTrackInBackground(track), 10000); return; } catch (e) {}
+    try {
+      await mainAudio.play();
+      setVisualState(true);
+      return;
+    } catch (e) {}
   }
 
+  // 3. In-memory blob cache
   let streamUrl = null;
   const c = trackBlobCache.get(track.id);
   if (c && c.startsWith('blob:')) streamUrl = c;
+
+  // 4. IndexedDB cache
   if (!streamUrl) {
     const db = await cacheGet(track.id);
     if (db && db.url) { streamUrl = db.url; trackBlobCache.set(track.id, streamUrl); }
   }
 
+  // 5. Fresh fetch from worker
   if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
 
   if (streamUrl && streamUrl.startsWith('http')) {
     mainAudio.src = streamUrl;
     mainAudio.load();
-    try { await mainAudio.play(); setVisualState(true); setTimeout(() => cacheTrackInBackground(track), 10000); return; } catch (e) {}
+    try {
+      await mainAudio.play();
+      setVisualState(true);
+      return;
+    } catch (e) {}
   }
 
   showToast('⚠️ Playback failed — try again');
@@ -920,33 +939,32 @@ function shareCurrentTrack() {
   else { try { navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`); showToast('Copied!'); } catch (e) { showToast('Share not supported'); } }
 }
 
-/* ═══════════ CACHE + DOWNLOAD ═══════════ */
+/* ═══════════ CACHE + DOWNLOAD — SILENT ═══════════ */
 async function cacheTrackInBackground(track) {
   if (!track) return;
   if (track.id.startsWith('blob:')) return;
   if (trackBlobCache.has(track.id)) return;
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
-  showDownloadIndicator('Caching...');
-  const url = await fetchDirectAudioStreamUrl(track.id);
-  if (!url || !url.startsWith('http')) { hideDownloadIndicator(); return; }
+  // ⚡ SILENT — no indicator, no toast
   try {
+    const url = await fetchDirectAudioStreamUrl(track.id);
+    if (!url || !url.startsWith('http')) return;
     const r = await fetch(url);
     const blob = await r.blob();
     await cachePut(track.id, blob, { title: track.title, artist: track.artist, cover: track.cover, source: track.source });
     const bu = URL.createObjectURL(blob);
     trackBlobCache.set(track.id, bu);
-    hideDownloadIndicator();
     if (currentLibraryTab === 'cached' && document.getElementById('tabLibrary').classList.contains('active')) renderLibrary();
-  } catch (e) { hideDownloadIndicator(); }
+  } catch (e) {}
 }
 
-function preCacheNextTracks(startIdx, count = 2) {
+function preCacheNextTracks(startIdx, count = 1) {
   for (let i = 1; i <= count; i++) {
     const idx = startIdx + i;
     if (idx < currentPlaylist.length) {
       const t = currentPlaylist[idx];
-      setTimeout(() => cacheTrackInBackground(t), i * 8000);
+      setTimeout(() => cacheTrackInBackground(t), i * 15000);
     }
   }
 }
