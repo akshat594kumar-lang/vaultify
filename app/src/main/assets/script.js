@@ -114,7 +114,6 @@ async function checkWorker() {
   return true;
 }
 
-// Fast: Saavn + SoundCloud only
 async function searchSaavnAndSC(query, limit = 25) {
   const results = [];
   const seen = new Set();
@@ -125,7 +124,6 @@ async function searchSaavnAndSC(query, limit = 25) {
     results.push(t);
   };
 
-  // Saavn
   try {
     const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.7)}`;
     const r = await fetch(url);
@@ -151,7 +149,6 @@ async function searchSaavnAndSC(query, limit = 25) {
     });
   } catch (e) {}
 
-  // SoundCloud
   try {
     const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.3)}&linked_partitioning=1`;
     const r = await fetch(scUrl);
@@ -173,7 +170,6 @@ async function searchSaavnAndSC(query, limit = 25) {
   return results;
 }
 
-// Slow: YouTube via Piped — SILENT, no errors shown
 async function searchYouTube(query, limit = 10) {
   for (const api of PIPED_APIS) {
     try {
@@ -204,11 +200,12 @@ async function searchYouTube(query, limit = 10) {
 }
 
 async function workerSearch(query, limit = 25) {
-  // Only Saavn + SC (fast)
   return await searchSaavnAndSC(query, limit);
 }
 
+/* ═══ ✅ FIXED: workerStreamUrl with proxyUrl + Cobalt fallback ═══ */
 async function workerStreamUrl(id) {
+  // SAAVN
   if (id.startsWith('saavn_')) {
     const songId = id.replace('saavn_', '');
     try {
@@ -225,6 +222,7 @@ async function workerStreamUrl(id) {
     } catch (e) {}
   }
 
+  // YOUTUBE via PIPED — prefer proxyUrl (CORS-safe)
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
     for (const api of PIPED_APIS) {
@@ -235,14 +233,55 @@ async function workerStreamUrl(id) {
         clearTimeout(tm);
         if (!r.ok) continue;
         const data = await r.json();
-        const audioStreams = (data.audioStreams || []).filter(s => s.url);
+        const audioStreams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
         if (!audioStreams.length) continue;
-        audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        return audioStreams[0].url;
+
+        // Prefer m4a (browser friendly), then highest bitrate
+        audioStreams.sort((a, b) => {
+          const aM4a = (a.mimeType || '').includes('mp4') ? 1 : 0;
+          const bM4a = (b.mimeType || '').includes('mp4') ? 1 : 0;
+          if (aM4a !== bM4a) return bM4a - aM4a;
+          return (b.bitrate || 0) - (a.bitrate || 0);
+        });
+
+        const chosen = audioStreams[0];
+        const finalUrl = chosen.proxyUrl || chosen.url;
+        if (finalUrl) return finalUrl;
       } catch (e) { continue; }
     }
+
+    // FALLBACK: Cobalt
+    const cobaltUrl = await fetchCobaltAudio(ytId);
+    if (cobaltUrl) return cobaltUrl;
   }
 
+  return null;
+}
+
+/* ✅ NEW: Cobalt fallback for YT audio */
+async function fetchCobaltAudio(videoId) {
+  const COBALT_INSTANCES = [
+    'https://api.cobalt.tools',
+    'https://co.wuk.sh',
+    'https://cobalt-api.kwiatekmiki.com'
+  ];
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  for (const api of COBALT_INSTANCES) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 8000);
+      const r = await fetch(`${api}/api/json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ url: ytUrl, isAudioOnly: true, aFormat: 'mp3' }),
+        signal: ctrl.signal
+      });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (data.url) return data.url;
+    } catch (e) { continue; }
+  }
   return null;
 }
 
@@ -288,16 +327,34 @@ function toggleAuthMode() {
   hideAuthAlerts();
 }
 
+/* ✅ FIXED: verifyAuthGate — force show properly */
 function verifyAuthGate() {
   const s = localStorage.getItem('vaultify_active_user');
   const authModal = document.getElementById('modalAuthGate');
   const mainFrame = document.querySelector('.mobile-frame');
   if (!authModal) return;
+
+  const applyModalStyle = () => {
+    authModal.style.position = 'fixed';
+    authModal.style.inset = '0';
+    authModal.style.width = '100vw';
+    authModal.style.height = '100vh';
+    authModal.style.zIndex = '99999';
+    authModal.style.background = 'rgba(0,0,0,0.94)';
+    authModal.style.backdropFilter = 'blur(8px)';
+    authModal.style.webkitBackdropFilter = 'blur(8px)';
+    authModal.style.alignItems = 'center';
+    authModal.style.justifyContent = 'center';
+    authModal.style.padding = '16px';
+    authModal.style.overflowY = 'auto';
+    authModal.style.display = 'flex';
+  };
+
   if (!s) {
     document.body.classList.add('auth-locked');
     if (mainFrame) mainFrame.style.pointerEvents = 'none';
     authModal.classList.add('open');
-    authModal.style.display = 'flex';
+    applyModalStyle();
   } else {
     try {
       loggedInUser = JSON.parse(s);
@@ -309,15 +366,18 @@ function verifyAuthGate() {
     } catch (e) {
       document.body.classList.add('auth-locked');
       authModal.classList.add('open');
-      authModal.style.display = 'flex';
+      applyModalStyle();
     }
   }
 }
 
+/* ✅ FIXED: unlockApp — hide auth + intro */
 function unlockApp() {
   const authModal = document.getElementById('modalAuthGate');
   const mainFrame = document.querySelector('.mobile-frame');
+  const intro = document.getElementById('appIntroScreen');
   if (authModal) { authModal.classList.remove('open'); authModal.style.display = 'none'; }
+  if (intro) { intro.style.display = 'none'; intro.style.visibility = 'hidden'; }
   document.body.classList.remove('auth-locked');
   if (mainFrame) mainFrame.style.pointerEvents = '';
 }
@@ -482,6 +542,7 @@ let eqSourceNode = null;
 let mainAudio = null;
 let silentLoop = null;
 let currentSearchResults = [];
+let currentHls = null;
 
 const HINDI_CHARS = /[\u0900-\u097F]/;
 const URDU_CHARS = /[\u0600-\u06FF]/;
@@ -843,7 +904,7 @@ async function fetchDirectAudioStreamUrl(input) {
   return null;
 }
 
-/* ═══════════ PLAY TRACK ═══════════ */
+/* ═══════════ PLAY TRACK (with HLS support) ═══════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -861,6 +922,9 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => preCacheNextTracks(index, 1), 20000);
   setTimeout(() => autoExtendQueue(track), 2000);
 
+  // Cleanup any previous HLS instance
+  if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
+
   if (track.id.startsWith('blob:')) {
     mainAudio.src = track.id;
     mainAudio.load();
@@ -869,6 +933,13 @@ async function playTrack(index, broadcast = true) {
   }
 
   if (track._directStream && track._directStream.startsWith('http')) {
+    if (track._directStream.includes('.m3u8') && window.Hls && Hls.isSupported()) {
+      currentHls = new Hls();
+      currentHls.loadSource(track._directStream);
+      currentHls.attachMedia(mainAudio);
+      currentHls.on(Hls.Events.MANIFEST_PARSED, () => { mainAudio.play().catch(() => {}); setVisualState(true); });
+      return;
+    }
     mainAudio.src = track._directStream;
     mainAudio.load();
     try { await mainAudio.play(); setVisualState(true); return; } catch (e) {}
@@ -886,6 +957,14 @@ async function playTrack(index, broadcast = true) {
   if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
 
   if (streamUrl && streamUrl.startsWith('http')) {
+    // HLS check
+    if (streamUrl.includes('.m3u8') && window.Hls && Hls.isSupported()) {
+      currentHls = new Hls();
+      currentHls.loadSource(streamUrl);
+      currentHls.attachMedia(mainAudio);
+      currentHls.on(Hls.Events.MANIFEST_PARSED, () => { mainAudio.play().catch(() => {}); setVisualState(true); });
+      return;
+    }
     mainAudio.src = streamUrl;
     mainAudio.load();
     try { await mainAudio.play(); setVisualState(true); return; } catch (e) {}
@@ -1202,7 +1281,6 @@ async function executeLiveSearch(isAuto = false) {
   l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
   rc.innerHTML = '';
 
-  // STEP 1: Saavn + SoundCloud (FAST)
   const saavnResults = await searchSaavnAndSC(q, 25);
   l.style.display = 'none';
   
@@ -1213,7 +1291,6 @@ async function executeLiveSearch(isAuto = false) {
     rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
   }
   
-  // STEP 2: YouTube (SLOW, SILENT) — only add if worked
   setTimeout(async () => {
     try {
       const ytResults = await searchYouTube(q, 8);
@@ -1303,14 +1380,12 @@ async function instantSearch(q) {
   const rc = document.getElementById('searchResultsContainer');
   if (l) { l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'; }
 
-  // Fast: Saavn + SC
   const saavnResults = await searchSaavnAndSC(q, 25);
   if (myId !== liveSearchRequestId) return;
   if (l) l.style.display = 'none';
   if (saavnResults.length > 0) renderSearchResults(saavnResults);
   else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
 
-  // Slow: YT silent
   setTimeout(async () => {
     try {
       const ytResults = await searchYouTube(q, 8);
@@ -1546,7 +1621,7 @@ function sendSupportMail() {
   catch (err) { navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(() => showToast('✅ Email copied')).catch(() => showToast('❌ Failed')); }
 }
 
-/* ═══════════ EMOJI RUNNER — FIXED ANIMATION ═══════════ */
+/* ═══════════ EMOJI RUNNER ═══════════ */
 let emojiMode = localStorage.getItem('vaultify_emoji_mode') || 'flow';
 let emojiList = JSON.parse(localStorage.getItem('vaultify_emoji_list') || '["🐱","👻","🔥","🚀","⚡","💜","🎵"]');
 let activeEmoji = localStorage.getItem('vaultify_active_emoji') || '🐱';
@@ -1570,7 +1645,6 @@ function initEmojiRunner() {
     if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; }
   }
   
-  // Update mode buttons visual
   const flowBtn = document.getElementById('modeFlowBtn');
   const mixBtn = document.getElementById('modeMixBtn');
   if (flowBtn && mixBtn) {
@@ -1704,4 +1778,154 @@ async function initIPCounter() {
     else { data.ips[ip].lastSeen = now; if (!data.ips[ip].deviceIds) data.ips[ip].deviceIds = []; if (!data.ips[ip].deviceIds.includes(deviceId)) { data.ips[ip].deviceIds.push(deviceId); data.ips[ip].deviceCount = data.ips[ip].deviceIds.length; } }
     if (!data.devices[deviceId]) data.devices[deviceId] = { ip, ua: ua.substring(0, 100), firstSeen: now, lastSeen: now };
     else { data.devices[deviceId].lastSeen = now; data.devices[deviceId].ip = ip; }
-    const ipList = Object.keys(data.ips); const dev
+    const ipList = Object.keys(data.ips); const devList = Object.keys(data.devices);
+    const dayAgo = now - 24 * 60 * 60 * 1000;
+    data.totalIPs = ipList.length; data.totalDevices = devList.length;
+    data.activeDevices24h = devList.filter(k => data.devices[k].lastSeen >= dayAgo).length;
+    data.lastUpdated = now;
+    await docRef.set(data);
+    renderIPStats(data);
+  } catch (e) {}
+}
+
+function listenIPStats(callback) {
+  if (!isFirebaseReady()) return;
+  try { firestoreDB.collection('app_config').doc('user_ips').onSnapshot(doc => { if (doc.exists && typeof callback === 'function') callback(doc.data()); }); } catch (e) {}
+}
+
+function renderIPStats(stats) {
+  const el = document.getElementById('ipStatsDisplay'); if (!el || !stats) return;
+  el.innerHTML = `<div style="font-size:11px;color:var(--text-sub);line-height:1.8"><div>🌐 Total IPs: <b style="color:#fff">${stats.totalIPs || 0}</b></div><div>📱 Total devices: <b style="color:#fff">${stats.totalDevices || 0}</b></div><div>🟢 Active 24h: <b style="color:#10b981">${stats.activeDevices24h || 0}</b></div></div>`;
+}
+
+/* ═══════════ PLAYBACK SAVE ═══════════ */
+async function savePlaybackState() {
+  try {
+    if (!currentPlaylist[currentTrackIndex] || !mainAudio) return;
+    const t = currentPlaylist[currentTrackIndex];
+    const pos = mainAudio.currentTime || 0;
+    localStorage.setItem('vaultify_playback_state', JSON.stringify({ wasPlaying: isPlayingAudio, lastTrackId: t.id, lastTrackTitle: t.title, lastTrackArtist: t.artist, lastTrackCover: t.cover, lastPosition: Math.floor(pos * 1000), lastIndex: currentTrackIndex, playlistJson: JSON.stringify(currentPlaylist.slice(0, 50)), timestamp: Date.now() }));
+  } catch (e) {}
+}
+
+setInterval(() => { if (!isPlayingAudio) return; _lastSaveTick += 1000; if (_lastSaveTick >= 10000) { _lastSaveTick = 0; savePlaybackState(); } }, 1000);
+
+/* ═══════════ EQ FIX ═══════════ */
+setTimeout(() => {
+  ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', () => {
+        if (eqNodes && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0;
+      });
+      el.addEventListener('change', saveEqToStorage);
+    }
+  });
+  loadEqFromStorage();
+}, 2000);
+
+/* ═══════════ BOOT ═══════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  mainAudio = document.getElementById('vaultifyAudio');
+  silentLoop = document.getElementById('silentAudioLoop');
+
+  // ✅ FIXED: Force-hide intro after 1.5s
+  setTimeout(() => {
+    const i = document.getElementById('appIntroScreen');
+    if (i) {
+      i.classList.add('fade-out');
+      i.style.opacity = '0';
+      i.style.transition = 'opacity 0.6s ease';
+      setTimeout(() => {
+        i.style.display = 'none';
+        i.style.visibility = 'hidden';
+        i.style.pointerEvents = 'none';
+        i.style.zIndex = '-1';
+      }, 700);
+    }
+  }, 1500);
+
+  initCacheDB();
+  setupMediaSession();
+  setupTimelineDraggableEngine();
+  initLiveSearchInputListener();
+  verifyAuthGate();
+  renderHomeRecentVault();
+  renderHomeQueue();
+  renderLibrary();
+  renderSearchHistoryTags();
+  renderNotificationCenter();
+
+  setTimeout(initEqChain, 800);
+  setTimeout(loadEqFromStorage, 1500);
+
+  setTimeout(() => { initEmojiRunner(); initEmojiPicker(); setEmojiMode(emojiMode); }, 500);
+
+  setTimeout(checkPermissionsStatus, 800);
+  setInterval(checkPermissionsStatus, 5000);
+
+  setTimeout(() => { if (isFirebaseReady()) { initIPCounter(); listenIPStats(renderIPStats); } }, 3000);
+
+  setTimeout(async () => {
+    await checkWorker();
+    renderRecommendedSection();
+    loadQueueFromStorage();
+  }, 1500);
+
+  const start = () => {
+    initForegroundAudioBridge();
+    requestHardwareWakeLock();
+    if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
+  };
+  document.body.addEventListener('touchstart', start, { once: true });
+  document.body.addEventListener('click', start, { once: true });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && isPlayingAudio && mainAudio && mainAudio.paused) { mainAudio.play().catch(() => {}); }
+    if (!document.hidden && 'wakeLock' in navigator) requestHardwareWakeLock();
+  });
+
+  window.addEventListener('popstate', (e) => {
+    e.preventDefault();
+    if (!handleSystemBackPress()) {
+      try {
+        if (window.AndroidNativeBridge && window.AndroidNativeBridge.minimizeApp) window.AndroidNativeBridge.minimizeApp();
+        else history.pushState(null, '', location.href);
+      } catch (err) { history.pushState(null, '', location.href); }
+    }
+    history.pushState(null, '', location.href);
+  });
+
+  history.pushState(null, '', location.href);
+});
+
+window.addEventListener('beforeunload', savePlaybackState);
+window.addEventListener('pagehide', savePlaybackState);
+
+/* ═══════════ EXPORTS ═══════════ */
+Object.assign(window, {
+  showToast, escapeHtml, formatClock, openModal, closeModal, openFullPlayer, closeFullPlayer,
+  openPartnerModal, openSupportModal, switchNavTab, switchLibraryTab,
+  handleSystemBackPress, isFirebaseReady, getDeviceId, getPublicIP,
+  verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
+  openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
+  saveProfileData, performAppLogout, generatePartnerCode, syncUserPartnerCode, changeAppLanguage,
+  detectLanguage, getLanguageQueries, searchAll, fetchTrendingSongs,
+  executeLiveSearch, instantSearch, renderSearchResults, playSearchedTrackImmediately,
+  playTrack, playNext, playPrevious, autoplayNext, togglePlaybackState, setVisualState,
+  syncPlayerUI, toggleShuffle, toggleRepeat, toggleSleepTimer, shareCurrentTrack,
+  downloadCurrentTrack, toggleLikeCurrent, unlikeSong, openPlaylist, deletePlaylist,
+  openAddToPlaylistModal, addToPlaylist, createPlaylistAndAdd, renderLibrary,
+  renderHomeQueue, renderHomeRecentVault, renderRecommendedSection,
+  renderSearchHistoryTags, clearSearchHistory, playSingleTrackObject, playCached, removeCache,
+  requestMicAndListen, resetEqSliders, applyEqNow, savePlaybackState,
+  showDownloadIndicator, hideDownloadIndicator, cacheGet, cacheAll,
+  getStoredNotifications, pushNotification, renderNotificationCenter,
+  openNotificationModal, clearAllNotifications, checkPermissionsStatus,
+  handlePermissionBannerClick, requestPermsFromNative, openAppSettingsNative,
+  openEqualizer, sendSupportMail, initEmojiRunner, initEmojiPicker,
+  addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
+  applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
+  prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
+  saveQueueToStorage, loadQueueFromStorage
+});
