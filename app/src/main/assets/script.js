@@ -1,6 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL                                           */
-/* Direct JioSaavn + SoundCloud | Dedup Queue | No Auto-Skip       */
+/* VAULTIFY — FULL FINAL (Delta Direct + SoundCloud)               */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -103,7 +102,7 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ DIRECT API ═══════════ */
+/* ═══════════ DIRECT API — DELTA + SOUNDCLOUD ═══════════ */
 async function checkWorker() {
   workerReady = true;
   return true;
@@ -112,27 +111,29 @@ async function checkWorker() {
 async function workerSearch(query, limit = 25) {
   const results = [];
   const seen = new Set();
-
-  const addUnique = (track) => {
-    const key = (track.title || '').toLowerCase().trim() + '|' + (track.artist || '').toLowerCase().trim();
+  const addUnique = (t) => {
+    const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
     if (seen.has(key)) return;
     seen.add(key);
-    results.push(track);
+    results.push(t);
   };
 
-  // ═══ JIOSAAVN via delta ═══
+  // SAAVN via DELTA
   try {
     const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.7)}`;
     const r = await fetch(url);
     const data = await r.json();
-    const saavnResults = data.data?.results || [];
-    saavnResults.forEach(s => {
+    const arr = data.data?.results || data.results || [];
+    arr.forEach(s => {
+      if (!s.id) return;
+      let direct = null;
       const downloads = s.downloadUrl || [];
-      const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-      const directStream = sorted[0]?.url || sorted[0]?.link || null;
+      if (downloads.length) {
+        const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+        direct = sorted[0]?.url || sorted[0]?.link || null;
+      }
       const cover = s.image?.[2]?.url || s.image?.[1]?.url || s.image?.[0]?.url || '';
       const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || s.singers || 'Unknown';
-      if (!s.id) return;
       addUnique({
         id: 'saavn_' + s.id,
         title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
@@ -140,18 +141,17 @@ async function workerSearch(query, limit = 25) {
         cover: cover,
         duration: s.duration || 0,
         source: 'saavn',
-        _directStream: directStream
+        _directStream: direct
       });
     });
-  } catch (e) {}
+  } catch (e) { console.error('Delta search error:', e); }
 
-  // ═══ SOUNDCLOUD ═══
+  // SOUNDCLOUD
   try {
     const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.3)}&linked_partitioning=1`;
     const r = await fetch(scUrl);
     const data = await r.json();
-    const tracks = data.collection || [];
-    tracks.forEach(t => {
+    (data.collection || []).forEach(t => {
       if (!t.stream_url || !t.id) return;
       addUnique({
         id: 'sc_' + t.id,
@@ -170,16 +170,19 @@ async function workerSearch(query, limit = 25) {
 
 async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) {
+    const songId = id.replace('saavn_', '');
     try {
-      const songId = id.replace('saavn_', '');
       const url = `${SAAVN_DELTA}/api/songs/${songId}`;
       const r = await fetch(url);
       const data = await r.json();
       const song = data.data?.[0] || data.data;
       const downloads = song?.downloadUrl || [];
-      const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-      return sorted[0]?.url || sorted[0]?.link || null;
-    } catch (e) { return null; }
+      if (downloads.length) {
+        const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+        const u = sorted[0]?.url || sorted[0]?.link;
+        if (u) return u;
+      }
+    } catch (e) {}
   }
   return null;
 }
@@ -781,7 +784,7 @@ async function fetchDirectAudioStreamUrl(input) {
   return null;
 }
 
-/* ═══════════ PLAY TRACK — INSTANT ═══════════ */
+/* ═══════════ PLAY TRACK ═══════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -796,11 +799,9 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => initForegroundAudioBridge(), 0);
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
-
   setTimeout(() => preCacheNextTracks(index, 1), 20000);
   setTimeout(() => autoExtendQueue(track), 2000);
 
-  // 1. Blob cache
   if (track.id.startsWith('blob:')) {
     mainAudio.src = track.id;
     mainAudio.load();
@@ -808,7 +809,6 @@ async function playTrack(index, broadcast = true) {
     return;
   }
 
-  // 2. Direct stream from search response
   if (track._directStream && track._directStream.startsWith('http')) {
     mainAudio.src = track._directStream;
     mainAudio.load();
@@ -819,18 +819,15 @@ async function playTrack(index, broadcast = true) {
     } catch (e) {}
   }
 
-  // 3. In-memory blob cache
   let streamUrl = null;
   const c = trackBlobCache.get(track.id);
   if (c && c.startsWith('blob:')) streamUrl = c;
 
-  // 4. IndexedDB cache
   if (!streamUrl) {
     const db = await cacheGet(track.id);
     if (db && db.url) { streamUrl = db.url; trackBlobCache.set(track.id, streamUrl); }
   }
 
-  // 5. Fresh fetch
   if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
 
   if (streamUrl && streamUrl.startsWith('http')) {
@@ -1179,20 +1176,19 @@ async function prefetchStream(idEnc) { }
 
 function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, duration) {
   const id = decodeURIComponent(idEnc);
-  const t = { 
-    id, 
-    title: decodeURIComponent(title), 
-    artist: decodeURIComponent(artist), 
-    cover: decodeURIComponent(cover), 
-    duration: duration || 0 
+  const t = {
+    id,
+    title: decodeURIComponent(title),
+    artist: decodeURIComponent(artist),
+    cover: decodeURIComponent(cover),
+    duration: duration || 0
   };
   const rD = directEnc ? decodeURIComponent(directEnc) : '';
   if (rD) t._directStream = rD;
 
-  // ⚡ Dedup queue — same title+artist skip
   const seen = new Set();
   seen.add((t.title || '').toLowerCase().trim() + '|' + (t.artist || '').toLowerCase().trim());
-  
+
   const newQueue = [t];
   currentSearchResults.forEach(r => {
     if (r.id === t.id) return;
