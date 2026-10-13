@@ -100,7 +100,6 @@ public class MainActivity extends AppCompatActivity {
                 String url = request.getUrl().toString();
                 String host = request.getUrl().getHost();
 
-                // ⚡ Intercept API calls — bypass CORS
                 if (host != null && (
                     host.contains("jiosaavn.com") ||
                     host.contains("saavncdn.com") ||
