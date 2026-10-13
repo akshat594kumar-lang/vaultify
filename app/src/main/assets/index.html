@@ -78,7 +78,10 @@ window.onerror = function(msg, url, line) {
 
     <div class="content-scroll">
       <div class="view-screen active" id="tabHome">
-        <div class="section-heading">Recently Played</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px">
+          <div class="section-heading" style="margin:0">Recently Played</div>
+          <span style="font-size:11px;color:#ef4444;cursor:pointer;padding:4px 8px" onclick="clearRecentlyPlayed()">Clear</span>
+        </div>
         <div class="grid-history-vault" id="homeRecentGrid"></div>
         <div class="recommended-section">
           <div class="recommended-header"><i class="fa-solid fa-fire"></i><span>Trending Now</span></div>
@@ -177,7 +180,24 @@ window.onerror = function(msg, url, line) {
             <div><div style="font-size:12px;font-weight:600">Gradient Flow</div><div style="font-size:10px;color:var(--text-sub)">Background animation</div></div>
             <button class="submit-btn" id="gradientToggleBtn" style="width:auto;padding:6px 14px;font-size:11px" onclick="toggleAmbientMotion()">Enabled</button>
           </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
+            <div><div style="font-size:12px;font-weight:600">Notch Runner</div><div style="font-size:10px;color:var(--text-sub)">Top island animation</div></div>
+            <button class="submit-btn" id="runnerToggleBtn" style="width:auto;padding:6px 14px;font-size:11px" onclick="toggleRunnerVisibility()">Enabled</button>
+          </div>
           <div style="margin-bottom:10px">
+            <div style="font-size:11px;color:var(--text-sub);margin-bottom:6px">Runner Mode</div>
+            <div style="display:flex;gap:6px;margin-bottom:10px">
+              <button class="submit-btn" id="modeFlowBtn" style="font-size:10px;padding:6px 10px;flex:1" onclick="setEmojiMode('flow')">Flow (Left→Right)</button>
+              <button class="submit-btn" id="modeMixBtn" style="font-size:10px;padding:6px 10px;flex:1;background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="setEmojiMode('mix')">Mix (Bounce)</button>
+            </div>
+            <div style="font-size:11px;color:var(--text-sub);margin-bottom:6px">Runner Emojis</div>
+            <div class="emoji-picker-row" id="emojiPickerRow"></div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <input type="text" id="customEmojiInput" class="form-input" style="margin-bottom:0;flex:1;font-size:12px" placeholder="Add custom emoji" maxlength="4" autocomplete="off" />
+              <button class="submit-btn" style="width:auto;padding:0 14px;font-size:11px" onclick="addCustomEmoji()">+ Add</button>
+            </div>
+          </div>
+          <div>
             <div style="font-size:11px;color:var(--text-sub);margin-bottom:6px">Theme</div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#8b5cf6" onclick="applyThemeScheme('theme-violet')">Violet</button>
