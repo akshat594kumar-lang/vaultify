@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL (Delta Direct + SoundCloud)               */
+/* VAULTIFY — FULL FINAL (Saavn + SoundCloud + YouTube)            */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -7,6 +7,12 @@ const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
 const SAAVN_DELTA = 'https://saavn-api-delta.vercel.app';
+const PIPED_APIS = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+  'https://api.piped.yt',
+  'https://pipedapi.reallyaweso.me'
+];
 
 let firebaseApp = null;
 let firestoreDB = null;
@@ -102,7 +108,7 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ DIRECT API — DELTA + SOUNDCLOUD ═══════════ */
+/* ═══════════ API — SAAVN + SOUNDCLOUD + YOUTUBE ═══════════ */
 async function checkWorker() {
   workerReady = true;
   return true;
@@ -120,7 +126,7 @@ async function workerSearch(query, limit = 25) {
 
   // SAAVN via DELTA
   try {
-    const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.7)}`;
+    const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.5)}`;
     const r = await fetch(url);
     const data = await r.json();
     const arr = data.data?.results || data.results || [];
@@ -144,11 +150,11 @@ async function workerSearch(query, limit = 25) {
         _directStream: direct
       });
     });
-  } catch (e) { console.error('Delta search error:', e); }
+  } catch (e) {}
 
   // SOUNDCLOUD
   try {
-    const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.3)}&linked_partitioning=1`;
+    const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.2)}&linked_partitioning=1`;
     const r = await fetch(scUrl);
     const data = await r.json();
     (data.collection || []).forEach(t => {
@@ -165,10 +171,41 @@ async function workerSearch(query, limit = 25) {
     });
   } catch (e) {}
 
+  // YOUTUBE via PIPED
+  for (const api of PIPED_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=music_songs`, {
+        signal: ctrl.signal
+      });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (!data.items?.length) continue;
+      const streams = data.items.filter(i => i.type === 'stream' && i.url).slice(0, Math.floor(limit * 0.3));
+      if (!streams.length) continue;
+      streams.forEach(i => {
+        const vid = i.url.replace('/watch?v=', '');
+        addUnique({
+          id: 'yt_' + vid,
+          title: i.title || 'Unknown',
+          artist: i.uploaderName || 'YouTube',
+          cover: i.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
+          duration: i.duration || 0,
+          source: 'youtube',
+          _ytId: vid
+        });
+      });
+      break;
+    } catch (e) { continue; }
+  }
+
   return results;
 }
 
 async function workerStreamUrl(id) {
+  // SAAVN
   if (id.startsWith('saavn_')) {
     const songId = id.replace('saavn_', '');
     try {
@@ -184,6 +221,26 @@ async function workerStreamUrl(id) {
       }
     } catch (e) {}
   }
+
+  // YOUTUBE via PIPED
+  if (id.startsWith('yt_')) {
+    const ytId = id.replace('yt_', '');
+    for (const api of PIPED_APIS) {
+      try {
+        const ctrl = new AbortController();
+        const tm = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch(`${api}/streams/${ytId}`, { signal: ctrl.signal });
+        clearTimeout(tm);
+        if (!r.ok) continue;
+        const data = await r.json();
+        const audioStreams = (data.audioStreams || []).filter(s => s.url);
+        if (!audioStreams.length) continue;
+        audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        return audioStreams[0].url;
+      } catch (e) { continue; }
+    }
+  }
+
   return null;
 }
 
@@ -1169,7 +1226,9 @@ function renderSearchResults(tracks) {
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || 'vaultify.png');
     const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
     const sDur = t.duration || 0;
-    const srcBadge = t.source === 'soundcloud' ? '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>' : '';
+    let srcBadge = '';
+    if (t.source === 'soundcloud') srcBadge = '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>';
+    else if (t.source === 'youtube') srcBadge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
     return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${srcBadge}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
   }).join('');
 }
