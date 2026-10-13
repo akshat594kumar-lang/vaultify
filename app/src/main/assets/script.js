@@ -1,6 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL (Saavn Only)                              */
-/* localStorage Queue | No Auto-Skip | Turnable Recently Played    */
+/* VAULTIFY — FULL FINAL                                           */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -114,13 +113,13 @@ async function checkWorker() {
 
 async function workerSearch(query, limit = 25) {
   try {
-    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 15000 });
+    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 20000 });
     const data = await r.json();
     return data.results || [];
   } catch (e) { return []; }
 }
 
-async function workerStreamUrl(id, meta) {
+async function workerStreamUrl(id) {
   try {
     const r = await proxyFetch(`/stream?id=${encodeURIComponent(id)}`, { timeout: 30000 });
     const data = await r.json();
@@ -583,7 +582,6 @@ function setupMediaSession() {
     } catch (e) {}
   }
 
-  // NO AUTO-SKIP — error pe ruk jayega
   mainAudio.addEventListener('error', () => {
     showToast('⚠️ Audio error — try again');
     setVisualState(false);
@@ -610,7 +608,6 @@ function setupMediaSession() {
     if (d) d.innerText = formatClock(mainAudio.duration);
   });
 
-  // NO AUTO-SKIP — gaana khatam pe ruk jayega
   mainAudio.addEventListener('ended', () => {
     setVisualState(false);
     showToast('⏹ Song ended');
@@ -674,7 +671,7 @@ function setupTimelineDraggableEngine() {
 
 function seekAudioTo(s) { if (mainAudio && mainAudio.duration) mainAudio.currentTime = s; }
 
-/* ═══════════ QUEUE PERSISTENCE (localStorage) ═══════════ */
+/* ═══════════ QUEUE PERSISTENCE ═══════════ */
 function saveQueueToStorage() {
   try {
     const queueData = {
@@ -726,11 +723,11 @@ async function fetchTrendingSongs(limit = 10) {
   return [];
 }
 
-async function fetchDirectAudioStreamUrl(input, meta) {
+async function fetchDirectAudioStreamUrl(input) {
   if (!input) return null;
   if (input.startsWith('blob:') || input.startsWith('data:')) return input;
   if (workerReady) {
-    const url = await workerStreamUrl(input, meta);
+    const url = await workerStreamUrl(input);
     if (url) return url;
   }
   return null;
@@ -776,9 +773,7 @@ async function playTrack(index, broadcast = true) {
     if (db && db.url) { streamUrl = db.url; trackBlobCache.set(track.id, streamUrl); }
   }
 
-  if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id, {
-    title: track.title, artist: track.artist, duration: track.duration
-  });
+  if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
 
   if (streamUrl && streamUrl.startsWith('http')) {
     mainAudio.src = streamUrl;
@@ -933,7 +928,7 @@ async function cacheTrackInBackground(track) {
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
   showDownloadIndicator('Caching...');
-  const url = await fetchDirectAudioStreamUrl(track.id, { title: track.title, artist: track.artist, duration: track.duration });
+  const url = await fetchDirectAudioStreamUrl(track.id);
   if (!url || !url.startsWith('http')) { hideDownloadIndicator(); return; }
   try {
     const r = await fetch(url);
@@ -962,7 +957,7 @@ async function downloadCurrentTrack() {
   showDownloadIndicator('Downloading...');
   try {
     let u = trackBlobCache.get(t.id) || t._directStream;
-    if (!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id, { title: t.title, artist: t.artist, duration: t.duration });
+    if (!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id);
     if (!u) throw new Error('No URL');
     const r = await fetch(u);
     const b = await r.blob();
@@ -1124,10 +1119,7 @@ function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, du
 
   const newQueue = [t];
   currentSearchResults.forEach(r => {
-    if (r.id !== t.id) {
-      const rt = { ...r };
-      newQueue.push(rt);
-    }
+    if (r.id !== t.id) newQueue.push(r);
   });
 
   currentPlaylist = newQueue;
