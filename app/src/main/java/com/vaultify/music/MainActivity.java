@@ -100,13 +100,12 @@ public class MainActivity extends AppCompatActivity {
                 String url = request.getUrl().toString();
                 String host = request.getUrl().getHost();
 
+                // ⚡ ONLY API endpoints — NOT CDN (audio direct jaayega)
                 if (host != null && (
                     host.contains("jiosaavn.com") ||
-                    host.contains("saavncdn.com") ||
                     host.contains("saavn-api-delta.vercel.app") ||
                     host.contains("api-v2.soundcloud.com") ||
-                    host.contains("api.soundcloud.com") ||
-                    host.contains("sndcdn.com")
+                    host.contains("api.soundcloud.com")
                 )) {
                     try {
                         Request.Builder rb = new Request.Builder()
