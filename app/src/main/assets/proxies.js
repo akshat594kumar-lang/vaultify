@@ -1,80 +1,48 @@
-const CLOUDFLARE_WORKERS = [
-  "https://vaultify-2.akshat594kumar.workers.dev"
-];
+/* ═══════════════════════════════════════════════════════════════ */
+/* VAULTIFY — DIRECT RENDER API (No Cloudflare Worker)             */
+/* ═══════════════════════════════════════════════════════════════ */
 
-const FALLBACK_PROXIES = [];
-const SOUNDCLOUD_CLIENT_ID = "a3e059563d7fd3372b49b37f00a00bcf";
+const RENDER_API = 'https://jiosaavn-api-rdna.onrender.com';
+
+// No Cloudflare workers — direct connection
+const CLOUDFLARE_WORKERS = [RENDER_API];
 
 let activeWorkerIndex = 0;
 let failedWorkers = new Set();
 
 function getActiveWorker() {
-  if (failedWorkers.size >= CLOUDFLARE_WORKERS.length) failedWorkers.clear();
-  for (let i = 0; i < CLOUDFLARE_WORKERS.length; i++) {
-    const idx = (activeWorkerIndex + i) % CLOUDFLARE_WORKERS.length;
-    const worker = CLOUDFLARE_WORKERS[idx];
-    if (!failedWorkers.has(worker)) {
-      activeWorkerIndex = idx;
-      return worker;
-    }
-  }
-  return CLOUDFLARE_WORKERS[0];
-}
-
-function markWorkerFailed(url) {
-  if (url && CLOUDFLARE_WORKERS.includes(url)) {
-    failedWorkers.add(url);
-    activeWorkerIndex = (activeWorkerIndex + 1) % CLOUDFLARE_WORKERS.length;
-  }
+  return RENDER_API;
 }
 
 async function proxyFetch(endpoint, options = {}) {
   const timeout = options.timeout || 30000;
-  const maxAttempts = CLOUDFLARE_WORKERS.length;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const worker = getActiveWorker();
-    const url = worker + endpoint;
-    try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), timeout);
-      const r = await fetch(url, { ...options, signal: ctrl.signal });
-      clearTimeout(tm);
-      if (r.ok) {
-        if (failedWorkers.has(worker)) failedWorkers.delete(worker);
-        return r;
-      }
-      if (r.status === 429 || r.status >= 500) {
-        markWorkerFailed(worker);
-        continue;
-      }
-      return r;
-    } catch (e) {
-      markWorkerFailed(worker);
-      continue;
-    }
+  const url = RENDER_API + endpoint;
+  const ctrl = new AbortController();
+  const tm = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const r = await fetch(url, { ...options, signal: ctrl.signal });
+    clearTimeout(tm);
+    return r;
+  } catch (e) {
+    clearTimeout(tm);
+    throw e;
   }
-  throw new Error('Worker unavailable');
 }
 
 async function checkWorkerHealth() {
   try {
-    const worker = getActiveWorker();
     const ctrl = new AbortController();
     const tm = setTimeout(() => ctrl.abort(), 5000);
-    const r = await fetch(`${worker}/ping`, { signal: ctrl.signal });
+    const r = await fetch(`${RENDER_API}/`, { signal: ctrl.signal });
     clearTimeout(tm);
-    if (r.ok) {
-      const data = await r.json();
-      return data.status === 'ok';
-    }
+    return r.ok;
   } catch (e) {
-    markWorkerFailed(getActiveWorker());
+    return false;
   }
-  return false;
 }
 
+window.RENDER_API = RENDER_API;
 window.CLOUDFLARE_WORKERS = CLOUDFLARE_WORKERS;
-window.SOUNDCLOUD_CLIENT_ID = SOUNDCLOUD_CLIENT_ID;
 window.getActiveWorker = getActiveWorker;
 window.proxyFetch = proxyFetch;
 window.checkWorkerHealth = checkWorkerHealth;
