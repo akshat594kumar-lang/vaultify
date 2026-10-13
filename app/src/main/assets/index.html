@@ -125,23 +125,81 @@ window.onerror = function(msg, url, line) {
         <div id="libraryContent"></div>
       </div>
 
+      <!-- ═══ CERTIFICATE ═══ -->
       <div class="view-screen" id="tabCert">
-        <div style="background:radial-gradient(circle at 10% 10%,rgba(168,85,247,.22),transparent 75%),linear-gradient(135deg,rgba(20,6,32,.98),rgba(9,2,16,.98));border:1px solid rgba(192,132,252,.4);border-radius:18px;padding:18px">
-          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px dashed rgba(168,85,247,.35);padding-bottom:10px;margin-bottom:12px">
-            <div style="font-family:'Vacancy',cursive;font-size:30px;font-weight:400;color:#e9d5ff;letter-spacing:.5px;line-height:1.15">Vaultify Certified</div>
-            <div style="font-size:9.5px;font-weight:700;color:#34d399;background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);padding:3px 8px;border-radius:10px">VERIFIED</div>
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-            <div>
-              <h3 style="font-size:18px;color:#fff">Akshat Kumar</h3>
-              <p style="font-size:12px;color:var(--accent-neon);margin-top:2px">@akshat.kumar_148</p>
+        <div class="cert-wrapper">
+          <div class="cert-bg-pattern"></div>
+          <div class="cert-border-outer">
+            <div class="cert-border-inner">
+              <div class="cert-top-row">
+                <div class="cert-badge">
+                  <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <div class="cert-verified-tag">VERIFIED</div>
+              </div>
+              <div class="cert-title">Vaultify Certified</div>
+              <div class="cert-subtitle">CERTIFICATE OF OWNERSHIP</div>
+
+              <div class="cert-seal">
+                <i class="fa-solid fa-crown"></i>
+              </div>
+
+              <div class="cert-body-text">This certificate is proudly presented to</div>
+              <div class="cert-owner-name">Akshat Kumar</div>
+              <div class="cert-owner-handle">@akshat.kumar_148</div>
+
+              <div class="cert-body-text" style="margin-top:14px">
+                Founder & Owner of Vaultify — Unlimited Soundscape
+              </div>
+
+              <div class="cert-details-grid">
+                <div class="cert-detail">
+                  <div class="cert-detail-label">Issued</div>
+                  <div class="cert-detail-value">2026</div>
+                </div>
+                <div class="cert-detail">
+                  <div class="cert-detail-label">App Version</div>
+                  <div class="cert-detail-value">v2.0</div>
+                </div>
+                <div class="cert-detail">
+                  <div class="cert-detail-label">Status</div>
+                  <div class="cert-detail-value" style="color:#34d399">Active</div>
+                </div>
+              </div>
+
+              <div class="cert-signature-row">
+                <div class="cert-sig-block">
+                  <img src="./assets/signature.png" alt="Signature" class="cert-signature-img" onerror="this.style.display='none'" />
+                  <div class="cert-sig-line"></div>
+                  <div class="cert-sig-name">Akshat Kumar</div>
+                  <div class="cert-sig-role">Founder & Owner</div>
+                </div>
+                <div class="cert-sig-block">
+                  <div class="cert-seal-stamp">
+                    <i class="fa-solid fa-stamp"></i>
+                    <div class="cert-stamp-text">VAULTIFY<br/>OFFICIAL</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cert-footer">
+                <i class="fa-solid fa-certificate"></i>
+                <span>Authentic Certificate · Vaultify · vaultify.app</span>
+              </div>
             </div>
-            <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:11px;font-weight:600;padding:6px 12px;border-radius:12px;text-decoration:none"><i class="fa-brands fa-instagram"></i> @akshat.kumar_148</a>
           </div>
-          <div style="background:rgba(255,255,255,.04);padding:12px;border-radius:10px;border:1px solid var(--border);margin:12px 0">
-            <div style="font-size:11px;font-weight:700;color:var(--accent-neon);margin-bottom:6px;letter-spacing:1px">📊 LIVE STATS</div>
+
+          <div class="cert-stats-box">
+            <div class="cert-stats-title">
+              <i class="fa-solid fa-chart-line"></i> LIVE STATS
+            </div>
             <div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div>
           </div>
+
+          <a href="https://instagram.com/akshat.kumar_148" target="_blank" class="cert-insta-btn">
+            <i class="fa-brands fa-instagram"></i>
+            <span>Follow @akshat.kumar_148</span>
+          </a>
         </div>
       </div>
 
@@ -316,14 +374,21 @@ window.onerror = function(msg, url, line) {
     </div>
   </div>
 
+  <!-- ═══ SUPPORT — COMING SOON ═══ -->
   <div class="modal-overlay" id="modalSupport">
-    <div class="card-popup">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-headset" style="color:var(--accent-neon)"></i> Help & Support</h3><i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalSupport')"></i></div>
-      <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px;line-height:1.5">Problem batao, mail chala jayega <b style="color:var(--accent-neon)">akshat594kumar@gmail.com</b> ko.</p>
-      <input class="form-input" id="supName" placeholder="Your Name" autocomplete="off" />
-      <input class="form-input" id="supEmail" placeholder="Your Email" autocomplete="off" />
-      <textarea class="form-input" id="supMsg" placeholder="Kya problem hai?" style="min-height:100px"></textarea>
-      <button class="submit-btn" onclick="sendSupportMail()"><i class="fa-solid fa-envelope"></i> Send Support Mail</button>
+    <div class="card-popup" style="text-align:center">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-headset" style="color:var(--accent-neon)"></i> Help & Support</h3>
+        <i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalSupport')"></i>
+      </div>
+      <div style="padding:24px 16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px;margin-bottom:14px">
+        <i class="fa-solid fa-headset" style="font-size:44px;color:#fbbf24;margin-bottom:12px"></i>
+        <div style="font-size:20px;font-weight:800;color:#fbbf24;margin-bottom:8px">Coming Soon</div>
+        <div style="font-size:12px;color:var(--text-sub);line-height:1.6">Support system abhi ban raha hai. Jaldi hi live hoga!<br/>Tab tak kisi bhi problem ke liye Instagram pe message karo.</div>
+        <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:inline-flex;align-items:center;gap:8px;margin-top:14px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:600;padding:8px 16px;border-radius:12px;text-decoration:none">
+          <i class="fa-brands fa-instagram"></i> @akshat.kumar_148
+        </a>
+      </div>
     </div>
   </div>
 
