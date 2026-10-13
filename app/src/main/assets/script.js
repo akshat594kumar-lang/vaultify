@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL                                           */
-/* Instant Playback | Silent Cache | Queue Persistence             */
-/* No Auto-Skip | Turnable Recently Played                         */
+/* VAULTIFY — FULL FINAL (Direct JioSaavn)                         */
+/* No Cloudflare | No Render | WebView Intercept CORS              */
+/* Instant Playback | Queue Persistence | No Auto-Skip             */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -12,7 +12,7 @@ let firebaseApp = null;
 let firestoreDB = null;
 let firebaseAuth = null;
 let firebaseReady = false;
-let workerReady = false;
+let workerReady = true; // Direct — always ready
 
 try {
   if (typeof firebase !== 'undefined') {
@@ -102,30 +102,58 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ WORKER BRIDGE ═══════════ */
+/* ═══════════ DIRECT JIOSAAVN (WebView intercept) ═══════════ */
 async function checkWorker() {
-  try {
-    workerReady = await checkWorkerHealth();
-    return workerReady;
-  } catch (e) {
-    workerReady = false;
-    return false;
-  }
+  workerReady = true;
+  return true;
 }
 
 async function workerSearch(query, limit = 25) {
   try {
-    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 20000 });
+    const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&q=${encodeURIComponent(query)}&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=${limit}&p=1`;
+    const r = await fetch(url);
     const data = await r.json();
-    return data.results || [];
+    const results = data.results || [];
+    return results.map(s => {
+      let cover = s.image ? s.image.replace('150x150', '500x500').replace('50x50', '500x500') : '';
+      let artist = 'Unknown';
+      if (s.more_info && s.more_info.singers) artist = s.more_info.singers;
+      else if (s.subtitle) artist = s.subtitle;
+      else if (s.singers) artist = s.singers;
+      let duration = 0;
+      if (s.more_info && s.more_info.duration) duration = parseInt(s.more_info.duration) || 0;
+      else if (s.duration) duration = parseInt(s.duration) || 0;
+      const songId = s.id || '';
+      if (!songId) return null;
+      return {
+        id: 'saavn_' + songId,
+        title: (s.title || s.song || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+        artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+        cover: cover,
+        duration: duration,
+        source: 'saavn'
+      };
+    }).filter(Boolean);
   } catch (e) { return []; }
 }
 
 async function workerStreamUrl(id) {
   try {
-    const r = await proxyFetch(`/stream?id=${encodeURIComponent(id)}`, { timeout: 30000 });
+    if (!id.startsWith('saavn_')) return null;
+    const songId = id.replace('saavn_', '');
+    const url = `https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=${songId}&_format=json&_marker=0&api_version=4&ctx=web6dot0`;
+    const r = await fetch(url);
     const data = await r.json();
-    return data.url || null;
+    const song = data[songId] || data.songs?.[0];
+    if (!song) return null;
+    let mediaUrl = song.media_url;
+    if (!mediaUrl && song.more_info && song.more_info.media_url) mediaUrl = song.more_info.media_url;
+    if (!mediaUrl) return null;
+    if (typeof mediaUrl === 'string') {
+      if (mediaUrl.includes('_96.mp4')) mediaUrl = mediaUrl.replace('_96.mp4', '_320.mp4');
+      if (mediaUrl.includes('_96.mp3')) mediaUrl = mediaUrl.replace('_96.mp3', '_320.mp3');
+    }
+    return mediaUrl;
   } catch (e) { return null; }
 }
 
@@ -707,31 +735,22 @@ function loadQueueFromStorage() {
 
 /* ═══════════ SEARCH ═══════════ */
 async function searchAll(q) {
-  if (!workerReady) {
-    await checkWorker();
-    if (!workerReady) return [];
-  }
   return await workerSearch(q, 25);
 }
 
 async function fetchTrendingSongs(limit = 10) {
-  if (!workerReady) await checkWorker();
-  if (workerReady) {
-    const trending = await workerSearch('arijit singh', limit);
-    if (trending.length >= 3) return trending.slice(0, limit);
-    const hindi = await workerSearch('bollywood hits', limit);
-    if (hindi.length >= 3) return hindi.slice(0, limit);
-  }
+  const trending = await workerSearch('arijit singh', limit);
+  if (trending.length >= 3) return trending.slice(0, limit);
+  const hindi = await workerSearch('bollywood hits', limit);
+  if (hindi.length >= 3) return hindi.slice(0, limit);
   return [];
 }
 
 async function fetchDirectAudioStreamUrl(input) {
   if (!input) return null;
   if (input.startsWith('blob:') || input.startsWith('data:')) return input;
-  if (workerReady) {
-    const url = await workerStreamUrl(input);
-    if (url) return url;
-  }
+  const url = await workerStreamUrl(input);
+  if (url) return url;
   return null;
 }
 
@@ -751,11 +770,8 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
 
-  // ⚡ Pre-cache NEXT songs (after 20 sec — no spam)
   setTimeout(() => preCacheNextTracks(index, 1), 20000);
   setTimeout(() => autoExtendQueue(track), 2000);
-
-  // ═══ INSTANT PLAYBACK PATH ═══
 
   // 1. Blob cache
   if (track.id.startsWith('blob:')) {
@@ -765,7 +781,7 @@ async function playTrack(index, broadcast = true) {
     return;
   }
 
-  // 2. Direct stream from search response (FASTEST — no API call)
+  // 2. Direct stream from search response
   if (track._directStream && track._directStream.startsWith('http')) {
     mainAudio.src = track._directStream;
     mainAudio.load();
@@ -787,7 +803,7 @@ async function playTrack(index, broadcast = true) {
     if (db && db.url) { streamUrl = db.url; trackBlobCache.set(track.id, streamUrl); }
   }
 
-  // 5. Fresh fetch from worker
+  // 5. Fresh fetch
   if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
 
   if (streamUrl && streamUrl.startsWith('http')) {
@@ -946,7 +962,6 @@ async function cacheTrackInBackground(track) {
   if (trackBlobCache.has(track.id)) return;
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
-  // ⚡ SILENT — no indicator, no toast
   try {
     const url = await fetchDirectAudioStreamUrl(track.id);
     if (!url || !url.startsWith('http')) return;
