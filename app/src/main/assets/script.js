@@ -643,6 +643,8 @@ function setupMediaSession() {
   }
 
   mainAudio.addEventListener('error', () => {
+    const code = mainAudio.error ? mainAudio.error.code : 'unknown';
+    console.error('Audio error:', code);
     showToast('⚠️ Audio error — try again');
     setVisualState(false);
   });
