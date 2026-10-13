@@ -100,8 +100,15 @@ public class MainActivity extends AppCompatActivity {
                 String url = request.getUrl().toString();
                 String host = request.getUrl().getHost();
 
-                // ⚡ Intercept JioSaavn API calls — bypass CORS
-                if (host != null && (host.contains("jiosaavn.com") || host.contains("saavncdn.com"))) {
+                // ⚡ Intercept API calls — bypass CORS
+                if (host != null && (
+                    host.contains("jiosaavn.com") ||
+                    host.contains("saavncdn.com") ||
+                    host.contains("saavn-api-delta.vercel.app") ||
+                    host.contains("api-v2.soundcloud.com") ||
+                    host.contains("api.soundcloud.com") ||
+                    host.contains("sndcdn.com")
+                )) {
                     try {
                         Request.Builder rb = new Request.Builder()
                             .url(url)
@@ -114,7 +121,11 @@ public class MainActivity extends AppCompatActivity {
                         if (reqHeaders != null) {
                             for (Map.Entry<String, String> e : reqHeaders.entrySet()) {
                                 String k = e.getKey();
-                                if (k != null && !k.equalsIgnoreCase("user-agent") && !k.equalsIgnoreCase("referer") && !k.equalsIgnoreCase("origin") && !k.equalsIgnoreCase("host")) {
+                                if (k != null && !k.equalsIgnoreCase("user-agent")
+                                    && !k.equalsIgnoreCase("referer")
+                                    && !k.equalsIgnoreCase("origin")
+                                    && !k.equalsIgnoreCase("host")
+                                    && !k.equalsIgnoreCase("accept-encoding")) {
                                     try { rb.header(k, e.getValue()); } catch (Exception ex) {}
                                 }
                             }
@@ -222,6 +233,11 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.POST_NOTIFICATIONS);
         }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.READ_MEDIA_AUDIO);
+        }
         if (!perms.isEmpty()) ActivityCompat.requestPermissions(this, perms.toArray(new String[0]), PERMISSION_REQUEST_CODE);
     }
 
@@ -299,7 +315,7 @@ public class MainActivity extends AppCompatActivity {
         }
         @JavascriptInterface public void openSystemEqualizer() {
             runOnUiThread(() -> {
-                try { Intent intent = new Intent("android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL"); intent.putExtra("android.media.extra.AUDIO_SESSION", 0); startActivityForResult(intent, EQ_REQUEST_CODE); }
+                try { Intent intent = new Intent("android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL"); intent.putExtra("android.media.extra.AUDIO_SESSION", 0); intent.putExtra("android.media.extra.CONTENT_TYPE", 0); startActivityForResult(intent, EQ_REQUEST_CODE); }
                 catch (Exception e) { try { Intent f = new Intent(Settings.ACTION_SOUND_SETTINGS); f.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(f); } catch (Exception e2) {} }
             });
         }
