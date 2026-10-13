@@ -1,18 +1,19 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL (Direct JioSaavn)                         */
-/* No Cloudflare | No Render | WebView Intercept CORS              */
-/* Instant Playback | Queue Persistence | No Auto-Skip             */
+/* VAULTIFY — FULL FINAL                                           */
+/* Direct JioSaavn + SoundCloud | Dedup Queue | No Auto-Skip       */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
+const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
+const SAAVN_DELTA = 'https://saavn-api-delta.vercel.app';
 
 let firebaseApp = null;
 let firestoreDB = null;
 let firebaseAuth = null;
 let firebaseReady = false;
-let workerReady = true; // Direct — always ready
+let workerReady = true;
 
 try {
   if (typeof firebase !== 'undefined') {
@@ -102,59 +103,85 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ DIRECT JIOSAAVN (WebView intercept) ═══════════ */
+/* ═══════════ DIRECT API ═══════════ */
 async function checkWorker() {
   workerReady = true;
   return true;
 }
 
 async function workerSearch(query, limit = 25) {
+  const results = [];
+  const seen = new Set();
+
+  const addUnique = (track) => {
+    const key = (track.title || '').toLowerCase().trim() + '|' + (track.artist || '').toLowerCase().trim();
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(track);
+  };
+
+  // ═══ JIOSAAVN via delta ═══
   try {
-    const url = `https://www.jiosaavn.com/api.php?__call=search.getResults&q=${encodeURIComponent(query)}&_format=json&_marker=0&api_version=4&ctx=web6dot0&n=${limit}&p=1`;
+    const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.7)}`;
     const r = await fetch(url);
     const data = await r.json();
-    const results = data.results || [];
-    return results.map(s => {
-      let cover = s.image ? s.image.replace('150x150', '500x500').replace('50x50', '500x500') : '';
-      let artist = 'Unknown';
-      if (s.more_info && s.more_info.singers) artist = s.more_info.singers;
-      else if (s.subtitle) artist = s.subtitle;
-      else if (s.singers) artist = s.singers;
-      let duration = 0;
-      if (s.more_info && s.more_info.duration) duration = parseInt(s.more_info.duration) || 0;
-      else if (s.duration) duration = parseInt(s.duration) || 0;
-      const songId = s.id || '';
-      if (!songId) return null;
-      return {
-        id: 'saavn_' + songId,
-        title: (s.title || s.song || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
+    const saavnResults = data.data?.results || [];
+    saavnResults.forEach(s => {
+      const downloads = s.downloadUrl || [];
+      const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+      const directStream = sorted[0]?.url || sorted[0]?.link || null;
+      const cover = s.image?.[2]?.url || s.image?.[1]?.url || s.image?.[0]?.url || '';
+      const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || s.singers || 'Unknown';
+      if (!s.id) return;
+      addUnique({
+        id: 'saavn_' + s.id,
+        title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
         artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
         cover: cover,
-        duration: duration,
-        source: 'saavn'
-      };
-    }).filter(Boolean);
-  } catch (e) { return []; }
+        duration: s.duration || 0,
+        source: 'saavn',
+        _directStream: directStream
+      });
+    });
+  } catch (e) {}
+
+  // ═══ SOUNDCLOUD ═══
+  try {
+    const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.3)}&linked_partitioning=1`;
+    const r = await fetch(scUrl);
+    const data = await r.json();
+    const tracks = data.collection || [];
+    tracks.forEach(t => {
+      if (!t.stream_url || !t.id) return;
+      addUnique({
+        id: 'sc_' + t.id,
+        title: t.title || 'Unknown',
+        artist: t.user?.username || 'SoundCloud',
+        cover: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : '',
+        duration: Math.floor((t.duration || 0) / 1000),
+        source: 'soundcloud',
+        _directStream: `${t.stream_url}?client_id=${SC_CLIENT_ID}`
+      });
+    });
+  } catch (e) {}
+
+  return results;
 }
 
 async function workerStreamUrl(id) {
-  try {
-    if (!id.startsWith('saavn_')) return null;
-    const songId = id.replace('saavn_', '');
-    const url = `https://www.jiosaavn.com/api.php?__call=song.getDetails&pids=${songId}&_format=json&_marker=0&api_version=4&ctx=web6dot0`;
-    const r = await fetch(url);
-    const data = await r.json();
-    const song = data[songId] || data.songs?.[0];
-    if (!song) return null;
-    let mediaUrl = song.media_url;
-    if (!mediaUrl && song.more_info && song.more_info.media_url) mediaUrl = song.more_info.media_url;
-    if (!mediaUrl) return null;
-    if (typeof mediaUrl === 'string') {
-      if (mediaUrl.includes('_96.mp4')) mediaUrl = mediaUrl.replace('_96.mp4', '_320.mp4');
-      if (mediaUrl.includes('_96.mp3')) mediaUrl = mediaUrl.replace('_96.mp3', '_320.mp3');
-    }
-    return mediaUrl;
-  } catch (e) { return null; }
+  if (id.startsWith('saavn_')) {
+    try {
+      const songId = id.replace('saavn_', '');
+      const url = `${SAAVN_DELTA}/api/songs/${songId}`;
+      const r = await fetch(url);
+      const data = await r.json();
+      const song = data.data?.[0] || data.data;
+      const downloads = song?.downloadUrl || [];
+      const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+      return sorted[0]?.url || sorted[0]?.link || null;
+    } catch (e) { return null; }
+  }
+  return null;
 }
 
 /* ═══════════ AUTH ═══════════ */
@@ -871,6 +898,7 @@ async function fetchRelatedSongs(seedTrack) {
   let artist = (seedTrack.artist || '').replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios/gi, '').replace(/[-_,]/g, ' ').trim();
   if (artist.includes(' - ')) artist = artist.split(' - ')[0].trim();
   const existingIds = new Set(currentPlaylist.map(t => t.id));
+  const existingKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
   let results = [];
   const queries = [];
   if (artist && artist.length > 2 && artist !== lastFetchedArtist) {
@@ -886,9 +914,13 @@ async function fetchRelatedSongs(seedTrack) {
     try {
       const batch = await searchAll(q);
       batch.forEach(t => {
-        if (!existingIds.has(t.id) && !results.some(r => r.id === t.id)) {
+        const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
+        if (!existingIds.has(t.id) && !existingKeys.has(key) && !results.some(r => r.id === t.id)) {
           const tL = detectLanguage((t.title || '') + ' ' + (t.artist || ''));
-          if (tL === seedLang || Math.random() < 0.3) results.push(t);
+          if (tL === seedLang || Math.random() < 0.3) {
+            existingKeys.add(key);
+            results.push(t);
+          }
         }
       });
     } catch (e) {}
@@ -1138,7 +1170,8 @@ function renderSearchResults(tracks) {
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || 'vaultify.png');
     const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
     const sDur = t.duration || 0;
-    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
+    const srcBadge = t.source === 'soundcloud' ? '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>' : '';
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${srcBadge}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
   }).join('');
 }
 
@@ -1146,13 +1179,27 @@ async function prefetchStream(idEnc) { }
 
 function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, duration) {
   const id = decodeURIComponent(idEnc);
-  const t = { id, title: decodeURIComponent(title), artist: decodeURIComponent(artist), cover: decodeURIComponent(cover), duration: duration || 0 };
+  const t = { 
+    id, 
+    title: decodeURIComponent(title), 
+    artist: decodeURIComponent(artist), 
+    cover: decodeURIComponent(cover), 
+    duration: duration || 0 
+  };
   const rD = directEnc ? decodeURIComponent(directEnc) : '';
   if (rD) t._directStream = rD;
 
+  // ⚡ Dedup queue — same title+artist skip
+  const seen = new Set();
+  seen.add((t.title || '').toLowerCase().trim() + '|' + (t.artist || '').toLowerCase().trim());
+  
   const newQueue = [t];
   currentSearchResults.forEach(r => {
-    if (r.id !== t.id) newQueue.push(r);
+    if (r.id === t.id) return;
+    const key = (r.title || '').toLowerCase().trim() + '|' + (r.artist || '').toLowerCase().trim();
+    if (seen.has(key)) return;
+    seen.add(key);
+    newQueue.push(r);
   });
 
   currentPlaylist = newQueue;
