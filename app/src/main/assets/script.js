@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL (Saavn + SoundCloud + YouTube)            */
+/* VAULTIFY — FULL FINAL (Saavn First + YT Silent + Emoji Animated)*/
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -108,13 +108,14 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ API — SAAVN + SOUNDCLOUD + YOUTUBE ═══════════ */
+/* ═══════════ API — SAAVN FIRST, THEN YT ═══════════ */
 async function checkWorker() {
   workerReady = true;
   return true;
 }
 
-async function workerSearch(query, limit = 25) {
+// Fast: Saavn + SoundCloud only
+async function searchSaavnAndSC(query, limit = 25) {
   const results = [];
   const seen = new Set();
   const addUnique = (t) => {
@@ -124,9 +125,9 @@ async function workerSearch(query, limit = 25) {
     results.push(t);
   };
 
-  // SAAVN via DELTA
+  // Saavn
   try {
-    const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.5)}`;
+    const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.7)}`;
     const r = await fetch(url);
     const data = await r.json();
     const arr = data.data?.results || data.results || [];
@@ -144,17 +145,15 @@ async function workerSearch(query, limit = 25) {
         id: 'saavn_' + s.id,
         title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
         artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-        cover: cover,
-        duration: s.duration || 0,
-        source: 'saavn',
-        _directStream: direct
+        cover: cover, duration: s.duration || 0,
+        source: 'saavn', _directStream: direct
       });
     });
   } catch (e) {}
 
-  // SOUNDCLOUD
+  // SoundCloud
   try {
-    const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.2)}&linked_partitioning=1`;
+    const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.3)}&linked_partitioning=1`;
     const r = await fetch(scUrl);
     const data = await r.json();
     (data.collection || []).forEach(t => {
@@ -171,23 +170,25 @@ async function workerSearch(query, limit = 25) {
     });
   } catch (e) {}
 
-  // YOUTUBE via PIPED
+  return results;
+}
+
+// Slow: YouTube via Piped — SILENT, no errors shown
+async function searchYouTube(query, limit = 10) {
   for (const api of PIPED_APIS) {
     try {
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=music_songs`, {
-        signal: ctrl.signal
-      });
+      const r = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=music_songs`, { signal: ctrl.signal });
       clearTimeout(tm);
       if (!r.ok) continue;
       const data = await r.json();
       if (!data.items?.length) continue;
-      const streams = data.items.filter(i => i.type === 'stream' && i.url).slice(0, Math.floor(limit * 0.3));
+      const streams = data.items.filter(i => i.type === 'stream' && i.url).slice(0, limit);
       if (!streams.length) continue;
-      streams.forEach(i => {
+      return streams.map(i => {
         const vid = i.url.replace('/watch?v=', '');
-        addUnique({
+        return {
           id: 'yt_' + vid,
           title: i.title || 'Unknown',
           artist: i.uploaderName || 'YouTube',
@@ -195,17 +196,19 @@ async function workerSearch(query, limit = 25) {
           duration: i.duration || 0,
           source: 'youtube',
           _ytId: vid
-        });
+        };
       });
-      break;
     } catch (e) { continue; }
   }
+  return [];
+}
 
-  return results;
+async function workerSearch(query, limit = 25) {
+  // Only Saavn + SC (fast)
+  return await searchSaavnAndSC(query, limit);
 }
 
 async function workerStreamUrl(id) {
-  // SAAVN
   if (id.startsWith('saavn_')) {
     const songId = id.replace('saavn_', '');
     try {
@@ -222,7 +225,6 @@ async function workerStreamUrl(id) {
     } catch (e) {}
   }
 
-  // YOUTUBE via PIPED
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
     for (const api of PIPED_APIS) {
@@ -700,9 +702,7 @@ function setupMediaSession() {
   }
 
   mainAudio.addEventListener('error', () => {
-    const code = mainAudio.error ? mainAudio.error.code : 'unknown';
-    console.error('Audio error:', code);
-    showToast('⚠️ Audio error — try again');
+    showToast('⚠️ Audio error');
     setVisualState(false);
   });
 
@@ -871,11 +871,7 @@ async function playTrack(index, broadcast = true) {
   if (track._directStream && track._directStream.startsWith('http')) {
     mainAudio.src = track._directStream;
     mainAudio.load();
-    try {
-      await mainAudio.play();
-      setVisualState(true);
-      return;
-    } catch (e) {}
+    try { await mainAudio.play(); setVisualState(true); return; } catch (e) {}
   }
 
   let streamUrl = null;
@@ -892,14 +888,10 @@ async function playTrack(index, broadcast = true) {
   if (streamUrl && streamUrl.startsWith('http')) {
     mainAudio.src = streamUrl;
     mainAudio.load();
-    try {
-      await mainAudio.play();
-      setVisualState(true);
-      return;
-    } catch (e) {}
+    try { await mainAudio.play(); setVisualState(true); return; } catch (e) {}
   }
 
-  showToast('⚠️ Playback failed — try again');
+  showToast('⚠️ Playback failed');
   setVisualState(false);
 }
 
@@ -957,10 +949,7 @@ async function fetchRelatedSongs(seedTrack) {
   const existingKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
   let results = [];
   const queries = [];
-  if (artist && artist.length > 2 && artist !== lastFetchedArtist) {
-    queries.push(artist);
-    lastFetchedArtist = artist;
-  }
+  if (artist && artist.length > 2 && artist !== lastFetchedArtist) { queries.push(artist); lastFetchedArtist = artist; }
   const langQ = getLanguageQueries(seedLang);
   queries.push(langQ[Math.floor(Math.random() * langQ.length)]);
   const titleWords = (seedTrack.title || '').split(' ').slice(0, 3).join(' ').replace(/[\(\)\[\]]/g, '').trim();
@@ -973,10 +962,7 @@ async function fetchRelatedSongs(seedTrack) {
         const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
         if (!existingIds.has(t.id) && !existingKeys.has(key) && !results.some(r => r.id === t.id)) {
           const tL = detectLanguage((t.title || '') + ' ' + (t.artist || ''));
-          if (tL === seedLang || Math.random() < 0.3) {
-            existingKeys.add(key);
-            results.push(t);
-          }
+          if (tL === seedLang || Math.random() < 0.3) { existingKeys.add(key); results.push(t); }
         }
       });
     } catch (e) {}
@@ -1043,7 +1029,7 @@ function shareCurrentTrack() {
   else { try { navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`); showToast('Copied!'); } catch (e) { showToast('Share not supported'); } }
 }
 
-/* ═══════════ CACHE + DOWNLOAD — SILENT ═══════════ */
+/* ═══════════ CACHE + DOWNLOAD ═══════════ */
 async function cacheTrackInBackground(track) {
   if (!track) return;
   if (track.id.startsWith('blob:')) return;
@@ -1128,6 +1114,15 @@ function logPlaybackHistory(track) {
   saveQueueToStorage();
 }
 
+function clearRecentlyPlayed() {
+  if (!confirm('Clear recently played?')) return;
+  playbackHistoryList = [];
+  localStorage.removeItem('vaultify_playback_history');
+  renderHomeRecentVault();
+  renderLibrary();
+  showToast('✅ Recently played cleared');
+}
+
 function renderHomeRecentVault() {
   const c = document.getElementById('homeRecentGrid');
   if (!c) return;
@@ -1190,7 +1185,7 @@ function renderQueueTile(t, i, ic) {
   return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isC ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
 }
 
-/* ═══════════ SEARCH UI ═══════════ */
+/* ═══════════ SEARCH UI — SAAVN FIRST, THEN YT ═══════════ */
 async function executeLiveSearch(isAuto = false) {
   const q = document.getElementById('mobileSearchField').value.trim();
   if (!q) return;
@@ -1205,16 +1200,38 @@ async function executeLiveSearch(isAuto = false) {
   const rc = document.getElementById('searchResultsContainer');
   l.style.display = 'block';
   l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
-  const all = await searchAll(q);
-  const found = all.slice(0, 30);
+  rc.innerHTML = '';
+
+  // STEP 1: Saavn + SoundCloud (FAST)
+  const saavnResults = await searchSaavnAndSC(q, 25);
   l.style.display = 'none';
-  if (found.length > 0) {
-    renderSearchResults(found);
-    if (!isAuto) showToast(`✅ ${found.length} results`);
-    setTimeout(renderRecommendedSection, 2000);
+  
+  if (saavnResults.length > 0) {
+    renderSearchResults(saavnResults);
+    if (!isAuto) showToast(`✅ ${saavnResults.length} results`);
   } else {
-    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila. Try different keywords.</p>';
+    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
   }
+  
+  // STEP 2: YouTube (SLOW, SILENT) — only add if worked
+  setTimeout(async () => {
+    try {
+      const ytResults = await searchYouTube(q, 8);
+      if (ytResults.length > 0) {
+        const combined = [...saavnResults];
+        const seen = new Set(saavnResults.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
+        ytResults.forEach(t => {
+          const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
+          if (!seen.has(key)) { seen.add(key); combined.push(t); }
+        });
+        if (combined.length > saavnResults.length) {
+          renderSearchResults(combined);
+        }
+      }
+    } catch (e) {}
+  }, 500);
+
+  setTimeout(renderRecommendedSection, 2000);
 }
 
 function renderSearchResults(tracks) {
@@ -1237,13 +1254,7 @@ async function prefetchStream(idEnc) { }
 
 function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, duration) {
   const id = decodeURIComponent(idEnc);
-  const t = {
-    id,
-    title: decodeURIComponent(title),
-    artist: decodeURIComponent(artist),
-    cover: decodeURIComponent(cover),
-    duration: duration || 0
-  };
+  const t = { id, title: decodeURIComponent(title), artist: decodeURIComponent(artist), cover: decodeURIComponent(cover), duration: duration || 0 };
   const rD = directEnc ? decodeURIComponent(directEnc) : '';
   if (rD) t._directStream = rD;
 
@@ -1291,11 +1302,29 @@ async function instantSearch(q) {
   const l = document.getElementById('searchLoadingIndicator');
   const rc = document.getElementById('searchResultsContainer');
   if (l) { l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'; }
-  const found = (await searchAll(q)).slice(0, 25);
+
+  // Fast: Saavn + SC
+  const saavnResults = await searchSaavnAndSC(q, 25);
   if (myId !== liveSearchRequestId) return;
   if (l) l.style.display = 'none';
-  if (found.length > 0) renderSearchResults(found);
+  if (saavnResults.length > 0) renderSearchResults(saavnResults);
   else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
+
+  // Slow: YT silent
+  setTimeout(async () => {
+    try {
+      const ytResults = await searchYouTube(q, 8);
+      if (ytResults.length > 0 && myId === liveSearchRequestId) {
+        const combined = [...saavnResults];
+        const seen = new Set(saavnResults.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
+        ytResults.forEach(t => {
+          const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
+          if (!seen.has(key)) { seen.add(key); combined.push(t); }
+        });
+        if (combined.length > saavnResults.length) renderSearchResults(combined);
+      }
+    } catch (e) {}
+  }, 500);
 }
 
 function renderSearchHistoryTags() {
@@ -1351,7 +1380,9 @@ async function renderLibrary() {
   if (!c) return;
   if (currentLibraryTab === 'history') {
     if (playbackHistoryList.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No history yet.</p>`; return; }
-    c.innerHTML = playbackHistoryList.map(t => { const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || ''); return `<div class="song-tile" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`; }).join('');
+    let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><span style="font-size:11px;color:#ef4444;cursor:pointer;padding:4px 8px" onclick="clearRecentlyPlayed()">Clear History</span></div>`;
+    html += playbackHistoryList.map(t => { const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || ''); return `<div class="song-tile" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`; }).join('');
+    c.innerHTML = html;
   } else if (currentLibraryTab === 'liked') {
     if (likedSongs.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No liked songs yet.</p>`; return; }
     c.innerHTML = likedSongs.map(t => { const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || ''); return `<div class="song-tile" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-heart" style="color:var(--partner-pink);font-size:14px" onclick="event.stopPropagation();unlikeSong('${t.id.replace(/'/g, "\\'")}')"></i></div>`; }).join('');
@@ -1515,7 +1546,7 @@ function sendSupportMail() {
   catch (err) { navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(() => showToast('✅ Email copied')).catch(() => showToast('❌ Failed')); }
 }
 
-/* ═══════════ EMOJI + UI ═══════════ */
+/* ═══════════ EMOJI RUNNER — FIXED ANIMATION ═══════════ */
 let emojiMode = localStorage.getItem('vaultify_emoji_mode') || 'flow';
 let emojiList = JSON.parse(localStorage.getItem('vaultify_emoji_list') || '["🐱","👻","🔥","🚀","⚡","💜","🎵"]');
 let activeEmoji = localStorage.getItem('vaultify_active_emoji') || '🐱';
@@ -1526,13 +1557,35 @@ function initEmojiRunner() {
   const i = document.getElementById('notchRunnerIcon');
   if (!i) return;
   i.classList.remove('mode-flow', 'mode-mix');
-  if (emojiMode === 'mix') { i.classList.add('mode-mix'); animateMixEmoji(); }
-  else {
+  i.style.left = '';
+  i.style.transform = '';
+  i.style.animation = '';
+  i.innerText = activeEmoji;
+  
+  if (emojiMode === 'mix') {
+    i.classList.add('mode-mix');
+    animateMixEmoji();
+  } else {
     i.classList.add('mode-flow');
     if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; }
-    i.style.left = ''; i.style.transform = '';
   }
-  i.innerText = activeEmoji;
+  
+  // Update mode buttons visual
+  const flowBtn = document.getElementById('modeFlowBtn');
+  const mixBtn = document.getElementById('modeMixBtn');
+  if (flowBtn && mixBtn) {
+    if (emojiMode === 'flow') {
+      flowBtn.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))';
+      flowBtn.style.color = '#020005';
+      mixBtn.style.background = 'rgba(255,255,255,.08)';
+      mixBtn.style.color = 'var(--text-sub)';
+    } else {
+      mixBtn.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))';
+      mixBtn.style.color = '#020005';
+      flowBtn.style.background = 'rgba(255,255,255,.08)';
+      flowBtn.style.color = 'var(--text-sub)';
+    }
+  }
 }
 
 function animateMixEmoji() {
@@ -1541,10 +1594,12 @@ function animateMixEmoji() {
   const n = document.querySelector('.notch-island');
   if (!i || !n) return;
   let p = 0, d = 1;
+  i.style.animation = 'none';
+  i.style.left = '8px';
   const step = () => {
     if (emojiMode !== 'mix') { mixRafId = null; return; }
-    const mx = n.clientWidth - 32;
-    p += d * 0.8;
+    const mx = (n.clientWidth || 290) - 40;
+    p += d * 1.5;
     if (p >= mx) { p = mx; d = -1; cycleEmoji(); }
     else if (p <= 0) { p = 0; d = 1; cycleEmoji(); }
     i.style.left = (8 + p) + 'px';
@@ -1592,7 +1647,14 @@ function addCustomEmoji() {
   showToast(`Added: ${v}`);
 }
 
-function setEmojiMode(mode) { emojiMode = mode; localStorage.setItem('vaultify_emoji_mode', mode); initEmojiRunner(); }
+function setEmojiMode(mode) {
+  emojiMode = mode;
+  localStorage.setItem('vaultify_emoji_mode', mode);
+  if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; }
+  initEmojiRunner();
+  showToast(mode === 'flow' ? 'Flow mode' : 'Mix mode');
+}
+
 function toggleAmbientMotion() { const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; showToast(`Motion ${o ? 'off' : 'on'}`); }
 function toggleRunnerVisibility() { const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; showToast(`Runner ${h ? 'on' : 'off'}`); }
 
@@ -1642,140 +1704,4 @@ async function initIPCounter() {
     else { data.ips[ip].lastSeen = now; if (!data.ips[ip].deviceIds) data.ips[ip].deviceIds = []; if (!data.ips[ip].deviceIds.includes(deviceId)) { data.ips[ip].deviceIds.push(deviceId); data.ips[ip].deviceCount = data.ips[ip].deviceIds.length; } }
     if (!data.devices[deviceId]) data.devices[deviceId] = { ip, ua: ua.substring(0, 100), firstSeen: now, lastSeen: now };
     else { data.devices[deviceId].lastSeen = now; data.devices[deviceId].ip = ip; }
-    const ipList = Object.keys(data.ips); const devList = Object.keys(data.devices);
-    const dayAgo = now - 24 * 60 * 60 * 1000;
-    data.totalIPs = ipList.length; data.totalDevices = devList.length;
-    data.activeDevices24h = devList.filter(k => data.devices[k].lastSeen >= dayAgo).length;
-    data.lastUpdated = now;
-    await docRef.set(data);
-    renderIPStats(data);
-  } catch (e) {}
-}
-
-function listenIPStats(callback) {
-  if (!isFirebaseReady()) return;
-  try { firestoreDB.collection('app_config').doc('user_ips').onSnapshot(doc => { if (doc.exists && typeof callback === 'function') callback(doc.data()); }); } catch (e) {}
-}
-
-function renderIPStats(stats) {
-  const el = document.getElementById('ipStatsDisplay'); if (!el || !stats) return;
-  el.innerHTML = `<div style="font-size:11px;color:var(--text-sub);line-height:1.8"><div>🌐 Total IPs: <b style="color:#fff">${stats.totalIPs || 0}</b></div><div>📱 Total devices: <b style="color:#fff">${stats.totalDevices || 0}</b></div><div>🟢 Active 24h: <b style="color:#10b981">${stats.activeDevices24h || 0}</b></div></div>`;
-}
-
-/* ═══════════ PLAYBACK SAVE ═══════════ */
-async function savePlaybackState() {
-  try {
-    if (!currentPlaylist[currentTrackIndex] || !mainAudio) return;
-    const t = currentPlaylist[currentTrackIndex];
-    const pos = mainAudio.currentTime || 0;
-    localStorage.setItem('vaultify_playback_state', JSON.stringify({ wasPlaying: isPlayingAudio, lastTrackId: t.id, lastTrackTitle: t.title, lastTrackArtist: t.artist, lastTrackCover: t.cover, lastPosition: Math.floor(pos * 1000), lastIndex: currentTrackIndex, playlistJson: JSON.stringify(currentPlaylist.slice(0, 50)), timestamp: Date.now() }));
-  } catch (e) {}
-}
-
-setInterval(() => { if (!isPlayingAudio) return; _lastSaveTick += 1000; if (_lastSaveTick >= 10000) { _lastSaveTick = 0; savePlaybackState(); } }, 1000);
-
-/* ═══════════ EQ FIX ═══════════ */
-setTimeout(() => {
-  ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach((id, i) => {
-    const el = document.getElementById(id);
-    if (el) {
-      el.addEventListener('input', () => {
-        if (eqNodes && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0;
-      });
-      el.addEventListener('change', saveEqToStorage);
-    }
-  });
-  loadEqFromStorage();
-}, 2000);
-
-/* ═══════════ BOOT ═══════════ */
-window.addEventListener('DOMContentLoaded', () => {
-  mainAudio = document.getElementById('vaultifyAudio');
-  silentLoop = document.getElementById('silentAudioLoop');
-
-  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if (i) i.classList.add('fade-out'); }, 1500);
-
-  initCacheDB();
-  setupMediaSession();
-  setupTimelineDraggableEngine();
-  initLiveSearchInputListener();
-  verifyAuthGate();
-  renderHomeRecentVault();
-  renderHomeQueue();
-  renderLibrary();
-  renderSearchHistoryTags();
-  renderNotificationCenter();
-
-  setTimeout(initEqChain, 800);
-  setTimeout(loadEqFromStorage, 1500);
-
-  setTimeout(() => { initEmojiRunner(); initEmojiPicker(); setEmojiMode(emojiMode); }, 500);
-
-  setTimeout(checkPermissionsStatus, 800);
-  setInterval(checkPermissionsStatus, 5000);
-
-  setTimeout(() => { if (isFirebaseReady()) { initIPCounter(); listenIPStats(renderIPStats); } }, 3000);
-
-  setTimeout(async () => {
-    await checkWorker();
-    renderRecommendedSection();
-    loadQueueFromStorage();
-  }, 1500);
-
-  const start = () => {
-    initForegroundAudioBridge();
-    requestHardwareWakeLock();
-    if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
-  };
-  document.body.addEventListener('touchstart', start, { once: true });
-  document.body.addEventListener('click', start, { once: true });
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && isPlayingAudio && mainAudio && mainAudio.paused) { mainAudio.play().catch(() => {}); }
-    if (!document.hidden && 'wakeLock' in navigator) requestHardwareWakeLock();
-  });
-
-  window.addEventListener('popstate', (e) => {
-    e.preventDefault();
-    if (!handleSystemBackPress()) {
-      try {
-        if (window.AndroidNativeBridge && window.AndroidNativeBridge.minimizeApp) window.AndroidNativeBridge.minimizeApp();
-        else history.pushState(null, '', location.href);
-      } catch (err) { history.pushState(null, '', location.href); }
-    }
-    history.pushState(null, '', location.href);
-  });
-
-  history.pushState(null, '', location.href);
-});
-
-window.addEventListener('beforeunload', savePlaybackState);
-window.addEventListener('pagehide', savePlaybackState);
-
-/* ═══════════ EXPORTS ═══════════ */
-Object.assign(window, {
-  showToast, escapeHtml, formatClock, openModal, closeModal, openFullPlayer, closeFullPlayer,
-  openPartnerModal, openSupportModal, switchNavTab, switchLibraryTab,
-  handleSystemBackPress, isFirebaseReady, getDeviceId, getPublicIP,
-  verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
-  openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
-  saveProfileData, performAppLogout, generatePartnerCode, syncUserPartnerCode, changeAppLanguage,
-  detectLanguage, getLanguageQueries, searchAll, fetchTrendingSongs,
-  executeLiveSearch, instantSearch, renderSearchResults, playSearchedTrackImmediately,
-  playTrack, playNext, playPrevious, autoplayNext, togglePlaybackState, setVisualState,
-  syncPlayerUI, toggleShuffle, toggleRepeat, toggleSleepTimer, shareCurrentTrack,
-  downloadCurrentTrack, toggleLikeCurrent, unlikeSong, openPlaylist, deletePlaylist,
-  openAddToPlaylistModal, addToPlaylist, createPlaylistAndAdd, renderLibrary,
-  renderHomeQueue, renderHomeRecentVault, renderRecommendedSection,
-  renderSearchHistoryTags, clearSearchHistory, playSingleTrackObject, playCached, removeCache,
-  requestMicAndListen, resetEqSliders, applyEqNow, savePlaybackState,
-  showDownloadIndicator, hideDownloadIndicator, cacheGet, cacheAll,
-  getStoredNotifications, pushNotification, renderNotificationCenter,
-  openNotificationModal, clearAllNotifications, checkPermissionsStatus,
-  handlePermissionBannerClick, requestPermsFromNative, openAppSettingsNative,
-  openEqualizer, sendSupportMail, initEmojiRunner, initEmojiPicker,
-  addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
-  applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
-  prefetchStream, checkWorker, workerSearch, workerStreamUrl,
-  saveQueueToStorage, loadQueueFromStorage
-});
+    const ipList = Object.keys(data.ips); const dev
