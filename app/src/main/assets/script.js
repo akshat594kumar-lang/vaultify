@@ -1,7 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL                                           */
-/* YouTube Search + JioSaavn Stream                                */
-/* Auto-skip BAND | Turnable Recently Played                       */
+/* VAULTIFY — FULL FINAL (Saavn Only)                              */
+/* localStorage Queue | No Auto-Skip | Turnable Recently Played    */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -115,7 +114,7 @@ async function checkWorker() {
 
 async function workerSearch(query, limit = 25) {
   try {
-    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 20000 });
+    const r = await proxyFetch(`/search?q=${encodeURIComponent(query)}&limit=${limit}`, { timeout: 15000 });
     const data = await r.json();
     return data.results || [];
   } catch (e) { return []; }
@@ -123,13 +122,7 @@ async function workerSearch(query, limit = 25) {
 
 async function workerStreamUrl(id, meta) {
   try {
-    let url = `/stream?id=${encodeURIComponent(id)}`;
-    if (meta) {
-      if (meta.title) url += `&title=${encodeURIComponent(meta.title)}`;
-      if (meta.artist) url += `&artist=${encodeURIComponent(meta.artist)}`;
-      if (meta.duration) url += `&dur=${meta.duration}`;
-    }
-    const r = await proxyFetch(url, { timeout: 30000 });
+    const r = await proxyFetch(`/stream?id=${encodeURIComponent(id)}`, { timeout: 30000 });
     const data = await r.json();
     return data.url || null;
   } catch (e) { return null; }
@@ -370,6 +363,7 @@ let eqNodes = null;
 let eqSourceNode = null;
 let mainAudio = null;
 let silentLoop = null;
+let currentSearchResults = [];
 
 const HINDI_CHARS = /[\u0900-\u097F]/;
 const URDU_CHARS = /[\u0600-\u06FF]/;
@@ -577,7 +571,6 @@ async function requestHardwareWakeLock() {
   } catch (e) {}
 }
 
-/* ═══════════ MEDIA SESSION — NO AUTO-SKIP ═══════════ */
 function setupMediaSession() {
   if (!mainAudio) return;
   if ('mediaSession' in navigator) {
@@ -590,7 +583,7 @@ function setupMediaSession() {
     } catch (e) {}
   }
 
-  // Auto-skip BAND — error pe ruk jayega
+  // NO AUTO-SKIP — error pe ruk jayega
   mainAudio.addEventListener('error', () => {
     showToast('⚠️ Audio error — try again');
     setVisualState(false);
@@ -617,7 +610,7 @@ function setupMediaSession() {
     if (d) d.innerText = formatClock(mainAudio.duration);
   });
 
-  // Auto-skip BAND — gaana khatam hone pe ruk jayega
+  // NO AUTO-SKIP — gaana khatam pe ruk jayega
   mainAudio.addEventListener('ended', () => {
     setVisualState(false);
     showToast('⏹ Song ended');
@@ -681,6 +674,38 @@ function setupTimelineDraggableEngine() {
 
 function seekAudioTo(s) { if (mainAudio && mainAudio.duration) mainAudio.currentTime = s; }
 
+/* ═══════════ QUEUE PERSISTENCE (localStorage) ═══════════ */
+function saveQueueToStorage() {
+  try {
+    const queueData = {
+      tracks: currentPlaylist.slice(0, 100),
+      index: currentTrackIndex,
+      timestamp: Date.now()
+    };
+    localStorage.setItem('vaultify_queue', JSON.stringify(queueData));
+  } catch (e) {}
+}
+
+function loadQueueFromStorage() {
+  try {
+    const saved = localStorage.getItem('vaultify_queue');
+    if (!saved) return false;
+    const queueData = JSON.parse(saved);
+    if (!queueData.tracks || !queueData.tracks.length) return false;
+    if (Date.now() - queueData.timestamp > 2 * 60 * 60 * 1000) {
+      localStorage.removeItem('vaultify_queue');
+      return false;
+    }
+    currentPlaylist = queueData.tracks;
+    currentTrackIndex = Math.min(queueData.index || 0, currentPlaylist.length - 1);
+    if (typeof renderHomeQueue === 'function') renderHomeQueue();
+    if (typeof syncPlayerUI === 'function' && currentPlaylist[currentTrackIndex]) {
+      syncPlayerUI(currentPlaylist[currentTrackIndex]);
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
 /* ═══════════ SEARCH ═══════════ */
 async function searchAll(q) {
   if (!workerReady) {
@@ -693,7 +718,7 @@ async function searchAll(q) {
 async function fetchTrendingSongs(limit = 10) {
   if (!workerReady) await checkWorker();
   if (workerReady) {
-    const trending = await workerSearch('arijit singh hits', limit);
+    const trending = await workerSearch('arijit singh', limit);
     if (trending.length >= 3) return trending.slice(0, limit);
     const hindi = await workerSearch('bollywood hits', limit);
     if (hindi.length >= 3) return hindi.slice(0, limit);
@@ -711,7 +736,7 @@ async function fetchDirectAudioStreamUrl(input, meta) {
   return null;
 }
 
-/* ═══════════ PLAY TRACK — NO AUTO-SKIP ═══════════ */
+/* ═══════════ PLAY TRACK ═══════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -761,7 +786,6 @@ async function playTrack(index, broadcast = true) {
     try { await mainAudio.play(); setVisualState(true); setTimeout(() => cacheTrackInBackground(track), 10000); return; } catch (e) {}
   }
 
-  // No auto-skip
   showToast('⚠️ Playback failed — try again');
   setVisualState(false);
 }
@@ -770,6 +794,22 @@ async function playTrack(index, broadcast = true) {
 async function autoplayNext() {
   if (isRepeat) { playTrack(currentTrackIndex); return; }
   if (currentPlaylist.length === 0) return;
+
+  const remaining = currentPlaylist.length - currentTrackIndex - 1;
+  if (remaining < 3) {
+    const ct = currentPlaylist[currentTrackIndex];
+    if (ct) {
+      try {
+        const related = await fetchRelatedSongs(ct);
+        if (related.length) {
+          related.forEach(t => { if (!currentPlaylist.some(x => x.id === t.id)) currentPlaylist.push(t); });
+          renderHomeQueue();
+          saveQueueToStorage();
+        }
+      } catch (e) {}
+    }
+  }
+
   if (isShuffle) currentTrackIndex = Math.floor(Math.random() * currentPlaylist.length);
   else currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
   playTrack(currentTrackIndex);
@@ -785,6 +825,7 @@ async function autoExtendQueue(track) {
     if (related.length) {
       related.forEach(t => { if (!currentPlaylist.some(x => x.id === t.id)) currentPlaylist.push(t); });
       renderHomeQueue();
+      saveQueueToStorage();
     }
   } catch (e) {}
   autoMixFetching = false;
@@ -968,9 +1009,9 @@ function logPlaybackHistory(track) {
   if (playbackHistoryList.length > 20) playbackHistoryList.pop();
   localStorage.setItem('vaultify_playback_history', JSON.stringify(playbackHistoryList));
   if (currentLibraryTab === 'history') renderLibrary();
+  saveQueueToStorage();
 }
 
-/* ═══════════ TURNABLE RECENTLY PLAYED ═══════════ */
 function renderHomeRecentVault() {
   const c = document.getElementById('homeRecentGrid');
   if (!c) return;
@@ -1001,6 +1042,7 @@ function playSingleTrackObject(idEnc, title, artist, cover) {
   currentPlaylist = [t];
   currentTrackIndex = 0;
   renderHomeQueue();
+  saveQueueToStorage();
   playTrack(0);
 }
 
@@ -1061,6 +1103,7 @@ async function executeLiveSearch(isAuto = false) {
 
 function renderSearchResults(tracks) {
   const c = document.getElementById('searchResultsContainer');
+  currentSearchResults = tracks;
   if (tracks.length === 0) { c.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No results.</p>'; return; }
   c.innerHTML = tracks.map(t => {
     const sId = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
@@ -1078,9 +1121,19 @@ function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, du
   const t = { id, title: decodeURIComponent(title), artist: decodeURIComponent(artist), cover: decodeURIComponent(cover), duration: duration || 0 };
   const rD = directEnc ? decodeURIComponent(directEnc) : '';
   if (rD) t._directStream = rD;
-  currentPlaylist = [t];
+
+  const newQueue = [t];
+  currentSearchResults.forEach(r => {
+    if (r.id !== t.id) {
+      const rt = { ...r };
+      newQueue.push(rt);
+    }
+  });
+
+  currentPlaylist = newQueue;
   currentTrackIndex = 0;
   renderHomeQueue();
+  saveQueueToStorage();
   playTrack(0);
 }
 
@@ -1213,6 +1266,7 @@ function openPlaylist(i) {
   if (p.songs.length === 0) return showToast('Empty playlist');
   currentPlaylist = p.songs.slice();
   renderHomeQueue();
+  saveQueueToStorage();
   playTrack(0);
   closeModal('modalAddToPlaylist');
   showToast(`▶ ${p.name}`);
@@ -1492,22 +1546,6 @@ async function savePlaybackState() {
 setInterval(() => { if (!isPlayingAudio) return; _lastSaveTick += 1000; if (_lastSaveTick >= 10000) { _lastSaveTick = 0; savePlaybackState(); } }, 1000);
 
 /* ═══════════ EQ FIX ═══════════ */
-async function applyEqNow() {
-  try {
-    if (!audioContextNode) initForegroundAudioBridge();
-    if (!eqNodes) initEqChain();
-    if (!eqNodes) return showToast('EQ not ready');
-    const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'];
-    ids.forEach((id, i) => {
-      const el = document.getElementById(id);
-      if (el && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0;
-    });
-    saveEqToStorage();
-    showToast('✅ EQ applied');
-    closeModal('modalEqualizer');
-  } catch (e) { showToast('EQ fail'); }
-}
-
 setTimeout(() => {
   ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach((id, i) => {
     const el = document.getElementById(id);
@@ -1552,6 +1590,7 @@ window.addEventListener('DOMContentLoaded', () => {
   setTimeout(async () => {
     await checkWorker();
     renderRecommendedSection();
+    loadQueueFromStorage();
   }, 1500);
 
   const start = () => {
@@ -1608,5 +1647,6 @@ Object.assign(window, {
   openEqualizer, sendSupportMail, initEmojiRunner, initEmojiPicker,
   addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
-  prefetchStream, checkWorker, workerSearch, workerStreamUrl
+  prefetchStream, checkWorker, workerSearch, workerStreamUrl,
+  saveQueueToStorage, loadQueueFromStorage
 });
