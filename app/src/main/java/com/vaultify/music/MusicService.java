@@ -14,6 +14,10 @@ import android.os.IBinder;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import android.support.v4.media.MediaMetadataCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
+
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -23,6 +27,7 @@ public class MusicService extends Service {
     public static final String CHANNEL_ID = "vaultify_playback_channel";
     public static final int NOTIFICATION_ID = 1001;
 
+    private MediaSessionCompat mediaSession;
     private Bitmap currentArtwork = null;
     private String currentTitle = "Vaultify";
     private String currentArtist = "Ready to play";
@@ -35,7 +40,26 @@ public class MusicService extends Service {
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        mediaSession = new MediaSessionCompat(this, "VaultifySession");
+        mediaSession.setCallback(new MediaSessionCompat.Callback() {
+            @Override public void onPlay() { sendAction("PLAY"); }
+            @Override public void onPause() { sendAction("PAUSE"); }
+            @Override public void onSkipToNext() { sendAction("NEXT"); }
+            @Override public void onSkipToPrevious() { sendAction("PREV"); }
+            @Override public void onSeekTo(long pos) {
+                Intent intent = new Intent("VAULTIFY_SEEK");
+                intent.putExtra("position", pos);
+                sendBroadcast(intent);
+            }
+        });
+        mediaSession.setActive(true);
         buildAndShowNotification();
+    }
+
+    private void sendAction(String action) {
+        Intent intent = new Intent("VAULTIFY_MEDIA_ACTION");
+        intent.putExtra("action", action);
+        sendBroadcast(intent);
     }
 
     private void createNotificationChannel() {
@@ -87,16 +111,7 @@ public class MusicService extends Service {
         if (artworkUrl != null && !artworkUrl.isEmpty()) {
             new Thread(() -> {
                 Bitmap bmp = loadBitmapFromUrl(artworkUrl);
-                if (bmp != null) {
-                    try {
-                        int target = 512;
-                        if (bmp.getWidth() > target || bmp.getHeight() > target) {
-                            float s = Math.min((float) target / bmp.getWidth(), (float) target / bmp.getHeight());
-                            bmp = Bitmap.createScaledBitmap(bmp, (int)(bmp.getWidth()*s), (int)(bmp.getHeight()*s), true);
-                        }
-                    } catch (Exception e) {}
-                    currentArtwork = bmp;
-                }
+                if (bmp != null) currentArtwork = bmp;
                 new android.os.Handler(getMainLooper()).post(this::buildAndShowNotification);
             }).start();
         } else {
@@ -107,7 +122,18 @@ public class MusicService extends Service {
     public void updateProgress(long positionMs, long durationMs) {
         this.currentPosition = positionMs;
         this.totalDuration = durationMs;
-        buildAndShowNotification();
+        if (mediaSession != null) {
+            PlaybackStateCompat state = new PlaybackStateCompat.Builder()
+                .setActions(PlaybackStateCompat.ACTION_PLAY |
+                        PlaybackStateCompat.ACTION_PAUSE |
+                        PlaybackStateCompat.ACTION_SKIP_TO_NEXT |
+                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS |
+                        PlaybackStateCompat.ACTION_SEEK_TO)
+                .setState(isPlaying ? PlaybackStateCompat.STATE_PLAYING :
+                        PlaybackStateCompat.STATE_PAUSED, positionMs, 1.0f)
+                .build();
+            mediaSession.setPlaybackState(state);
+        }
     }
 
     private void buildAndShowNotification() {
@@ -120,7 +146,8 @@ public class MusicService extends Service {
         PendingIntent prevPending = PendingIntent.getBroadcast(this, 1,
                 new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "PREV"), piFlags);
 
-        int playPauseIcon = isPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play;
+        int playPauseIcon = isPlaying ? android.R.drawable.ic_media_pause :
+                android.R.drawable.ic_media_play;
         String playPauseAction = isPlaying ? "PAUSE" : "PLAY";
         PendingIntent playPausePending = PendingIntent.getBroadcast(this, 2,
                 new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", playPauseAction), piFlags);
@@ -129,7 +156,7 @@ public class MusicService extends Service {
                 new Intent("VAULTIFY_MEDIA_ACTION").putExtra("action", "NEXT"), piFlags);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(currentTitle)
             .setContentText(currentArtist)
             .setContentIntent(contentPending)
@@ -143,30 +170,29 @@ public class MusicService extends Service {
             .addAction(playPauseIcon, isPlaying ? "Pause" : "Play", playPausePending)
             .addAction(android.R.drawable.ic_media_next, "Next", nextPending);
 
-        // MediaStyle — needs androidx.media:media
         try {
             androidx.media.app.NotificationCompat.MediaStyle style =
                 new androidx.media.app.NotificationCompat.MediaStyle()
+                    .setMediaSession(mediaSession.getSessionToken())
                     .setShowActionsInCompactView(0, 1, 2);
             builder.setStyle(style);
         } catch (Exception e) {}
 
-        if (currentArtwork != null) {
-            builder.setLargeIcon(currentArtwork);
-        } else {
-            try {
-                Bitmap fallback = BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher);
-                builder.setLargeIcon(fallback);
-            } catch (Exception e) {}
-        }
-
-        if (totalDuration > 0) {
-            int progress = (int) ((currentPosition * 100) / totalDuration);
-            builder.setProgress(100, progress, false);
-            builder.setSubText(formatTime(currentPosition) + " / " + formatTime(totalDuration));
+        if (currentArtwork != null) builder.setLargeIcon(currentArtwork);
+        else {
+            try { builder.setLargeIcon(BitmapFactory.decodeResource(getResources(), R.mipmap.ic_launcher)); }
+            catch (Exception e) {}
         }
 
         Notification notification = builder.build();
+
+        if (mediaSession != null) {
+            mediaSession.setMetadata(new MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, totalDuration)
+                .build());
+        }
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (manager != null) {
@@ -177,13 +203,6 @@ public class MusicService extends Service {
                 manager.notify(NOTIFICATION_ID, notification);
             }
         }
-    }
-
-    private String formatTime(long millis) {
-        long totalSec = millis / 1000;
-        long min = totalSec / 60;
-        long sec = totalSec % 60;
-        return String.format("%02d:%02d", min, sec);
     }
 
     private Bitmap loadBitmapFromUrl(String urlStr) {
@@ -203,4 +222,10 @@ public class MusicService extends Service {
     }
 
     @Nullable @Override public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onDestroy() {
+        if (mediaSession != null) mediaSession.release();
+        super.onDestroy();
+    }
 }
