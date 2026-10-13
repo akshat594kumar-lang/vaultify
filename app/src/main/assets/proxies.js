@@ -1,20 +1,13 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — PROXY CONFIGURATION                                  */
+/* VAULTIFY — DIRECT JIOSAAVN (WebView intercepts CORS)            */
 /* ═══════════════════════════════════════════════════════════════ */
 
-const CLOUDFLARE_WORKERS = [
-  "https://vaultify-2.akshat594kumar.workers.dev"
-];
-
-const FALLBACK_PROXIES = [];
-const SOUNDCLOUD_CLIENT_ID = "a3e059563d7fd3372b49b37f00a00bcf";
-
-function getActiveWorker() { return CLOUDFLARE_WORKERS[0]; }
-function markWorkerFailed() {}
+const JIOSAAVN_BASE = 'https://www.jiosaavn.com/api.php';
+const JIOSAAVN_CDN = 'https://aac.saavncdn.com';
 
 async function proxyFetch(endpoint, options = {}) {
-  const timeout = options.timeout || 30000;
-  const url = CLOUDFLARE_WORKERS[0] + endpoint;
+  const timeout = options.timeout || 20000;
+  const url = endpoint.startsWith('http') ? endpoint : (JIOSAAVN_BASE + endpoint);
   const ctrl = new AbortController();
   const tm = setTimeout(() => ctrl.abort(), timeout);
   try {
@@ -28,20 +21,15 @@ async function proxyFetch(endpoint, options = {}) {
 }
 
 async function checkWorkerHealth() {
-  try {
-    const ctrl = new AbortController();
-    const tm = setTimeout(() => ctrl.abort(), 5000);
-    const r = await fetch(`${CLOUDFLARE_WORKERS[0]}/ping`, { signal: ctrl.signal });
-    clearTimeout(tm);
-    if (r.ok) {
-      const data = await r.json();
-      return data.status === 'ok';
-    }
-  } catch (e) {}
-  return false;
+  // Direct API — always ready
+  return true;
 }
 
-window.CLOUDFLARE_WORKERS = CLOUDFLARE_WORKERS;
-window.getActiveWorker = getActiveWorker;
+async function checkWorker() {
+  return true;
+}
+
+window.JIOSAAVN_BASE = JIOSAAVN_BASE;
 window.proxyFetch = proxyFetch;
 window.checkWorkerHealth = checkWorkerHealth;
+window.workerReady = true;
