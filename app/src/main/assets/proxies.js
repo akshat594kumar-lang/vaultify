@@ -1,8 +1,3 @@
-/* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — PROXY CONFIGURATION                                  */
-/* vaultify-2 worker — iTunes/YouTube search + JioSaavn stream     */
-/* ═══════════════════════════════════════════════════════════════ */
-
 const CLOUDFLARE_WORKERS = [
   "https://vaultify-2.akshat594kumar.workers.dev"
 ];
@@ -36,7 +31,6 @@ function markWorkerFailed(url) {
 async function proxyFetch(endpoint, options = {}) {
   const timeout = options.timeout || 30000;
   const maxAttempts = CLOUDFLARE_WORKERS.length;
-
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const worker = getActiveWorker();
     const url = worker + endpoint;
@@ -80,9 +74,7 @@ async function checkWorkerHealth() {
 }
 
 window.CLOUDFLARE_WORKERS = CLOUDFLARE_WORKERS;
-window.FALLBACK_PROXIES = FALLBACK_PROXIES;
 window.SOUNDCLOUD_CLIENT_ID = SOUNDCLOUD_CLIENT_ID;
 window.getActiveWorker = getActiveWorker;
-window.markWorkerFailed = markWorkerFailed;
 window.proxyFetch = proxyFetch;
 window.checkWorkerHealth = checkWorkerHealth;
