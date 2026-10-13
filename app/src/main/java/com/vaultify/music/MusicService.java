@@ -47,11 +47,20 @@ public class MusicService extends Service {
             String action = intent.getAction();
             switch (action) {
                 case "UPDATE_NOTIFICATION":
-                    currentTitle = intent.getStringExtra("title");
-                    currentArtist = intent.getStringExtra("artist");
-                    currentCover = intent.getStringExtra("cover");
+                    String newTitle = intent.getStringExtra("title");
+                    String newArtist = intent.getStringExtra("artist");
+                    String newCover = intent.getStringExtra("cover");
+
+                    boolean coverChanged = newCover != null && !newCover.equals(currentCover);
+                    if (coverChanged) {
+                        currentLargeIcon = null;
+                    }
+                    currentTitle = newTitle;
+                    currentArtist = newArtist;
+                    currentCover = newCover;
                     isPlaying = intent.getBooleanExtra("playing", false);
-                    if (currentLargeIcon == null && currentCover != null && currentCover.startsWith("http")) {
+
+                    if (coverChanged && currentCover != null && currentCover.startsWith("http")) {
                         loadCoverAndUpdate();
                     } else {
                         updateNotification();
@@ -60,6 +69,7 @@ public class MusicService extends Service {
                 case "UPDATE_PROGRESS":
                     currentPosition = intent.getLongExtra("position", 0);
                     currentDuration = intent.getLongExtra("duration", 0);
+                    // Update only progress bar (less flash)
                     updateNotification();
                     break;
                 case "STOP_NOTIFICATION":
@@ -80,17 +90,15 @@ public class MusicService extends Service {
             } else {
                 builder = new Notification.Builder(this);
             }
-            builder.setContentTitle(currentTitle != null ? currentTitle : "Vaultify")
-                .setContentText(currentArtist != null ? currentArtist : "Ready")
+            builder.setContentTitle(currentTitle)
+                .setContentText(currentArtist)
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setOngoing(true)
                 .setPriority(Notification.PRIORITY_LOW);
 
             startForeground(NOTIFICATION_ID, builder.build());
             foregroundStarted = true;
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private void createNotificationChannel() {
@@ -105,6 +113,7 @@ public class MusicService extends Service {
             channel.setSound(null, null);
             channel.enableVibration(false);
             channel.enableLights(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
@@ -122,7 +131,7 @@ public class MusicService extends Service {
             PendingIntent playPauseIntent = buildActionPendingIntent(isPlaying ? "PAUSE" : "PLAY", 2);
             PendingIntent nextIntent = buildActionPendingIntent("NEXT", 3);
 
-            // MediaStyle — SimpleTune jaisa
+            // ⚡ Spotify-style MediaStyle
             androidx.media.app.NotificationCompat.MediaStyle mediaStyle =
                 new androidx.media.app.NotificationCompat.MediaStyle()
                     .setShowActionsInCompactView(0, 1, 2);
@@ -137,33 +146,23 @@ public class MusicService extends Service {
                 .setShowWhen(false)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setStyle(mediaStyle)
                 .setColorized(true)
-                .setColor(0xFF0D2E35)
-                .setStyle(mediaStyle);
+                .setColor(0xFF0D2E35);
 
-            // Large album art
+            // ⚡ Large album art (thumbnail style like Spotify)
             if (currentLargeIcon != null) {
                 builder.setLargeIcon(currentLargeIcon);
             }
 
-            // BigPictureStyle when we have art
-            if (currentLargeIcon != null) {
-                NotificationCompat.BigPictureStyle bigStyle = new NotificationCompat.BigPictureStyle()
-                    .bigPicture(currentLargeIcon)
-                    .bigLargeIcon((Bitmap) null)
-                    .setBigContentTitle(currentTitle)
-                    .setSummaryText(currentArtist);
-                builder.setStyle(bigStyle);
-            }
-
-            // Progress bar with time
+            // ⚡ Progress bar with time
             if (currentDuration > 0) {
                 int progress = (int) ((currentPosition * 100) / currentDuration);
                 builder.setProgress(100, progress, false);
                 builder.setSubText(formatTime(currentPosition) + " / " + formatTime(currentDuration));
             }
 
-            // Actions
+            // ⚡ Actions
             builder.addAction(android.R.drawable.ic_media_previous, "Prev", prevIntent);
             if (isPlaying) {
                 builder.addAction(android.R.drawable.ic_media_pause, "Pause", playPauseIntent);
@@ -175,9 +174,7 @@ public class MusicService extends Service {
             Notification notification = builder.build();
             startForeground(NOTIFICATION_ID, notification);
             foregroundStarted = true;
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private void loadCoverAndUpdate() {
@@ -189,21 +186,29 @@ public class MusicService extends Service {
                 URL url = new URL(coverUrl);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setDoInput(true);
-                conn.setConnectTimeout(6000);
-                conn.setReadTimeout(6000);
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
                 conn.connect();
                 InputStream input = conn.getInputStream();
                 Bitmap bitmap = BitmapFactory.decodeStream(input);
                 input.close();
 
                 if (bitmap != null) {
+                    // ⚡ Resize to 512x512 (Spotify jaisa thumbnail)
+                    int targetSize = 512;
+                    if (bitmap.getWidth() > targetSize || bitmap.getHeight() > targetSize) {
+                        float scale = Math.min((float) targetSize / bitmap.getWidth(), (float) targetSize / bitmap.getHeight());
+                        bitmap = Bitmap.createScaledBitmap(
+                            bitmap,
+                            (int) (bitmap.getWidth() * scale),
+                            (int) (bitmap.getHeight() * scale),
+                            true
+                        );
+                    }
                     currentLargeIcon = bitmap;
-                    // Update UI on main thread
-                    new android.os.Handler(getMainLooper()).post(() -> updateNotification());
+                    new android.os.Handler(getMainLooper()).post(this::updateNotification);
                 }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            } catch (Exception e) { e.printStackTrace(); }
         }).start();
     }
 
