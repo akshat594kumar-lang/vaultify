@@ -14,6 +14,8 @@ import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -24,7 +26,15 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -37,11 +47,18 @@ public class MainActivity extends AppCompatActivity {
     private BroadcastReceiver seekReceiver;
     private ValueCallback<Uri[]> filePathCallback;
     private boolean musicServiceStarted = false;
+    private OkHttpClient httpClient;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        httpClient = new OkHttpClient.Builder()
+            .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build();
+
         setupWebView();
         requestAllPermissions();
         setupReceivers();
@@ -77,6 +94,60 @@ public class MainActivity extends AppCompatActivity {
                 }
                 return false;
             }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                String host = request.getUrl().getHost();
+
+                // ⚡ Intercept JioSaavn API calls — bypass CORS
+                if (host != null && (host.contains("jiosaavn.com") || host.contains("saavncdn.com"))) {
+                    try {
+                        Request.Builder rb = new Request.Builder()
+                            .url(url)
+                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                            .header("Accept", "application/json, text/plain, */*")
+                            .header("Referer", "https://www.jiosaavn.com/")
+                            .header("Origin", "https://www.jiosaavn.com");
+
+                        Map<String, String> reqHeaders = request.getRequestHeaders();
+                        if (reqHeaders != null) {
+                            for (Map.Entry<String, String> e : reqHeaders.entrySet()) {
+                                String k = e.getKey();
+                                if (k != null && !k.equalsIgnoreCase("user-agent") && !k.equalsIgnoreCase("referer") && !k.equalsIgnoreCase("origin") && !k.equalsIgnoreCase("host")) {
+                                    try { rb.header(k, e.getValue()); } catch (Exception ex) {}
+                                }
+                            }
+                        }
+
+                        Request req = rb.build();
+                        Response response = httpClient.newCall(req).execute();
+                        ResponseBody body = response.body();
+
+                        String contentType = response.header("Content-Type", "application/json");
+
+                        Map<String, String> respHeaders = new HashMap<>();
+                        respHeaders.put("Access-Control-Allow-Origin", "*");
+                        respHeaders.put("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                        respHeaders.put("Access-Control-Allow-Headers", "*");
+
+                        if (body != null) {
+                            return new WebResourceResponse(
+                                contentType,
+                                "UTF-8",
+                                response.code(),
+                                response.message(),
+                                respHeaders,
+                                body.byteStream()
+                            );
+                        }
+                        return new WebResourceResponse(contentType, "UTF-8", response.code(), response.message(), respHeaders, new ByteArrayInputStream(new byte[0]));
+                    } catch (Exception e) {
+                        return null;
+                    }
+                }
+                return null;
+            }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
@@ -109,15 +180,10 @@ public class MainActivity extends AppCompatActivity {
         if (musicServiceStarted) return;
         try {
             Intent serviceIntent = new Intent(this, MusicService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent);
+            else startService(serviceIntent);
             musicServiceStarted = true;
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private void setupReceivers() {
@@ -132,11 +198,8 @@ public class MainActivity extends AppCompatActivity {
             }
         };
         IntentFilter filter = new IntentFilter("VAULTIFY_MEDIA_ACTION");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(mediaActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(mediaActionReceiver, filter);
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(mediaActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(mediaActionReceiver, filter);
 
         seekReceiver = new BroadcastReceiver() {
             @Override
@@ -149,44 +212,23 @@ public class MainActivity extends AppCompatActivity {
             }
         };
         IntentFilter seekFilter = new IntentFilter("VAULTIFY_SEEK");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(seekReceiver, seekFilter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(seekReceiver, seekFilter);
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerReceiver(seekReceiver, seekFilter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(seekReceiver, seekFilter);
     }
 
     private void requestAllPermissions() {
         ArrayList<String> perms = new ArrayList<>();
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            perms.add(Manifest.permission.RECORD_AUDIO);
-        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.RECORD_AUDIO);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                perms.add(Manifest.permission.POST_NOTIFICATIONS);
-            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) perms.add(Manifest.permission.POST_NOTIFICATIONS);
         }
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                perms.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-            }
-        } else {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                perms.add(Manifest.permission.READ_MEDIA_AUDIO);
-            }
-        }
-        if (!perms.isEmpty()) {
-            ActivityCompat.requestPermissions(this, perms.toArray(new String[0]), PERMISSION_REQUEST_CODE);
-        }
+        if (!perms.isEmpty()) ActivityCompat.requestPermissions(this, perms.toArray(new String[0]), PERMISSION_REQUEST_CODE);
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (webView != null) {
-            webView.post(() -> webView.evaluateJavascript(
-                "if(window.onNativePermissionResult) window.onNativePermissionResult();", null));
-        }
+        if (webView != null) webView.post(() -> webView.evaluateJavascript("if(window.onNativePermissionResult) window.onNativePermissionResult();", null));
     }
 
     @Override
@@ -205,7 +247,6 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void updateNotification(String title, String artist, String cover, boolean playing) {
-            // ⚡ Lazy start — only when first track plays
             if (!musicServiceStarted) startMusicServiceIfNeeded();
             runOnUiThread(() -> {
                 Intent intent = new Intent(MainActivity.this, MusicService.class);
@@ -215,21 +256,12 @@ public class MainActivity extends AppCompatActivity {
                 intent.putExtra("cover", cover);
                 intent.putExtra("playing", playing);
                 try {
-                    // ⚡ Always use startService for updates (service already foreground)
-                    // startForegroundService only used first time
                     if (!musicServiceStarted) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(intent);
-                        } else {
-                            startService(intent);
-                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
+                        else startService(intent);
                         musicServiceStarted = true;
-                    } else {
-                        startService(intent);
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                    } else startService(intent);
+                } catch (Exception e) { e.printStackTrace(); }
             });
         }
 
@@ -241,11 +273,7 @@ public class MainActivity extends AppCompatActivity {
                 intent.setAction("UPDATE_PROGRESS");
                 intent.putExtra("position", positionMs);
                 intent.putExtra("duration", durationMs);
-                try {
-                    startService(intent);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                try { startService(intent); } catch (Exception e) {}
             });
         }
 
@@ -255,88 +283,41 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 Intent intent = new Intent(MainActivity.this, MusicService.class);
                 intent.setAction("STOP_NOTIFICATION");
-                try {
-                    startService(intent);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                try { startService(intent); } catch (Exception e) {}
             });
         }
 
-        @JavascriptInterface
-        public void toast(String msg) {
-            runOnUiThread(() -> Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
-        }
-
-        @JavascriptInterface
-        public void requestPermissions() {
-            runOnUiThread(MainActivity.this::requestAllPermissions);
-        }
-
-        @JavascriptInterface
-        public boolean hasMicPermission() {
-            return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
-        }
-
-        @JavascriptInterface
-        public boolean hasNotificationPermission() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
-            }
+        @JavascriptInterface public void toast(String msg) { runOnUiThread(() -> Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show()); }
+        @JavascriptInterface public void requestPermissions() { runOnUiThread(MainActivity.this::requestAllPermissions); }
+        @JavascriptInterface public boolean hasMicPermission() { return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED; }
+        @JavascriptInterface public boolean hasNotificationPermission() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
             return true;
         }
-
-        @JavascriptInterface
-        public void openAppSettings() {
+        @JavascriptInterface public void openAppSettings() {
+            runOnUiThread(() -> { Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS); intent.setData(Uri.parse("package:" + getPackageName())); startActivity(intent); });
+        }
+        @JavascriptInterface public void openSystemEqualizer() {
             runOnUiThread(() -> {
-                Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-                intent.setData(Uri.parse("package:" + getPackageName()));
-                startActivity(intent);
+                try { Intent intent = new Intent("android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL"); intent.putExtra("android.media.extra.AUDIO_SESSION", 0); startActivityForResult(intent, EQ_REQUEST_CODE); }
+                catch (Exception e) { try { Intent f = new Intent(Settings.ACTION_SOUND_SETTINGS); f.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(f); } catch (Exception e2) {} }
             });
         }
-
-        @JavascriptInterface
-        public void openSystemEqualizer() {
-            runOnUiThread(() -> {
-                try {
-                    Intent intent = new Intent("android.media.action.DISPLAY_AUDIO_EFFECT_CONTROL_PANEL");
-                    intent.putExtra("android.media.extra.AUDIO_SESSION", 0);
-                    intent.putExtra("android.media.extra.CONTENT_TYPE", 0);
-                    startActivityForResult(intent, EQ_REQUEST_CODE);
-                } catch (Exception e) {
-                    try {
-                        Intent fallback = new Intent(Settings.ACTION_SOUND_SETTINGS);
-                        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(fallback);
-                    } catch (Exception e2) {
-                        Toast.makeText(MainActivity.this, "Equalizer not available", Toast.LENGTH_SHORT).show();
-                    }
-                }
-            });
-        }
-
-        @JavascriptInterface
-        public void minimizeApp() {
-            runOnUiThread(() -> {
-                Intent startMain = new Intent(Intent.ACTION_MAIN);
-                startMain.addCategory(Intent.CATEGORY_HOME);
-                startMain.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(startMain);
-            });
+        @JavascriptInterface public void minimizeApp() {
+            runOnUiThread(() -> { Intent s = new Intent(Intent.ACTION_MAIN); s.addCategory(Intent.CATEGORY_HOME); s.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(s); });
         }
     }
 
     @Override
     public boolean onKeyDown(int keyCode, android.view.KeyEvent event) {
         if (keyCode == android.view.KeyEvent.KEYCODE_BACK && webView != null) {
-            webView.evaluateJavascript(
-                "(function(){ try { return handleSystemBackPress() ? 'handled' : 'unhandled'; } catch(e) { return 'unhandled'; } })();",
+            webView.evaluateJavascript("(function(){ try { return handleSystemBackPress() ? 'handled' : 'unhandled'; } catch(e) { return 'unhandled'; } })();",
                 value -> {
                     if (value != null && value.contains("unhandled")) {
-                        Intent startMain = new Intent(Intent.ACTION_MAIN);
-                        startMain.addCategory(Intent.CATEGORY_HOME);
-                        startMain.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(startMain);
+                        Intent s = new Intent(Intent.ACTION_MAIN);
+                        s.addCategory(Intent.CATEGORY_HOME);
+                        s.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(s);
                     }
                 });
             return true;
@@ -344,17 +325,13 @@ public class MainActivity extends AppCompatActivity {
         return super.onKeyDown(keyCode, event);
     }
 
-    @Override
-    protected void onDestroy() {
+    @Override protected void onDestroy() {
         if (mediaActionReceiver != null) { try { unregisterReceiver(mediaActionReceiver); } catch (Exception e) {} }
         if (seekReceiver != null) { try { unregisterReceiver(seekReceiver); } catch (Exception e) {} }
         if (webView != null) webView.destroy();
         super.onDestroy();
     }
 
-    @Override
-    protected void onPause() { super.onPause(); if (webView != null) webView.onPause(); }
-
-    @Override
-    protected void onResume() { super.onResume(); if (webView != null) webView.onResume(); }
-    }
+    @Override protected void onPause() { super.onPause(); if (webView != null) webView.onPause(); }
+    @Override protected void onResume() { super.onResume(); if (webView != null) webView.onResume(); }
+}
