@@ -105,7 +105,11 @@ public class MainActivity extends AppCompatActivity {
                     host.contains("jiosaavn.com") ||
                     host.contains("saavn-api-delta.vercel.app") ||
                     host.contains("api-v2.soundcloud.com") ||
-                    host.contains("api.soundcloud.com")
+                    host.contains("api.soundcloud.com") ||
+                    host.contains("pipedapi.kavin.rocks") ||
+                    host.contains("pipedapi.adminforge.de") ||
+                    host.contains("api.piped.yt") ||
+                    host.contains("pipedapi.reallyaweso.me")
                 )) {
                     try {
                         Request.Builder rb = new Request.Builder()
