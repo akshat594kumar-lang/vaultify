@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL (Saavn First + YT Silent + Emoji Animated)*/
+/* VAULTIFY — FULL WORKING (Saavn + SC + YT via proxyUrl+Cobalt)   */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -14,23 +14,19 @@ const PIPED_APIS = [
   'https://pipedapi.reallyaweso.me'
 ];
 
-let firebaseApp = null;
-let firestoreDB = null;
-let firebaseAuth = null;
-let firebaseReady = false;
+let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
 
 try {
   if (typeof firebase !== 'undefined') {
-    const FIREBASE_CONFIG = {
+    firebaseApp = firebase.initializeApp({
       apiKey: "AIzaSyCQgQoJpV9FGhd8yY2_nklQICQMpZ5-1RY",
       authDomain: "vaultify-18865.firebaseapp.com",
       projectId: "vaultify-18865",
       storageBucket: "vaultify-18865.firebasestorage.app",
       messagingSenderId: "961290318010",
       appId: "1:961290318010:web:efa1e8c95c8d09c533d283"
-    };
-    firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
+    });
     firestoreDB = firebase.firestore();
     firebaseAuth = firebase.auth();
     firebaseReady = true;
@@ -39,9 +35,40 @@ try {
 
 function isFirebaseReady() { return firebaseReady && firestoreDB && firebaseAuth; }
 
-/* ═══════════ UI HELPERS ═══════════ */
+/* ═══════════ STATE ═══════════ */
+let currentPlaylist = [];
+let currentTrackIndex = 0;
+let isPlayingAudio = false;
+let isShuffle = false;
+let isRepeat = false;
+let currentLanguage = 'hindi';
+let appLanguage = localStorage.getItem('vaultify_app_lang') || 'en';
+let currentLibraryTab = 'history';
+let playlists = JSON.parse(localStorage.getItem('vaultify_playlists') || '[]');
+let likedSongs = JSON.parse(localStorage.getItem('vaultify_liked') || '[]');
+let searchHistoryList = JSON.parse(localStorage.getItem('vaultify_search_history') || '[]');
+let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_history') || '[]');
+const trackBlobCache = new Map();
+let isDraggingTimeline = false;
+let autoMixFetching = false;
+let lastAutoFetchTime = 0;
+let lastFetchedArtist = '';
+let _lastSaveTick = 0;
+let cacheDB = null;
+let audioContextNode = null;
+let wakeLockSentinel = null;
+let silentLoopStarted = false;
+let eqNodes = null;
+let eqSourceNode = null;
+let mainAudio = null;
+let silentLoop = null;
+let currentSearchResults = [];
+let currentHls = null;
+let isLoginMode = false;
+let loggedInUser = null;
 let navigationHistory = ['home'];
 
+/* ═══════════ HELPERS ═══════════ */
 function showToast(msg) {
   const t = document.getElementById('toastPill');
   if (!t) return;
@@ -64,8 +91,8 @@ function formatClock(sec) {
 
 function openModal(id) { const el = document.getElementById(id); if (el) el.classList.add('open'); }
 function closeModal(id) { const el = document.getElementById(id); if (el) el.classList.remove('open'); }
-function openFullPlayer() { document.getElementById('fullPlayerModal').classList.add('open'); }
-function closeFullPlayer() { document.getElementById('fullPlayerModal').classList.remove('open'); }
+function openFullPlayer() { const el = document.getElementById('fullPlayerModal'); if (el) el.classList.add('open'); }
+function closeFullPlayer() { const el = document.getElementById('fullPlayerModal'); if (el) el.classList.remove('open'); }
 function openPartnerModal() { openModal('modalPartner'); }
 function openSupportModal() { openModal('modalSupport'); }
 
@@ -102,17 +129,16 @@ function handleSystemBackPress() {
   if (fp && fp.classList.contains('open')) { closeFullPlayer(); return true; }
   const om = document.querySelector('.modal-overlay.open');
   if (om) { om.classList.remove('open'); return true; }
+  const auth = document.getElementById('modalAuthGate');
+  if (auth && auth.style.display === 'flex') return false;
   const other = document.querySelectorAll('.view-screen.active:not(#tabHome)');
   if (other.length > 0) { switchNavTab('home'); return true; }
   return false;
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ API — SAAVN FIRST, THEN YT ═══════════ */
-async function checkWorker() {
-  workerReady = true;
-  return true;
-}
+/* ═══════════ API — SEARCH ═══════════ */
+async function checkWorker() { workerReady = true; return true; }
 
 async function searchSaavnAndSC(query, limit = 25) {
   const results = [];
@@ -143,7 +169,7 @@ async function searchSaavnAndSC(query, limit = 25) {
         id: 'saavn_' + s.id,
         title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
         artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-        cover: cover, duration: s.duration || 0,
+        cover, duration: s.duration || 0,
         source: 'saavn', _directStream: direct
       });
     });
@@ -203,7 +229,7 @@ async function workerSearch(query, limit = 25) {
   return await searchSaavnAndSC(query, limit);
 }
 
-/* ═══ ✅ FIXED: workerStreamUrl with proxyUrl + Cobalt fallback ═══ */
+/* ═══════════ ✅ WORKING YT PIPELINE ═══════════ */
 async function workerStreamUrl(id) {
   // SAAVN
   if (id.startsWith('saavn_')) {
@@ -222,9 +248,11 @@ async function workerStreamUrl(id) {
     } catch (e) {}
   }
 
-  // YOUTUBE via PIPED — prefer proxyUrl (CORS-safe)
+  // YOUTUBE
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
+
+    // STEP 1: Piped with proxyUrl priority
     for (const api of PIPED_APIS) {
       try {
         const ctrl = new AbortController();
@@ -236,7 +264,7 @@ async function workerStreamUrl(id) {
         const audioStreams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
         if (!audioStreams.length) continue;
 
-        // Prefer m4a (browser friendly), then highest bitrate
+        // Prefer m4a > webm, then highest bitrate
         audioStreams.sort((a, b) => {
           const aM4a = (a.mimeType || '').includes('mp4') ? 1 : 0;
           const bM4a = (b.mimeType || '').includes('mp4') ? 1 : 0;
@@ -250,7 +278,7 @@ async function workerStreamUrl(id) {
       } catch (e) { continue; }
     }
 
-    // FALLBACK: Cobalt
+    // STEP 2: Cobalt fallback
     const cobaltUrl = await fetchCobaltAudio(ytId);
     if (cobaltUrl) return cobaltUrl;
   }
@@ -258,12 +286,13 @@ async function workerStreamUrl(id) {
   return null;
 }
 
-/* ✅ NEW: Cobalt fallback for YT audio */
+/* ✅ Cobalt fallback helper */
 async function fetchCobaltAudio(videoId) {
   const COBALT_INSTANCES = [
     'https://api.cobalt.tools',
     'https://co.wuk.sh',
-    'https://cobalt-api.kwiatekmiki.com'
+    'https://cobalt-api.kwiatekmiki.com',
+    'https://cobalt.255x.ru'
   ];
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   for (const api of COBALT_INSTANCES) {
@@ -272,14 +301,23 @@ async function fetchCobaltAudio(videoId) {
       const tm = setTimeout(() => ctrl.abort(), 8000);
       const r = await fetch(`${api}/api/json`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ url: ytUrl, isAudioOnly: true, aFormat: 'mp3' }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          url: ytUrl,
+          isAudioOnly: true,
+          aFormat: 'mp3',
+          audioBitrate: '128'
+        }),
         signal: ctrl.signal
       });
       clearTimeout(tm);
       if (!r.ok) continue;
       const data = await r.json();
       if (data.url) return data.url;
+      if (data.status === 'redirect' && data.url) return data.url;
     } catch (e) { continue; }
   }
   return null;
@@ -287,8 +325,6 @@ async function fetchCobaltAudio(videoId) {
 
 /* ═══════════ AUTH ═══════════ */
 const AUTH_ITERATIONS = 100000, AUTH_SALT_BYTES = 16, AUTH_KEY_BYTES = 32;
-let isLoginMode = false;
-let loggedInUser = null;
 
 function bytesToHex(bytes) { return Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, '0')).join(''); }
 function hexToBytes(hex) { const a = new Uint8Array(hex.length / 2); for (let i = 0; i < hex.length; i += 2) a[i / 2] = parseInt(hex.substr(i, 2), 16); return a; }
@@ -327,7 +363,6 @@ function toggleAuthMode() {
   hideAuthAlerts();
 }
 
-/* ✅ FIXED: verifyAuthGate — force show properly */
 function verifyAuthGate() {
   const s = localStorage.getItem('vaultify_active_user');
   const authModal = document.getElementById('modalAuthGate');
@@ -371,7 +406,6 @@ function verifyAuthGate() {
   }
 }
 
-/* ✅ FIXED: unlockApp — hide auth + intro */
 function unlockApp() {
   const authModal = document.getElementById('modalAuthGate');
   const mainFrame = document.querySelector('.mobile-frame');
@@ -508,42 +542,11 @@ function syncUserPartnerCode() {
   if (!user.partnerCode) { user.partnerCode = generatePartnerCode(loggedInUser.username); db[loggedInUser.username] = user; saveUserDB(db); }
   loggedInUser.partnerCode = user.partnerCode;
   localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-  const el = document.getElementById('myPartnerCodeDisplay');
-  if (el) el.innerText = user.partnerCode;
 }
 
 function changeAppLanguage(lang) { appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? 'हिंदी चुनी गई' : 'English Selected'); }
 
-/* ═══════════ MUSIC SYSTEM ═══════════ */
-let currentPlaylist = [];
-let currentTrackIndex = 0;
-let isPlayingAudio = false;
-let isShuffle = false;
-let isRepeat = false;
-let currentLanguage = 'hindi';
-let appLanguage = localStorage.getItem('vaultify_app_lang') || 'en';
-let currentLibraryTab = 'history';
-let playlists = JSON.parse(localStorage.getItem('vaultify_playlists') || '[]');
-let likedSongs = JSON.parse(localStorage.getItem('vaultify_liked') || '[]');
-let searchHistoryList = JSON.parse(localStorage.getItem('vaultify_search_history') || '[]');
-let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_history') || '[]');
-const trackBlobCache = new Map();
-let isDraggingTimeline = false;
-let autoMixFetching = false;
-let lastAutoFetchTime = 0;
-let lastFetchedArtist = '';
-let _lastSaveTick = 0;
-let cacheDB = null;
-let audioContextNode = null;
-let wakeLockSentinel = null;
-let silentLoopStarted = false;
-let eqNodes = null;
-let eqSourceNode = null;
-let mainAudio = null;
-let silentLoop = null;
-let currentSearchResults = [];
-let currentHls = null;
-
+/* ═══════════ LANGUAGE ═══════════ */
 const HINDI_CHARS = /[\u0900-\u097F]/;
 const URDU_CHARS = /[\u0600-\u06FF]/;
 const PUNJABI_CHARS = /[\u0A00-\u0A7F]/;
@@ -554,8 +557,8 @@ function detectLanguage(text) {
   if (URDU_CHARS.test(text)) return 'urdu';
   if (PUNJABI_CHARS.test(text)) return 'punjabi';
   const lower = text.toLowerCase();
-  const hindiKeywords = ['arijit', 'atif', 'shreya', 'sonu', 'kishore', 'lata', 'asha', 'rafi', 'kumar sanu', 'udit', 'alka', 'sunidhi', 'neha kakkar', 'honey singh', 'badshah', 'diljit', 'guru randhawa', 'jass manak', 'karan aujla', 'ap dhillon', 'sidhu moose', 'divine', 'emiway', 'raftaar', 'jubin', 'darshan raval', 'armaan malik', 'sonakshi', 'tony kakkar', 'rahat fateh', 'nusrat', 'coke studio', 'bollywood', 'hindi', 'desi', 'punjabi'];
-  const englishKeywords = ['taylor swift', 'ed sheeran', 'drake', 'justin bieber', 'ariana grande', 'billie eilish', 'post malone', 'the weeknd', 'eminem', 'rihanna', 'adele', 'bruno mars', 'coldplay', 'imagine dragons', 'maroon 5', 'edm', 'pop', 'rock', 'english', 'western'];
+  const hindiKeywords = ['arijit', 'atif', 'shreya', 'sonu', 'kishore', 'lata', 'asha', 'rafi', 'udit', 'alka', 'sunidhi', 'neha kakkar', 'honey singh', 'badshah', 'diljit', 'guru randhawa', 'karan aujla', 'ap dhillon', 'sidhu moose', 'divine', 'raftaar', 'jubin', 'darshan raval', 'armaan malik', 'bollywood', 'hindi', 'desi', 'punjabi'];
+  const englishKeywords = ['taylor swift', 'ed sheeran', 'drake', 'justin bieber', 'ariana grande', 'billie eilish', 'the weeknd', 'eminem', 'rihanna', 'adele', 'bruno mars', 'coldplay', 'imagine dragons', 'maroon 5', 'edm', 'pop', 'rock', 'english', 'western'];
   let h = 0, e = 0;
   hindiKeywords.forEach(k => { if (lower.includes(k)) h++; });
   englishKeywords.forEach(k => { if (lower.includes(k)) e++; });
@@ -563,13 +566,13 @@ function detectLanguage(text) {
 }
 
 function getLanguageQueries(lang) {
-  if (lang === 'hindi') return ['arijit singh hits', 'atif aslam songs', 'bollywood hits 2026', 'punjabi hits', 'new hindi songs'];
-  if (lang === 'urdu') return ['atif aslam hits', 'coke studio pakistan', 'nusrat fateh ali'];
+  if (lang === 'hindi') return ['arijit singh hits', 'atif aslam songs', 'bollywood hits 2026', 'punjabi hits'];
+  if (lang === 'urdu') return ['atif aslam hits', 'coke studio pakistan'];
   if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla'];
   return ['top english hits', 'taylor swift', 'ed sheeran'];
 }
 
-/* ═══════════ CACHE (IndexedDB) ═══════════ */
+/* ═══════════ CACHE ═══════════ */
 function initCacheDB() {
   return new Promise(resolve => {
     try {
@@ -662,7 +665,7 @@ async function cacheEnforceLimit() {
   } catch (e) {}
 }
 
-/* ═══════════ AUDIO BRIDGE ═══════════ */
+/* ═══════════ AUDIO ═══════════ */
 function initForegroundAudioBridge() {
   try {
     if (!audioContextNode) audioContextNode = new (window.AudioContext || window.webkitAudioContext)();
@@ -790,7 +793,8 @@ function setupMediaSession() {
 
   mainAudio.addEventListener('ended', () => {
     setVisualState(false);
-    showToast('⏹ Song ended');
+    // auto next
+    if (currentPlaylist.length > 1) playNext();
   });
 }
 
@@ -851,15 +855,14 @@ function setupTimelineDraggableEngine() {
 
 function seekAudioTo(s) { if (mainAudio && mainAudio.duration) mainAudio.currentTime = s; }
 
-/* ═══════════ QUEUE PERSISTENCE ═══════════ */
+/* ═══════════ QUEUE ═══════════ */
 function saveQueueToStorage() {
   try {
-    const queueData = {
+    localStorage.setItem('vaultify_queue', JSON.stringify({
       tracks: currentPlaylist.slice(0, 100),
       index: currentTrackIndex,
       timestamp: Date.now()
-    };
-    localStorage.setItem('vaultify_queue', JSON.stringify(queueData));
+    }));
   } catch (e) {}
 }
 
@@ -869,24 +872,17 @@ function loadQueueFromStorage() {
     if (!saved) return false;
     const queueData = JSON.parse(saved);
     if (!queueData.tracks || !queueData.tracks.length) return false;
-    if (Date.now() - queueData.timestamp > 2 * 60 * 60 * 1000) {
-      localStorage.removeItem('vaultify_queue');
-      return false;
-    }
+    if (Date.now() - queueData.timestamp > 2 * 60 * 60 * 1000) { localStorage.removeItem('vaultify_queue'); return false; }
     currentPlaylist = queueData.tracks;
     currentTrackIndex = Math.min(queueData.index || 0, currentPlaylist.length - 1);
-    if (typeof renderHomeQueue === 'function') renderHomeQueue();
-    if (typeof syncPlayerUI === 'function' && currentPlaylist[currentTrackIndex]) {
-      syncPlayerUI(currentPlaylist[currentTrackIndex]);
-    }
+    renderHomeQueue();
+    if (currentPlaylist[currentTrackIndex]) syncPlayerUI(currentPlaylist[currentTrackIndex]);
     return true;
   } catch (e) { return false; }
 }
 
 /* ═══════════ SEARCH ═══════════ */
-async function searchAll(q) {
-  return await workerSearch(q, 25);
-}
+async function searchAll(q) { return await workerSearch(q, 25); }
 
 async function fetchTrendingSongs(limit = 10) {
   const trending = await workerSearch('arijit singh', limit);
@@ -899,12 +895,10 @@ async function fetchTrendingSongs(limit = 10) {
 async function fetchDirectAudioStreamUrl(input) {
   if (!input) return null;
   if (input.startsWith('blob:') || input.startsWith('data:')) return input;
-  const url = await workerStreamUrl(input);
-  if (url) return url;
-  return null;
+  return await workerStreamUrl(input);
 }
 
-/* ═══════════ PLAY TRACK (with HLS support) ═══════════ */
+/* ═══════════ PLAY TRACK ═══════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -919,66 +913,61 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => initForegroundAudioBridge(), 0);
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
-  setTimeout(() => preCacheNextTracks(index, 1), 20000);
   setTimeout(() => autoExtendQueue(track), 2000);
 
-  // Cleanup any previous HLS instance
+  // Destroy old HLS
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
-  if (track.id.startsWith('blob:')) {
-    mainAudio.src = track.id;
-    mainAudio.load();
-    try { await mainAudio.play(); setVisualState(true); } catch (e) {}
-    return;
-  }
-
-  if (track._directStream && track._directStream.startsWith('http')) {
-    if (track._directStream.includes('.m3u8') && window.Hls && Hls.isSupported()) {
-      currentHls = new Hls();
-      currentHls.loadSource(track._directStream);
-      currentHls.attachMedia(mainAudio);
-      currentHls.on(Hls.Events.MANIFEST_PARSED, () => { mainAudio.play().catch(() => {}); setVisualState(true); });
-      return;
-    }
-    mainAudio.src = track._directStream;
-    mainAudio.load();
-    try { await mainAudio.play(); setVisualState(true); return; } catch (e) {}
-  }
-
-  let streamUrl = null;
-  const c = trackBlobCache.get(track.id);
-  if (c && c.startsWith('blob:')) streamUrl = c;
-
-  if (!streamUrl) {
-    const db = await cacheGet(track.id);
-    if (db && db.url) { streamUrl = db.url; trackBlobCache.set(track.id, streamUrl); }
-  }
-
-  if (!streamUrl) streamUrl = await fetchDirectAudioStreamUrl(track.id);
-
-  if (streamUrl && streamUrl.startsWith('http')) {
+  const tryPlay = async (url) => {
+    if (!url) return false;
     // HLS check
-    if (streamUrl.includes('.m3u8') && window.Hls && Hls.isSupported()) {
-      currentHls = new Hls();
-      currentHls.loadSource(streamUrl);
-      currentHls.attachMedia(mainAudio);
-      currentHls.on(Hls.Events.MANIFEST_PARSED, () => { mainAudio.play().catch(() => {}); setVisualState(true); });
-      return;
+    if (url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
+      try {
+        currentHls = new Hls({ enableWorker: true, lowLatencyMode: false });
+        currentHls.loadSource(url);
+        currentHls.attachMedia(mainAudio);
+        currentHls.on(Hls.Events.MANIFEST_PARSED, () => { mainAudio.play().then(() => setVisualState(true)).catch(() => {}); });
+        return true;
+      } catch (e) { return false; }
     }
-    mainAudio.src = streamUrl;
+    mainAudio.src = url;
     mainAudio.load();
-    try { await mainAudio.play(); setVisualState(true); return; } catch (e) {}
+    try { await mainAudio.play(); setVisualState(true); return true; } catch (e) { return false; }
+  };
+
+  // blob
+  if (track.id.startsWith('blob:')) { await tryPlay(track.id); return; }
+
+  // direct stream
+  if (track._directStream && track._directStream.startsWith('http')) {
+    if (await tryPlay(track._directStream)) return;
   }
+
+  // blob cache
+  const c = trackBlobCache.get(track.id);
+  if (c && c.startsWith('blob:')) {
+    if (await tryPlay(c)) return;
+  }
+
+  // IndexedDB cache
+  const db = await cacheGet(track.id);
+  if (db && db.url) {
+    trackBlobCache.set(track.id, db.url);
+    if (await tryPlay(db.url)) return;
+  }
+
+  // Fresh stream
+  const streamUrl = await fetchDirectAudioStreamUrl(track.id);
+  if (streamUrl && await tryPlay(streamUrl)) return;
 
   showToast('⚠️ Playback failed');
   setVisualState(false);
 }
 
-/* ═══════════ AUTOPLAY + QUEUE ═══════════ */
+/* ═══════════ AUTOPLAY ═══════════ */
 async function autoplayNext() {
   if (isRepeat) { playTrack(currentTrackIndex); return; }
   if (currentPlaylist.length === 0) return;
-
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if (remaining < 3) {
     const ct = currentPlaylist[currentTrackIndex];
@@ -993,7 +982,6 @@ async function autoplayNext() {
       } catch (e) {}
     }
   }
-
   if (isShuffle) currentTrackIndex = Math.floor(Math.random() * currentPlaylist.length);
   else currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
   playTrack(currentTrackIndex);
@@ -1031,8 +1019,6 @@ async function fetchRelatedSongs(seedTrack) {
   if (artist && artist.length > 2 && artist !== lastFetchedArtist) { queries.push(artist); lastFetchedArtist = artist; }
   const langQ = getLanguageQueries(seedLang);
   queries.push(langQ[Math.floor(Math.random() * langQ.length)]);
-  const titleWords = (seedTrack.title || '').split(' ').slice(0, 3).join(' ').replace(/[\(\)\[\]]/g, '').trim();
-  if (titleWords.length > 3) queries.push(titleWords);
   for (const q of queries) {
     if (results.length >= 12) break;
     try {
@@ -1040,8 +1026,8 @@ async function fetchRelatedSongs(seedTrack) {
       batch.forEach(t => {
         const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
         if (!existingIds.has(t.id) && !existingKeys.has(key) && !results.some(r => r.id === t.id)) {
-          const tL = detectLanguage((t.title || '') + ' ' + (t.artist || ''));
-          if (tL === seedLang || Math.random() < 0.3) { existingKeys.add(key); results.push(t); }
+          existingKeys.add(key);
+          results.push(t);
         }
       });
     } catch (e) {}
@@ -1086,8 +1072,9 @@ function playPrevious() {
 }
 
 function syncPlayerUI(track) {
+  if (!track) return;
   const els = { miniTitleText: track.title, miniArtistText: track.artist, notchTrackTitle: track.title, fullTitleText: track.title, fullArtistText: track.artist };
-  for (const id in els) { const el = document.getElementById(id); if (el) el.innerText = els[id]; }
+  for (const id in els) { const el = document.getElementById(id); if (el) el.innerText = els[id] || ''; }
   const mA = document.getElementById('miniArtImg'); if (mA) mA.src = track.cover || 'vaultify.png';
   const fA = document.getElementById('fullArtImg'); if (fA) fA.src = track.cover || 'vaultify.png';
   const hb = document.getElementById('fullHeartBtn');
@@ -1183,7 +1170,7 @@ async function requestMicAndListen() {
   r.start();
 }
 
-/* ═══════════ HISTORY + QUEUE ═══════════ */
+/* ═══════════ HISTORY ═══════════ */
 function logPlaybackHistory(track) {
   playbackHistoryList = playbackHistoryList.filter(t => t.id !== track.id);
   playbackHistoryList.unshift(track);
@@ -1199,7 +1186,7 @@ function clearRecentlyPlayed() {
   localStorage.removeItem('vaultify_playback_history');
   renderHomeRecentVault();
   renderLibrary();
-  showToast('✅ Recently played cleared');
+  showToast('✅ Cleared');
 }
 
 function renderHomeRecentVault() {
@@ -1264,7 +1251,7 @@ function renderQueueTile(t, i, ic) {
   return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isC ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
 }
 
-/* ═══════════ SEARCH UI — SAAVN FIRST, THEN YT ═══════════ */
+/* ═══════════ SEARCH UI ═══════════ */
 async function executeLiveSearch(isAuto = false) {
   const q = document.getElementById('mobileSearchField').value.trim();
   if (!q) return;
@@ -1301,9 +1288,7 @@ async function executeLiveSearch(isAuto = false) {
           const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
           if (!seen.has(key)) { seen.add(key); combined.push(t); }
         });
-        if (combined.length > saavnResults.length) {
-          renderSearchResults(combined);
-        }
+        if (combined.length > saavnResults.length) renderSearchResults(combined);
       }
     } catch (e) {}
   }, 500);
@@ -1470,8 +1455,9 @@ async function renderLibrary() {
     if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No cached songs yet.</p>`; return; }
     let totalSize = 0;
     cached.forEach(t => { try { if (t.size) totalSize += t.size; } catch (e) {} });
-    c.innerHTML = `<div style="font-size:11px;color:var(--text-sub);margin-bottom:8px"><i class="fa-solid fa-database"></i> ${cached.length} songs · ~${(totalSize / (1024 * 1024)).toFixed(1)}MB</div>`;
-    c.innerHTML += cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title || 'Unknown')}</h4><p>${escapeHtml(t.artist || '')}</p></div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g, "\\'")}')"></i></div>`).join('');
+    let html = `<div style="font-size:11px;color:var(--text-sub);margin-bottom:8px"><i class="fa-solid fa-database"></i> ${cached.length} songs · ~${(totalSize / (1024 * 1024)).toFixed(1)}MB</div>`;
+    html += cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title || 'Unknown')}</h4><p>${escapeHtml(t.artist || '')}</p></div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g, "\\'")}')"></i></div>`).join('');
+    c.innerHTML = html;
   }
 }
 
@@ -1609,19 +1595,7 @@ function requestPermsFromNative() { if (window.AndroidNativeBridge && window.And
 function openAppSettingsNative() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openAppSettings) window.AndroidNativeBridge.openAppSettings(); else showToast('Settings not available'); }
 function openEqualizer() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openSystemEqualizer) { window.AndroidNativeBridge.openSystemEqualizer(); showToast('🎚️ System EQ'); } else showToast('System EQ not available'); }
 
-function sendSupportMail() {
-  const n = document.getElementById('supName').value.trim() || (loggedInUser?.displayName || 'User');
-  const e = document.getElementById('supEmail').value.trim() || (loggedInUser?.email || '');
-  const m = document.getElementById('supMsg').value.trim();
-  if (!m) return showToast('Message likho');
-  const subject = `Vaultify Support - ${n}`;
-  const body = `Name: ${n}\nEmail: ${e}\nUser: ${loggedInUser?.username || 'guest'}\n\nProblem:\n${m}`;
-  const mailto = `mailto:akshat594kumar@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  try { window.location.href = mailto; showToast('📧 Mail app khul raha hai'); }
-  catch (err) { navigator.clipboard.writeText(`To: akshat594kumar@gmail.com\n\n${body}`).then(() => showToast('✅ Email copied')).catch(() => showToast('❌ Failed')); }
-}
-
-/* ═══════════ EMOJI RUNNER ═══════════ */
+/* ═══════════ EMOJI ═══════════ */
 let emojiMode = localStorage.getItem('vaultify_emoji_mode') || 'flow';
 let emojiList = JSON.parse(localStorage.getItem('vaultify_emoji_list') || '["🐱","👻","🔥","🚀","⚡","💜","🎵"]');
 let activeEmoji = localStorage.getItem('vaultify_active_emoji') || '🐱';
@@ -1729,8 +1703,8 @@ function setEmojiMode(mode) {
   showToast(mode === 'flow' ? 'Flow mode' : 'Mix mode');
 }
 
-function toggleAmbientMotion() { const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; showToast(`Motion ${o ? 'off' : 'on'}`); }
-function toggleRunnerVisibility() { const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; showToast(`Runner ${h ? 'on' : 'off'}`); }
+function toggleAmbientMotion() { const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); if (!e || !b) return; const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; showToast(`Motion ${o ? 'off' : 'on'}`); }
+function toggleRunnerVisibility() { const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); if (!i || !b) return; const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; showToast(`Runner ${h ? 'on' : 'off'}`); }
 
 function applyThemeScheme(c) {
   document.body.className = '';
@@ -1829,7 +1803,7 @@ window.addEventListener('DOMContentLoaded', () => {
   mainAudio = document.getElementById('vaultifyAudio');
   silentLoop = document.getElementById('silentAudioLoop');
 
-  // ✅ FIXED: Force-hide intro after 1.5s
+  // Force-hide intro after 1.5s
   setTimeout(() => {
     const i = document.getElementById('appIntroScreen');
     if (i) {
@@ -1919,11 +1893,11 @@ Object.assign(window, {
   renderHomeQueue, renderHomeRecentVault, renderRecommendedSection,
   renderSearchHistoryTags, clearSearchHistory, playSingleTrackObject, playCached, removeCache,
   requestMicAndListen, resetEqSliders, applyEqNow, savePlaybackState,
-  showDownloadIndicator, hideDownloadIndicator, cacheGet, cacheAll,
+  showDownloadIndicator, hideDownloadIndicator, cacheGet, cacheAll, clearRecentlyPlayed,
   getStoredNotifications, pushNotification, renderNotificationCenter,
   openNotificationModal, clearAllNotifications, checkPermissionsStatus,
   handlePermissionBannerClick, requestPermsFromNative, openAppSettingsNative,
-  openEqualizer, sendSupportMail, initEmojiRunner, initEmojiPicker,
+  openEqualizer, initEmojiRunner, initEmojiPicker,
   addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
   prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
