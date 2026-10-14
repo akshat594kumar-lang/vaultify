@@ -1,6 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL (Saavn + SC + YT Piped/Cobalt/Invidious)  */
+/* VAULTIFY — MASTER PLAYLIST MODE (Locked)                       */
 /* ═══════════════════════════════════════════════════════════════ */
+
+const MASTER_PLAYLIST_ID = 'PLWhIBP58b-Tr5kaNCUOYXuoNQLRaBDFeF';
 
 const APP_VERSION = 2;
 const CACHE_MAX_SIZE_MB = 500;
@@ -19,9 +21,14 @@ const INVIDIOUS_APIS = [
   'https://yewtu.be',
   'https://invidious.privacyredirect.com'
 ];
+const PLAYLIST_CACHE_KEY = 'vaultify_master_playlist_v2';
+const PLAYLIST_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
+let masterPlaylist = [];
+let masterPlaylistLoaded = false;
+let masterPlaylistLoading = false;
 
 try {
   if (typeof firebase !== 'undefined') {
@@ -47,7 +54,6 @@ let currentTrackIndex = 0;
 let isPlayingAudio = false;
 let isShuffle = false;
 let isRepeat = false;
-let currentLanguage = 'hindi';
 let appLanguage = localStorage.getItem('vaultify_app_lang') || 'en';
 let currentLibraryTab = 'history';
 let playlists = JSON.parse(localStorage.getItem('vaultify_playlists') || '[]');
@@ -120,7 +126,7 @@ function switchNavTab(tab, th = true) {
   if (tab === 'home') setTimeout(renderRecommendedSection, 300);
   if (tab === 'library') renderLibrary();
   if (tab === 'profile') checkPermissionsStatus();
-  if (tab === 'cert') { updateCertLiveDateTime(); }
+  if (tab === 'cert') updateCertLiveDateTime();
 }
 
 function switchLibraryTab(tab, el) {
@@ -143,102 +149,97 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════ API — SEARCH ═══════════ */
-async function checkWorker() { workerReady = true; return true; }
-
-async function searchSaavnAndSC(query, limit = 25) {
-  const results = [];
-  const seen = new Set();
-  const addUnique = (t) => {
-    const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-    if (seen.has(key)) return;
-    seen.add(key);
-    results.push(t);
-  };
-
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎯 MASTER PLAYLIST (LOCKED)                                     */
+/* ═══════════════════════════════════════════════════════════════ */
+function loadMasterPlaylistFromCache() {
   try {
-    const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${Math.floor(limit * 0.7)}`;
-    const r = await fetch(url);
-    const data = await r.json();
-    const arr = data.data?.results || data.results || [];
-    arr.forEach(s => {
-      if (!s.id) return;
-      let direct = null;
-      const downloads = s.downloadUrl || [];
-      if (downloads.length) {
-        const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-        direct = sorted[0]?.url || sorted[0]?.link || null;
-      }
-      const cover = s.image?.[2]?.url || s.image?.[1]?.url || s.image?.[0]?.url || '';
-      const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || s.singers || 'Unknown';
-      addUnique({
-        id: 'saavn_' + s.id,
-        title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-        artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-        cover, duration: s.duration || 0,
-        source: 'saavn', _directStream: direct
-      });
-    });
-  } catch (e) {}
-
-  try {
-    const scUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(query)}&client_id=${SC_CLIENT_ID}&limit=${Math.floor(limit * 0.3)}&linked_partitioning=1`;
-    const r = await fetch(scUrl);
-    const data = await r.json();
-    (data.collection || []).forEach(t => {
-      if (!t.stream_url || !t.id) return;
-      addUnique({
-        id: 'sc_' + t.id,
-        title: t.title || 'Unknown',
-        artist: t.user?.username || 'SoundCloud',
-        cover: t.artwork_url ? t.artwork_url.replace('-large', '-t500x500') : '',
-        duration: Math.floor((t.duration || 0) / 1000),
-        source: 'soundcloud',
-        _directStream: `${t.stream_url}?client_id=${SC_CLIENT_ID}`
-      });
-    });
-  } catch (e) {}
-
-  return results;
+    const raw = localStorage.getItem(PLAYLIST_CACHE_KEY);
+    if (!raw) return false;
+    const cached = JSON.parse(raw);
+    if (!cached || !cached.tracks || !cached.tracks.length) return false;
+    if (cached.playlistId !== MASTER_PLAYLIST_ID) return false;
+    masterPlaylist = cached.tracks;
+    masterPlaylistLoaded = true;
+    console.log(`📦 Loaded from cache: ${masterPlaylist.length} tracks`);
+    return true;
+  } catch (e) { return false; }
 }
 
-async function searchYouTube(query, limit = 10) {
+function saveMasterPlaylistToCache() {
+  try {
+    localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify({
+      tracks: masterPlaylist,
+      timestamp: Date.now(),
+      playlistId: MASTER_PLAYLIST_ID
+    }));
+  } catch (e) {}
+}
+
+async function fetchMasterPlaylist(forceRefresh = false) {
+  if (masterPlaylistLoading) {
+    // Wait for existing load
+    let wait = 0;
+    while (masterPlaylistLoading && wait < 15000) {
+      await new Promise(r => setTimeout(r, 300));
+      wait += 300;
+    }
+    return masterPlaylist;
+  }
+
+  if (!forceRefresh && masterPlaylistLoaded && masterPlaylist.length > 0) return masterPlaylist;
+
+  masterPlaylistLoading = true;
+  console.log('🎵 Fetching master playlist...');
+
+  // Try Piped
   for (const api of PIPED_APIS) {
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=music_songs`, { signal: ctrl.signal });
+      const tm = setTimeout(() => ctrl.abort(), 10000);
+      const r = await fetch(`${api}/playlists/${MASTER_PLAYLIST_ID}`, { signal: ctrl.signal });
       clearTimeout(tm);
       if (!r.ok) continue;
       const data = await r.json();
-      if (!data.items?.length) continue;
-      const streams = data.items.filter(i => i.type === 'stream' && i.url).slice(0, limit);
-      if (!streams.length) continue;
-      return streams.map(i => {
-        const vid = i.url.replace('/watch?v=', '');
-        return {
-          id: 'yt_' + vid,
-          title: i.title || 'Unknown',
-          artist: i.uploaderName || 'YouTube',
-          cover: i.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
-          duration: i.duration || 0,
-          source: 'youtube',
-          _ytId: vid
-        };
-      });
+      const items = data.relatedStreams || data.videos || [];
+      if (!items.length) continue;
+      const tracks = items
+        .filter(v => v.url && v.url.includes('watch?v='))
+        .map(v => {
+          const vid = v.url.replace('/watch?v=', '').split('&')[0];
+          return {
+            id: 'yt_' + vid,
+            title: v.title || 'Unknown',
+            artist: v.uploaderName || v.uploader || 'YouTube',
+            cover: v.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
+            duration: v.duration || 0,
+            source: 'youtube',
+            _ytId: vid
+          };
+        });
+      if (tracks.length > 0) {
+        masterPlaylist = tracks;
+        masterPlaylistLoaded = true;
+        masterPlaylistLoading = false;
+        saveMasterPlaylistToCache();
+        console.log(`✅ Playlist loaded: ${tracks.length} tracks`);
+        return masterPlaylist;
+      }
     } catch (e) { continue; }
   }
 
+  // Try Invidious
   for (const api of INVIDIOUS_APIS) {
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch(`${api}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, { signal: ctrl.signal });
+      const tm = setTimeout(() => ctrl.abort(), 10000);
+      const r = await fetch(`${api}/api/v1/playlists/${MASTER_PLAYLIST_ID}`, { signal: ctrl.signal });
       clearTimeout(tm);
       if (!r.ok) continue;
       const data = await r.json();
-      if (!Array.isArray(data) || !data.length) continue;
-      return data.slice(0, limit).map(v => ({
+      const videos = data.videos || [];
+      if (!videos.length) continue;
+      const tracks = videos.map(v => ({
         id: 'yt_' + v.videoId,
         title: v.title || 'Unknown',
         artist: v.author || 'YouTube',
@@ -247,16 +248,128 @@ async function searchYouTube(query, limit = 10) {
         source: 'youtube',
         _ytId: v.videoId
       }));
+      if (tracks.length > 0) {
+        masterPlaylist = tracks;
+        masterPlaylistLoaded = true;
+        masterPlaylistLoading = false;
+        saveMasterPlaylistToCache();
+        console.log(`✅ Playlist loaded (Invidious): ${tracks.length} tracks`);
+        return masterPlaylist;
+      }
     } catch (e) { continue; }
   }
 
+  masterPlaylistLoading = false;
+  // Fallback: use expired cache if any
+  try {
+    const raw = localStorage.getItem(PLAYLIST_CACHE_KEY);
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (cached && cached.tracks && cached.tracks.length && cached.playlistId === MASTER_PLAYLIST_ID) {
+        masterPlaylist = cached.tracks;
+        masterPlaylistLoaded = true;
+        console.log(`⚠️ Using expired cache: ${masterPlaylist.length} tracks`);
+        return masterPlaylist;
+      }
+    }
+  } catch (e) {}
+  console.warn('❌ Failed to load master playlist');
   return [];
 }
 
-async function workerSearch(query, limit = 25) {
-  return await searchSaavnAndSC(query, limit);
+async function refreshMasterPlaylistInBackground() {
+  try {
+    const raw = localStorage.getItem(PLAYLIST_CACHE_KEY);
+    if (!raw) { fetchMasterPlaylist(true); return; }
+    const cached = JSON.parse(raw);
+    if (!cached || !cached.timestamp) { fetchMasterPlaylist(true); return; }
+    if (cached.playlistId !== MASTER_PLAYLIST_ID) { fetchMasterPlaylist(true); return; }
+    const age = Date.now() - cached.timestamp;
+    if (age < PLAYLIST_CACHE_TTL) return;
+    console.log('🔄 Background refresh starting...');
+    const fresh = await fetchMasterPlaylist(true);
+    if (fresh && fresh.length > 0) {
+      console.log(`✅ Background refresh: ${fresh.length} tracks`);
+    }
+  } catch (e) {}
 }
 
+async function manualRefreshPlaylist() {
+  showToast('🔄 Refreshing playlist...');
+  try {
+    const fresh = await fetchMasterPlaylist(true);
+    if (fresh && fresh.length > 0) {
+      showToast(`✅ ${fresh.length} songs loaded`);
+      renderRecommendedSection();
+    } else {
+      showToast('❌ Refresh failed');
+    }
+  } catch (e) {
+    showToast('❌ Refresh failed');
+  }
+}
+
+/* ═══════════ Search within Master Playlist ═══════════ */
+function searchInMasterPlaylist(query) {
+  if (!query || !masterPlaylist.length) return [];
+  const q = query.toLowerCase().trim();
+  const tokens = q.split(/\s+/).filter(t => t.length > 0);
+
+  return masterPlaylist
+    .map(t => {
+      const haystack = ((t.title || '') + ' ' + (t.artist || '')).toLowerCase();
+      let score = 0;
+      tokens.forEach(tok => {
+        if (haystack.includes(tok)) score++;
+        if ((t.title || '').toLowerCase().startsWith(tok)) score += 2;
+      });
+      return { t, score };
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(x => x.t);
+}
+
+/* ═══════════ API — Search ═══════════ */
+async function checkWorker() { workerReady = true; return true; }
+
+async function workerSearch(query, limit = 25) {
+  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
+
+  if (!masterPlaylist.length) {
+    // Last resort: Saavn direct (if playlist fails)
+    try {
+      const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${limit}`;
+      const r = await fetch(url);
+      const data = await r.json();
+      const arr = data.data?.results || data.results || [];
+      return arr.slice(0, limit).map(s => {
+        const cover = s.image?.[2]?.url || s.image?.[1]?.url || '';
+        const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || 'Unknown';
+        let direct = null;
+        const downloads = s.downloadUrl || [];
+        if (downloads.length) {
+          const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+          direct = sorted[0]?.url || sorted[0]?.link || null;
+        }
+        return {
+          id: 'saavn_' + s.id,
+          title: s.name || s.title || 'Unknown',
+          artist, cover, duration: s.duration || 0,
+          source: 'saavn', _directStream: direct
+        };
+      });
+    } catch (e) { return []; }
+  }
+
+  const inPlaylist = searchInMasterPlaylist(query);
+  if (inPlaylist.length > 0) return inPlaylist.slice(0, limit);
+
+  // No match → return random playlist songs (still from playlist)
+  return masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, Math.min(limit, masterPlaylist.length));
+}
+
+/* ═══════════ Stream URLs ═══════════ */
 async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) {
     const songId = id.replace('saavn_', '');
@@ -555,71 +668,8 @@ function syncUserPartnerCode() {
 
 function changeAppLanguage(lang) { appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? 'हिंदी चुनी गई' : 'English Selected'); }
 
-/* ═══════════ LANGUAGE ═══════════ */
-const HINDI_CHARS = /[\u0900-\u097F]/;
-const URDU_CHARS = /[\u0600-\u06FF]/;
-const PUNJABI_CHARS = /[\u0A00-\u0A7F]/;
-
-function detectLanguage(text) {
-  if (!text) return 'hindi';
-  if (HINDI_CHARS.test(text)) return 'hindi';
-  if (URDU_CHARS.test(text)) return 'urdu';
-  if (PUNJABI_CHARS.test(text)) return 'punjabi';
-  const lower = text.toLowerCase();
-  const hindiKeywords = ['arijit', 'atif', 'shreya', 'sonu', 'kishore', 'lata', 'asha', 'rafi', 'udit', 'alka', 'sunidhi', 'neha kakkar', 'honey singh', 'badshah', 'diljit', 'guru randhawa', 'karan aujla', 'ap dhillon', 'sidhu moose', 'divine', 'raftaar', 'jubin', 'darshan raval', 'armaan malik', 'bollywood', 'hindi', 'desi', 'punjabi'];
-  const englishKeywords = ['taylor swift', 'ed sheeran', 'drake', 'justin bieber', 'ariana grande', 'billie eilish', 'the weeknd', 'eminem', 'rihanna', 'adele', 'bruno mars', 'coldplay', 'imagine dragons', 'maroon 5', 'edm', 'pop', 'rock', 'english', 'western'];
-  let h = 0, e = 0;
-  hindiKeywords.forEach(k => { if (lower.includes(k)) h++; });
-  englishKeywords.forEach(k => { if (lower.includes(k)) e++; });
-  return h >= e ? 'hindi' : 'english';
-}
-
-function getLanguageQueries(lang) {
-  if (lang === 'hindi') return ['arijit singh hits', 'atif aslam songs', 'bollywood hits 2026', 'punjabi hits'];
-  if (lang === 'urdu') return ['atif aslam hits', 'coke studio pakistan'];
-  if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla'];
-  return ['top english hits', 'taylor swift', 'ed sheeran'];
-}
-
-function getTrendingViralQueries(lang) {
-  if (lang === 'punjabi') return [
-    'trending punjabi songs 2026',
-    'viral punjabi hits',
-    'top punjabi songs this week',
-    'new punjabi music 2026',
-    'diljit dosanjh trending songs',
-    'ap dhillon viral hits',
-    'karan aujla new songs',
-    'sidhu moose wala hits'
-  ];
-  if (lang === 'urdu') return [
-    'trending urdu songs 2026',
-    'coke studio viral hits',
-    'atif aslam trending',
-    'nusrat fateh ali qawwali hits',
-    'viral pakistani music 2026'
-  ];
-  if (lang === 'english') return [
-    'trending english songs 2026',
-    'top billboard hits 2026',
-    'viral pop songs',
-    'new english music 2026',
-    'spotify top 50 hits',
-    'tiktok viral songs'
-  ];
-  return [
-    'trending hindi songs 2026',
-    'viral bollywood hits',
-    'top hindi songs this week',
-    'new bollywood songs 2026',
-    'hindi trending music 2026',
-    'latest hindi hits',
-    'arijit singh new songs',
-    'atif aslam hits 2026',
-    'bollywood chart toppers',
-    'hindi viral songs'
-  ];
-}
+/* ═══════════ LANGUAGE (still needed for older funcs) ═══════════ */
+function detectLanguage(text) { return 'hindi'; } // playlist mode — not used
 
 /* ═══════════ CACHE ═══════════ */
 function initCacheDB() {
@@ -933,11 +983,8 @@ function loadQueueFromStorage() {
 async function searchAll(q) { return await workerSearch(q, 25); }
 
 async function fetchTrendingSongs(limit = 10) {
-  const trending = await workerSearch('arijit singh', limit);
-  if (trending.length >= 3) return trending.slice(0, limit);
-  const hindi = await workerSearch('bollywood hits', limit);
-  if (hindi.length >= 3) return hindi.slice(0, limit);
-  return [];
+  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
+  return masterPlaylist.slice(0, limit);
 }
 
 async function fetchDirectAudioStreamUrl(input) {
@@ -951,7 +998,7 @@ async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
   const track = currentPlaylist[index];
-  if (track) currentLanguage = detectLanguage((track.title || '') + ' ' + (track.artist || ''));
+  if (!track) return;
 
   syncPlayerUI(track);
   updateMediaSessionMetadata(track);
@@ -1011,14 +1058,12 @@ async function autoplayNext() {
   if (remaining < 3) {
     const ct = currentPlaylist[currentTrackIndex];
     if (ct) {
-      try {
-        const related = await fetchRelatedSongs(ct);
-        if (related.length) {
-          related.forEach(t => { if (!currentPlaylist.some(x => x.id === t.id)) currentPlaylist.push(t); });
-          renderHomeQueue();
-          saveQueueToStorage();
-        }
-      } catch (e) {}
+      const related = await fetchRelatedSongs(ct);
+      if (related.length) {
+        related.forEach(t => { if (!currentPlaylist.some(x => x.id === t.id)) currentPlaylist.push(t); });
+        renderHomeQueue();
+        saveQueueToStorage();
+      }
     }
   }
   if (isShuffle) currentTrackIndex = Math.floor(Math.random() * currentPlaylist.length);
@@ -1042,48 +1087,28 @@ async function autoExtendQueue(track) {
   autoMixFetching = false;
 }
 
+/* ═══════════ RELATED — from Playlist only ═══════════ */
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
   const now = Date.now();
   if (now - lastAutoFetchTime < 3000) return [];
   lastAutoFetchTime = now;
+  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
 
-  const seedLang = detectLanguage((seedTrack.title || '') + ' ' + (seedTrack.artist || ''));
-  currentLanguage = seedLang;
-
-  const existingIds = new Set();
-  const existingKeys = new Set();
-  currentPlaylist.forEach(t => {
-    existingIds.add(t.id);
-    existingKeys.add(((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim());
-  });
-  playbackHistoryList.forEach(t => {
-    existingIds.add(t.id);
-    existingKeys.add(((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim());
-  });
+  const existingIds = new Set(currentPlaylist.map(t => t.id));
+  playbackHistoryList.forEach(t => existingIds.add(t.id));
   existingIds.add(seedTrack.id);
-  existingKeys.add(((seedTrack.title || '') + '|' + (seedTrack.artist || '')).toLowerCase().trim());
 
-  const queries = getTrendingViralQueries(seedLang);
-  const shuffled = queries.slice().sort(() => Math.random() - 0.5);
-
-  let results = [];
-  for (const q of shuffled.slice(0, 3)) {
-    if (results.length >= 12) break;
-    try {
-      const batch = await searchAll(q);
-      batch.forEach(t => {
-        if (results.length >= 12) return;
-        const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-        if (existingIds.has(t.id) || existingKeys.has(key)) return;
-        existingKeys.add(key);
-        existingIds.add(t.id);
-        results.push(t);
-      });
-    } catch (e) {}
+  // Shuffle master playlist, pick fresh tracks
+  const shuffled = masterPlaylist.slice().sort(() => Math.random() - 0.5);
+  const results = [];
+  for (const t of shuffled) {
+    if (results.length >= 10) break;
+    if (existingIds.has(t.id)) continue;
+    existingIds.add(t.id);
+    results.push(t);
   }
-  results.sort(() => Math.random() - 0.5);
-  return results.slice(0, 10);
+  return results;
 }
 
 function togglePlaybackState(broadcast = true) {
@@ -1163,16 +1188,6 @@ async function cacheTrackInBackground(track) {
     trackBlobCache.set(track.id, bu);
     if (currentLibraryTab === 'cached' && document.getElementById('tabLibrary').classList.contains('active')) renderLibrary();
   } catch (e) {}
-}
-
-function preCacheNextTracks(startIdx, count = 1) {
-  for (let i = 1; i <= count; i++) {
-    const idx = startIdx + i;
-    if (idx < currentPlaylist.length) {
-      const t = currentPlaylist[idx];
-      setTimeout(() => cacheTrackInBackground(t), i * 15000);
-    }
-  }
 }
 
 async function downloadCurrentTrack() {
@@ -1302,7 +1317,7 @@ function renderQueueTile(t, i, ic) {
   return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isC ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
 }
 
-/* ═══════════ SEARCH UI ═══════════ */
+/* ═══════════ SEARCH UI — Playlist first ═══════════ */
 async function executeLiveSearch(isAuto = false) {
   const q = document.getElementById('mobileSearchField').value.trim();
   if (!q) return;
@@ -1312,38 +1327,30 @@ async function executeLiveSearch(isAuto = false) {
     localStorage.setItem('vaultify_search_history', JSON.stringify(searchHistoryList));
     renderSearchHistoryTags();
   }
-  currentLanguage = detectLanguage(q);
   const l = document.getElementById('searchLoadingIndicator');
   const rc = document.getElementById('searchResultsContainer');
   l.style.display = 'block';
   l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
   rc.innerHTML = '';
 
-  const saavnResults = await searchSaavnAndSC(q, 25);
+  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
+
+  const found = searchInMasterPlaylist(q).slice(0, 30);
   l.style.display = 'none';
 
-  if (saavnResults.length > 0) {
-    renderSearchResults(saavnResults);
-    if (!isAuto) showToast(`✅ ${saavnResults.length} results`);
+  if (found.length > 0) {
+    renderSearchResults(found);
+    if (!isAuto) showToast(`✅ ${found.length} results`);
   } else {
-    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
+    // No match → shuffle playlist
+    const random = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 20);
+    if (random.length > 0) {
+      renderSearchResults(random);
+      showToast(`Kuch match nahi, playlist se random songs`);
+    } else {
+      rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
+    }
   }
-
-  setTimeout(async () => {
-    try {
-      const ytResults = await searchYouTube(q, 8);
-      if (ytResults.length > 0) {
-        const combined = [...saavnResults];
-        const seen = new Set(saavnResults.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
-        ytResults.forEach(t => {
-          const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-          if (!seen.has(key)) { seen.add(key); combined.push(t); }
-        });
-        if (combined.length > saavnResults.length) renderSearchResults(combined);
-      }
-    } catch (e) {}
-  }, 500);
-
   setTimeout(renderRecommendedSection, 2000);
 }
 
@@ -1356,10 +1363,7 @@ function renderSearchResults(tracks) {
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || 'vaultify.png');
     const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
     const sDur = t.duration || 0;
-    let srcBadge = '';
-    if (t.source === 'soundcloud') srcBadge = '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>';
-    else if (t.source === 'youtube') srcBadge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
-    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${srcBadge}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)} <i class="fa-brands fa-youtube" style="color:#ff0000;font-size:10px;margin-left:4px"></i></h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
   }).join('');
 }
 
@@ -1410,32 +1414,22 @@ function initLiveSearchInputListener() {
 }
 
 async function instantSearch(q) {
-  currentLanguage = detectLanguage(q);
   const myId = ++liveSearchRequestId;
   const l = document.getElementById('searchLoadingIndicator');
   const rc = document.getElementById('searchResultsContainer');
   if (l) { l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'; }
 
-  const saavnResults = await searchSaavnAndSC(q, 25);
+  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
+  const found = searchInMasterPlaylist(q).slice(0, 25);
   if (myId !== liveSearchRequestId) return;
   if (l) l.style.display = 'none';
-  if (saavnResults.length > 0) renderSearchResults(saavnResults);
-  else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
 
-  setTimeout(async () => {
-    try {
-      const ytResults = await searchYouTube(q, 8);
-      if (ytResults.length > 0 && myId === liveSearchRequestId) {
-        const combined = [...saavnResults];
-        const seen = new Set(saavnResults.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
-        ytResults.forEach(t => {
-          const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-          if (!seen.has(key)) { seen.add(key); combined.push(t); }
-        });
-        if (combined.length > saavnResults.length) renderSearchResults(combined);
-      }
-    } catch (e) {}
-  }, 500);
+  if (found.length > 0) renderSearchResults(found);
+  else {
+    const random = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 20);
+    if (random.length > 0) renderSearchResults(random);
+    else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
+  }
 }
 
 function renderSearchHistoryTags() {
@@ -1450,31 +1444,13 @@ function renderSearchHistoryTags() {
 function clearSearchHistory() { searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
 
 /* ═══════════ RECOMMENDED ═══════════ */
-function buildRecommendationQuery() {
-  const tokens = [];
-  playbackHistoryList.slice(0, 5).forEach(t => { if (t.artist) tokens.push(t.artist.replace(/vevo|official|channel|records|music/gi, '').split(' - ')[0].trim()); });
-  searchHistoryList.slice(0, 3).forEach(s => tokens.push(s));
-  const u = [...new Set(tokens.filter(t => t && t.length > 2))];
-  if (u.length === 0) return getLanguageQueries(currentLanguage)[0];
-  return u.slice(0, 3).join(' ');
-}
-
 async function renderRecommendedSection() {
   const c = document.getElementById('recommendedContainer');
   if (!c) return;
-  let found = [];
-  let headerText = 'Trending Now';
-  if (playbackHistoryList.length === 0 && searchHistoryList.length === 0) {
-    found = await fetchTrendingSongs(8);
-  } else {
-    headerText = 'Recommended For You';
-    const q = buildRecommendationQuery();
-    const seen = new Set(playbackHistoryList.map(t => t.id));
-    const all = await searchAll(q);
-    found = all.filter(t => !seen.has(t.id)).slice(0, 6);
-  }
+  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
+  let found = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 8);
   const h = document.querySelector('.recommended-header span');
-  if (h) h.innerText = headerText;
+  if (h) h.innerText = 'From Your Playlist';
   if (found.length === 0) { c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`; return; }
   c.innerHTML = found.map(t => {
     const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
@@ -1885,7 +1861,6 @@ function updateCertLiveDateTime() {
   } catch (e) {}
 }
 
-/* Immediate + retry + interval */
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', updateCertLiveDateTime);
 } else {
@@ -1937,11 +1912,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
   setTimeout(() => { if (isFirebaseReady()) { initIPCounter(); listenIPStats(renderIPStats); } }, 3000);
 
+  // 🎯 Load master playlist (cache first, then background refresh)
+  loadMasterPlaylistFromCache();
   setTimeout(async () => {
     await checkWorker();
+    await fetchMasterPlaylist();
     renderRecommendedSection();
     loadQueueFromStorage();
   }, 1500);
+  setTimeout(refreshMasterPlaylistInBackground, 5000);
 
   const start = () => {
     initForegroundAudioBridge();
@@ -1981,7 +1960,7 @@ Object.assign(window, {
   verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
   openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
   saveProfileData, performAppLogout, generatePartnerCode, syncUserPartnerCode, changeAppLanguage,
-  detectLanguage, getLanguageQueries, getTrendingViralQueries, searchAll, fetchTrendingSongs,
+  searchAll, fetchTrendingSongs,
   executeLiveSearch, instantSearch, renderSearchResults, playSearchedTrackImmediately,
   playTrack, playNext, playPrevious, autoplayNext, togglePlaybackState, setVisualState,
   syncPlayerUI, toggleShuffle, toggleRepeat, toggleSleepTimer, shareCurrentTrack,
@@ -1998,5 +1977,6 @@ Object.assign(window, {
   addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
   prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
-  saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime
+  saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
+  fetchMasterPlaylist, manualRefreshPlaylist, searchInMasterPlaylist
 });
