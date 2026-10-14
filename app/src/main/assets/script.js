@@ -1,5 +1,6 @@
+
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — MASTER PLAYLIST MODE (Locked)                       */
+/* VAULTIFY — FINAL (Saavn CDN playback + Playlist search)         */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const MASTER_PLAYLIST_ID = 'PLWhIBP58b-Tr5kaNCUOYXuoNQLRaBDFeF';
@@ -18,17 +19,19 @@ const PIPED_APIS = [
 const INVIDIOUS_APIS = [
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
-  'https://yewtu.be',
-  'https://invidious.privacyredirect.com'
+  'https://yewtu.be'
 ];
 const PLAYLIST_CACHE_KEY = 'vaultify_master_playlist_v2';
-const PLAYLIST_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+const PLAYLIST_CACHE_TTL = 6 * 60 * 60 * 1000;
+const SAAVN_URL_CACHE_KEY = 'vaultify_saavn_url_cache_v1';
+const SAAVN_URL_CACHE_TTL = 3 * 60 * 60 * 1000; // 3 hours (Saavn URLs expire)
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
 let masterPlaylist = [];
 let masterPlaylistLoaded = false;
 let masterPlaylistLoading = false;
+let saavnUrlCache = {}; // { "title|artist": { url, timestamp } }
 
 try {
   if (typeof firebase !== 'undefined') {
@@ -150,7 +153,127 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 MASTER PLAYLIST (LOCKED)                                     */
+/* 🎯 SAAVN URL CACHE (fast instant playback)                      */
+/* ═══════════════════════════════════════════════════════════════ */
+function loadSaavnUrlCache() {
+  try {
+    const raw = localStorage.getItem(SAAVN_URL_CACHE_KEY);
+    if (!raw) return;
+    const cached = JSON.parse(raw);
+    const now = Date.now();
+    for (const k in cached) {
+      if (cached[k] && (now - cached[k].timestamp) < SAAVN_URL_CACHE_TTL) {
+        saavnUrlCache[k] = cached[k];
+      }
+    }
+  } catch (e) {}
+}
+
+function saveSaavnUrlCache() {
+  try {
+    localStorage.setItem(SAAVN_URL_CACHE_KEY, JSON.stringify(saavnUrlCache));
+  } catch (e) {}
+}
+
+function saavnCacheKey(title, artist) {
+  return ((title || '') + '|' + (artist || '')).toLowerCase().trim().substring(0, 100);
+}
+
+function getCachedSaavnUrl(title, artist) {
+  const key = saavnCacheKey(title, artist);
+  const entry = saavnUrlCache[key];
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > SAAVN_URL_CACHE_TTL) return null;
+  return entry.url;
+}
+
+function setCachedSaavnUrl(title, artist, url) {
+  const key = saavnCacheKey(title, artist);
+  saavnUrlCache[key] = { url, timestamp: Date.now() };
+  saveSaavnUrlCache();
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎵 SAAVN SEARCH — find stream URL for a track                   */
+/* ═══════════════════════════════════════════════════════════════ */
+async function findSaavnStreamUrl(title, artist) {
+  // 1. Check cache first (instant)
+  const cached = getCachedSaavnUrl(title, artist);
+  if (cached) return cached;
+
+  // 2. Build smart query
+  const cleanTitle = (title || '')
+    .replace(/\(.*?\)/g, '')
+    .replace(/\[.*?\]/g, '')
+    .replace(/official|video|audio|lyrical|lyrics|song|full|hd|4k|music|feat|ft\.?/gi, '')
+    .replace(/[^\w\s\u0900-\u097F\u0600-\u06FF\u0A00-\u0A7F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const cleanArtist = (artist || '')
+    .replace(/vevo|official|topic|channel|records|music|entertainment|productions|studios|the|records?|label/gi, '')
+    .replace(/[-_,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const queries = [];
+  if (cleanTitle) queries.push(cleanTitle);
+  if (cleanTitle && cleanArtist) queries.push(cleanTitle + ' ' + cleanArtist);
+  if (cleanArtist) queries.push(cleanArtist);
+
+  for (const q of queries) {
+    try {
+      const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(q)}&limit=5`;
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const arr = data.data?.results || data.results || [];
+      if (!arr.length) continue;
+
+      // Best match = first result (Saavn returns best match first)
+      for (const s of arr) {
+        if (!s.id) continue;
+        const streamUrl = await getSaavnSongUrl(s.id);
+        if (streamUrl) {
+          setCachedSaavnUrl(title, artist, streamUrl);
+          return streamUrl;
+        }
+      }
+    } catch (e) { continue; }
+  }
+
+  return null;
+}
+
+async function getSaavnSongUrl(songId) {
+  try {
+    const url = `${SAAVN_DELTA}/api/songs/${songId}`;
+    const ctrl = new AbortController();
+    const tm = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(tm);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const song = data.data?.[0] || data.data;
+    const downloads = song?.downloadUrl || [];
+    if (!downloads.length) return null;
+
+    // Prefer 320kbps, fall back to highest available
+    const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
+    // Prefer m4a/128/320 over others
+    const preferred = sorted.find(d => (d.quality || '').includes('320')) ||
+                      sorted.find(d => (d.quality || '').includes('160')) ||
+                      sorted[0];
+    const u = preferred?.url || preferred?.link || sorted[0]?.url || sorted[0]?.link;
+    return u || null;
+  } catch (e) { return null; }
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎯 MASTER PLAYLIST                                              */
 /* ═══════════════════════════════════════════════════════════════ */
 function loadMasterPlaylistFromCache() {
   try {
@@ -161,7 +284,6 @@ function loadMasterPlaylistFromCache() {
     if (cached.playlistId !== MASTER_PLAYLIST_ID) return false;
     masterPlaylist = cached.tracks;
     masterPlaylistLoaded = true;
-    console.log(`📦 Loaded from cache: ${masterPlaylist.length} tracks`);
     return true;
   } catch (e) { return false; }
 }
@@ -178,7 +300,6 @@ function saveMasterPlaylistToCache() {
 
 async function fetchMasterPlaylist(forceRefresh = false) {
   if (masterPlaylistLoading) {
-    // Wait for existing load
     let wait = 0;
     while (masterPlaylistLoading && wait < 15000) {
       await new Promise(r => setTimeout(r, 300));
@@ -190,9 +311,7 @@ async function fetchMasterPlaylist(forceRefresh = false) {
   if (!forceRefresh && masterPlaylistLoaded && masterPlaylist.length > 0) return masterPlaylist;
 
   masterPlaylistLoading = true;
-  console.log('🎵 Fetching master playlist...');
 
-  // Try Piped
   for (const api of PIPED_APIS) {
     try {
       const ctrl = new AbortController();
@@ -222,13 +341,11 @@ async function fetchMasterPlaylist(forceRefresh = false) {
         masterPlaylistLoaded = true;
         masterPlaylistLoading = false;
         saveMasterPlaylistToCache();
-        console.log(`✅ Playlist loaded: ${tracks.length} tracks`);
         return masterPlaylist;
       }
     } catch (e) { continue; }
   }
 
-  // Try Invidious
   for (const api of INVIDIOUS_APIS) {
     try {
       const ctrl = new AbortController();
@@ -253,14 +370,12 @@ async function fetchMasterPlaylist(forceRefresh = false) {
         masterPlaylistLoaded = true;
         masterPlaylistLoading = false;
         saveMasterPlaylistToCache();
-        console.log(`✅ Playlist loaded (Invidious): ${tracks.length} tracks`);
         return masterPlaylist;
       }
     } catch (e) { continue; }
   }
 
   masterPlaylistLoading = false;
-  // Fallback: use expired cache if any
   try {
     const raw = localStorage.getItem(PLAYLIST_CACHE_KEY);
     if (raw) {
@@ -268,12 +383,10 @@ async function fetchMasterPlaylist(forceRefresh = false) {
       if (cached && cached.tracks && cached.tracks.length && cached.playlistId === MASTER_PLAYLIST_ID) {
         masterPlaylist = cached.tracks;
         masterPlaylistLoaded = true;
-        console.log(`⚠️ Using expired cache: ${masterPlaylist.length} tracks`);
         return masterPlaylist;
       }
     }
   } catch (e) {}
-  console.warn('❌ Failed to load master playlist');
   return [];
 }
 
@@ -286,11 +399,7 @@ async function refreshMasterPlaylistInBackground() {
     if (cached.playlistId !== MASTER_PLAYLIST_ID) { fetchMasterPlaylist(true); return; }
     const age = Date.now() - cached.timestamp;
     if (age < PLAYLIST_CACHE_TTL) return;
-    console.log('🔄 Background refresh starting...');
-    const fresh = await fetchMasterPlaylist(true);
-    if (fresh && fresh.length > 0) {
-      console.log(`✅ Background refresh: ${fresh.length} tracks`);
-    }
+    await fetchMasterPlaylist(true);
   } catch (e) {}
 }
 
@@ -330,65 +439,26 @@ function searchInMasterPlaylist(query) {
     .map(x => x.t);
 }
 
-/* ═══════════ API — Search ═══════════ */
+/* ═══════════ API Search ═══════════ */
 async function checkWorker() { workerReady = true; return true; }
 
 async function workerSearch(query, limit = 25) {
   if (!masterPlaylistLoaded) await fetchMasterPlaylist();
-
-  if (!masterPlaylist.length) {
-    // Last resort: Saavn direct (if playlist fails)
-    try {
-      const url = `${SAAVN_DELTA}/api/search/songs?query=${encodeURIComponent(query)}&limit=${limit}`;
-      const r = await fetch(url);
-      const data = await r.json();
-      const arr = data.data?.results || data.results || [];
-      return arr.slice(0, limit).map(s => {
-        const cover = s.image?.[2]?.url || s.image?.[1]?.url || '';
-        const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || 'Unknown';
-        let direct = null;
-        const downloads = s.downloadUrl || [];
-        if (downloads.length) {
-          const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-          direct = sorted[0]?.url || sorted[0]?.link || null;
-        }
-        return {
-          id: 'saavn_' + s.id,
-          title: s.name || s.title || 'Unknown',
-          artist, cover, duration: s.duration || 0,
-          source: 'saavn', _directStream: direct
-        };
-      });
-    } catch (e) { return []; }
-  }
-
   const inPlaylist = searchInMasterPlaylist(query);
   if (inPlaylist.length > 0) return inPlaylist.slice(0, limit);
-
-  // No match → return random playlist songs (still from playlist)
   return masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, Math.min(limit, masterPlaylist.length));
 }
 
-/* ═══════════ Stream URLs ═══════════ */
+/* ═══════════ Fallback: YT stream via Piped/Invidious/Cobalt ═══════════ */
 async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) {
-    const songId = id.replace('saavn_', '');
-    try {
-      const url = `${SAAVN_DELTA}/api/songs/${songId}`;
-      const r = await fetch(url);
-      const data = await r.json();
-      const song = data.data?.[0] || data.data;
-      const downloads = song?.downloadUrl || [];
-      if (downloads.length) {
-        const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
-        const u = sorted[0]?.url || sorted[0]?.link;
-        if (u) return u;
-      }
-    } catch (e) {}
+    return await getSaavnSongUrl(id.replace('saavn_', ''));
   }
 
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
+
+    // Piped
     for (const api of PIPED_APIS) {
       try {
         const ctrl = new AbortController();
@@ -397,19 +467,41 @@ async function workerStreamUrl(id) {
         clearTimeout(tm);
         if (!r.ok) continue;
         const data = await r.json();
-        const audioStreams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
-        if (!audioStreams.length) continue;
-        audioStreams.sort((a, b) => {
+        const streams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
+        if (!streams.length) continue;
+        streams.sort((a, b) => {
           const aM4a = (a.mimeType || '').includes('mp4') ? 1 : 0;
           const bM4a = (b.mimeType || '').includes('mp4') ? 1 : 0;
           if (aM4a !== bM4a) return bM4a - aM4a;
           return (b.bitrate || 0) - (a.bitrate || 0);
         });
-        const chosen = audioStreams[0];
-        const finalUrl = chosen.proxyUrl || chosen.url;
-        if (finalUrl) return finalUrl;
+        const s = streams[0];
+        if (s.proxyUrl) {
+          let pUrl = s.proxyUrl;
+          if (pUrl.startsWith('/')) pUrl = api + pUrl;
+          return pUrl;
+        }
+        if (s.url && s.url.startsWith('http')) return s.url;
       } catch (e) { continue; }
     }
+
+    // Invidious
+    for (const api of INVIDIOUS_APIS) {
+      try {
+        const ctrl = new AbortController();
+        const tm = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch(`${api}/api/v1/videos/${ytId}`, { signal: ctrl.signal });
+        clearTimeout(tm);
+        if (!r.ok) continue;
+        const data = await r.json();
+        const formats = (data.adaptiveFormats || []).filter(f => (f.type || '').includes('audio') && f.url);
+        if (!formats.length) continue;
+        formats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        if (formats[0].url) return formats[0].url;
+      } catch (e) { continue; }
+    }
+
+    // Cobalt
     const cobaltUrl = await fetchCobaltAudio(ytId);
     if (cobaltUrl) return cobaltUrl;
   }
@@ -418,21 +510,20 @@ async function workerStreamUrl(id) {
 }
 
 async function fetchCobaltAudio(videoId) {
-  const COBALT_INSTANCES = [
+  const COBALT = [
     'https://api.cobalt.tools',
     'https://co.wuk.sh',
-    'https://cobalt-api.kwiatekmiki.com',
-    'https://cobalt.255x.ru'
+    'https://cobalt-api.kwiatekmiki.com'
   ];
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  for (const api of COBALT_INSTANCES) {
+  for (const api of COBALT) {
     try {
       const ctrl = new AbortController();
       const tm = setTimeout(() => ctrl.abort(), 8000);
-      const r = await fetch(`${api}/api/json`, {
+      const r = await fetch(`${api}/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ url: ytUrl, isAudioOnly: true, aFormat: 'mp3', audioBitrate: '128' }),
+        body: JSON.stringify({ url: ytUrl, downloadMode: 'audio', audioFormat: 'mp3', audioBitrate: '128' }),
         signal: ctrl.signal
       });
       clearTimeout(tm);
@@ -440,6 +531,7 @@ async function fetchCobaltAudio(videoId) {
       const data = await r.json();
       if (data.url) return data.url;
       if (data.status === 'redirect' && data.url) return data.url;
+      if (data.status === 'tunnel' && data.url) return data.url;
     } catch (e) { continue; }
   }
   return null;
@@ -668,10 +760,7 @@ function syncUserPartnerCode() {
 
 function changeAppLanguage(lang) { appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? 'हिंदी चुनी गई' : 'English Selected'); }
 
-/* ═══════════ LANGUAGE (still needed for older funcs) ═══════════ */
-function detectLanguage(text) { return 'hindi'; } // playlist mode — not used
-
-/* ═══════════ CACHE ═══════════ */
+/* ═══════════ CACHE (IndexedDB for offline) ═══════════ */
 function initCacheDB() {
   return new Promise(resolve => {
     try {
@@ -865,8 +954,9 @@ function setupMediaSession() {
   }
 
   mainAudio.addEventListener('error', () => {
-    showToast('⚠️ Audio error');
+    // Silent auto-recover: try next song
     setVisualState(false);
+    setTimeout(() => { if (currentPlaylist.length > 1) playNext(); }, 500);
   });
 
   mainAudio.addEventListener('timeupdate', () => {
@@ -987,13 +1077,9 @@ async function fetchTrendingSongs(limit = 10) {
   return masterPlaylist.slice(0, limit);
 }
 
-async function fetchDirectAudioStreamUrl(input) {
-  if (!input) return null;
-  if (input.startsWith('blob:') || input.startsWith('data:')) return input;
-  return await workerStreamUrl(input);
-}
-
-/* ═══════════ PLAY TRACK ═══════════ */
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎯 PLAY TRACK — Saavn CDN primary (instant, JioSaavn-style)     */
+/* ═══════════════════════════════════════════════════════════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
@@ -1028,26 +1114,40 @@ async function playTrack(index, broadcast = true) {
     try { await mainAudio.play(); setVisualState(true); return true; } catch (e) { return false; }
   };
 
-  if (track.id.startsWith('blob:')) { await tryPlay(track.id); return; }
-
-  if (track._directStream && track._directStream.startsWith('http')) {
-    if (await tryPlay(track._directStream)) return;
+  // ═══ 1. Cached blob (instant) ═══
+  const cached = trackBlobCache.get(track.id);
+  if (cached && cached.startsWith('blob:')) {
+    if (await tryPlay(cached)) return;
   }
 
-  const c = trackBlobCache.get(track.id);
-  if (c && c.startsWith('blob:')) { if (await tryPlay(c)) return; }
-
+  // ═══ 2. IndexedDB cached ═══
   const db = await cacheGet(track.id);
   if (db && db.url) {
     trackBlobCache.set(track.id, db.url);
     if (await tryPlay(db.url)) return;
   }
 
-  const streamUrl = await fetchDirectAudioStreamUrl(track.id);
-  if (streamUrl && await tryPlay(streamUrl)) return;
+  // ═══ 3. SAAVN CDN PRIMARY (fast + reliable) ═══
+  try {
+    const saavnUrl = await findSaavnStreamUrl(track.title, track.artist);
+    if (saavnUrl && await tryPlay(saavnUrl)) return;
+  } catch (e) {}
 
-  showToast('⚠️ Playback failed');
-  setVisualState(false);
+  // ═══ 4. YouTube fallback (if track is YT) ═══
+  if (track.id.startsWith('yt_')) {
+    const ytUrl = await workerStreamUrl(track.id);
+    if (ytUrl && await tryPlay(ytUrl)) return;
+  }
+
+  // ═══ 5. Direct stream (if exists) ═══
+  if (track._directStream && track._directStream.startsWith('http')) {
+    if (await tryPlay(track._directStream)) return;
+  }
+
+  // ═══ 6. Auto-skip to next ═══
+  if (currentPlaylist.length > 1) {
+    setTimeout(() => playNext(), 800);
+  }
 }
 
 /* ═══════════ AUTOPLAY ═══════════ */
@@ -1087,7 +1187,6 @@ async function autoExtendQueue(track) {
   autoMixFetching = false;
 }
 
-/* ═══════════ RELATED — from Playlist only ═══════════ */
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
   const now = Date.now();
@@ -1099,7 +1198,6 @@ async function fetchRelatedSongs(seedTrack) {
   playbackHistoryList.forEach(t => existingIds.add(t.id));
   existingIds.add(seedTrack.id);
 
-  // Shuffle master playlist, pick fresh tracks
   const shuffled = masterPlaylist.slice().sort(() => Math.random() - 0.5);
   const results = [];
   for (const t of shuffled) {
@@ -1179,7 +1277,8 @@ async function cacheTrackInBackground(track) {
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
   try {
-    const url = await fetchDirectAudioStreamUrl(track.id);
+    let url = await findSaavnStreamUrl(track.title, track.artist);
+    if (!url) url = await workerStreamUrl(track.id);
     if (!url || !url.startsWith('http')) return;
     const r = await fetch(url);
     const blob = await r.blob();
@@ -1195,8 +1294,9 @@ async function downloadCurrentTrack() {
   const t = currentPlaylist[currentTrackIndex];
   showDownloadIndicator('Downloading...');
   try {
-    let u = trackBlobCache.get(t.id) || t._directStream;
-    if (!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id);
+    let u = trackBlobCache.get(t.id);
+    if (!u) u = await findSaavnStreamUrl(t.title, t.artist);
+    if (!u) u = await workerStreamUrl(t.id);
     if (!u) throw new Error('No URL');
     const r = await fetch(u);
     const b = await r.blob();
@@ -1317,7 +1417,7 @@ function renderQueueTile(t, i, ic) {
   return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isC ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
 }
 
-/* ═══════════ SEARCH UI — Playlist first ═══════════ */
+/* ═══════════ SEARCH UI ═══════════ */
 async function executeLiveSearch(isAuto = false) {
   const q = document.getElementById('mobileSearchField').value.trim();
   if (!q) return;
@@ -1342,7 +1442,6 @@ async function executeLiveSearch(isAuto = false) {
     renderSearchResults(found);
     if (!isAuto) showToast(`✅ ${found.length} results`);
   } else {
-    // No match → shuffle playlist
     const random = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 20);
     if (random.length > 0) {
       renderSearchResults(random);
@@ -1363,11 +1462,9 @@ function renderSearchResults(tracks) {
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || 'vaultify.png');
     const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
     const sDur = t.duration || 0;
-    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)} <i class="fa-brands fa-youtube" style="color:#ff0000;font-size:10px;margin-left:4px"></i></h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${sDur})"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:15px"></i></div>`;
   }).join('');
 }
-
-async function prefetchStream(idEnc) { }
 
 function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, duration) {
   const id = decodeURIComponent(idEnc);
@@ -1448,7 +1545,7 @@ async function renderRecommendedSection() {
   const c = document.getElementById('recommendedContainer');
   if (!c) return;
   if (!masterPlaylistLoaded) await fetchMasterPlaylist();
-  let found = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 8);
+  const found = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 8);
   const h = document.querySelector('.recommended-header span');
   if (h) h.innerText = 'From Your Playlist';
   if (found.length === 0) { c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`; return; }
@@ -1892,6 +1989,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }, 1500);
 
   initCacheDB();
+  loadSaavnUrlCache();
   setupMediaSession();
   setupTimelineDraggableEngine();
   initLiveSearchInputListener();
@@ -1912,7 +2010,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   setTimeout(() => { if (isFirebaseReady()) { initIPCounter(); listenIPStats(renderIPStats); } }, 3000);
 
-  // 🎯 Load master playlist (cache first, then background refresh)
   loadMasterPlaylistFromCache();
   setTimeout(async () => {
     await checkWorker();
@@ -1978,5 +2075,6 @@ Object.assign(window, {
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
   prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
   saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
-  fetchMasterPlaylist, manualRefreshPlaylist, searchInMasterPlaylist
+  fetchMasterPlaylist, manualRefreshPlaylist, searchInMasterPlaylist,
+  findSaavnStreamUrl
 });
