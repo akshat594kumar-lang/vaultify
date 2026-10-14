@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL WORKING (Saavn + SC + YT via proxyUrl+Cobalt)   */
+/* VAULTIFY — FULL FINAL (Saavn + SC + YT Piped/Cobalt/Invidious)  */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 2;
@@ -12,6 +12,12 @@ const PIPED_APIS = [
   'https://pipedapi.adminforge.de',
   'https://api.piped.yt',
   'https://pipedapi.reallyaweso.me'
+];
+const INVIDIOUS_APIS = [
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+  'https://yewtu.be',
+  'https://invidious.privacyredirect.com'
 ];
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
@@ -52,7 +58,6 @@ const trackBlobCache = new Map();
 let isDraggingTimeline = false;
 let autoMixFetching = false;
 let lastAutoFetchTime = 0;
-let lastFetchedArtist = '';
 let _lastSaveTick = 0;
 let cacheDB = null;
 let audioContextNode = null;
@@ -115,6 +120,7 @@ function switchNavTab(tab, th = true) {
   if (tab === 'home') setTimeout(renderRecommendedSection, 300);
   if (tab === 'library') renderLibrary();
   if (tab === 'profile') checkPermissionsStatus();
+  if (tab === 'cert') { updateCertLiveDateTime(); }
 }
 
 function switchLibraryTab(tab, el) {
@@ -222,6 +228,28 @@ async function searchYouTube(query, limit = 10) {
       });
     } catch (e) { continue; }
   }
+
+  for (const api of INVIDIOUS_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (!Array.isArray(data) || !data.length) continue;
+      return data.slice(0, limit).map(v => ({
+        id: 'yt_' + v.videoId,
+        title: v.title || 'Unknown',
+        artist: v.author || 'YouTube',
+        cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+        duration: v.lengthSeconds || 0,
+        source: 'youtube',
+        _ytId: v.videoId
+      }));
+    } catch (e) { continue; }
+  }
+
   return [];
 }
 
@@ -229,9 +257,7 @@ async function workerSearch(query, limit = 25) {
   return await searchSaavnAndSC(query, limit);
 }
 
-/* ═══════════ ✅ WORKING YT PIPELINE ═══════════ */
 async function workerStreamUrl(id) {
-  // SAAVN
   if (id.startsWith('saavn_')) {
     const songId = id.replace('saavn_', '');
     try {
@@ -248,11 +274,8 @@ async function workerStreamUrl(id) {
     } catch (e) {}
   }
 
-  // YOUTUBE
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
-
-    // STEP 1: Piped with proxyUrl priority
     for (const api of PIPED_APIS) {
       try {
         const ctrl = new AbortController();
@@ -263,22 +286,17 @@ async function workerStreamUrl(id) {
         const data = await r.json();
         const audioStreams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
         if (!audioStreams.length) continue;
-
-        // Prefer m4a > webm, then highest bitrate
         audioStreams.sort((a, b) => {
           const aM4a = (a.mimeType || '').includes('mp4') ? 1 : 0;
           const bM4a = (b.mimeType || '').includes('mp4') ? 1 : 0;
           if (aM4a !== bM4a) return bM4a - aM4a;
           return (b.bitrate || 0) - (a.bitrate || 0);
         });
-
         const chosen = audioStreams[0];
         const finalUrl = chosen.proxyUrl || chosen.url;
         if (finalUrl) return finalUrl;
       } catch (e) { continue; }
     }
-
-    // STEP 2: Cobalt fallback
     const cobaltUrl = await fetchCobaltAudio(ytId);
     if (cobaltUrl) return cobaltUrl;
   }
@@ -286,7 +304,6 @@ async function workerStreamUrl(id) {
   return null;
 }
 
-/* ✅ Cobalt fallback helper */
 async function fetchCobaltAudio(videoId) {
   const COBALT_INSTANCES = [
     'https://api.cobalt.tools',
@@ -301,16 +318,8 @@ async function fetchCobaltAudio(videoId) {
       const tm = setTimeout(() => ctrl.abort(), 8000);
       const r = await fetch(`${api}/api/json`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          url: ytUrl,
-          isAudioOnly: true,
-          aFormat: 'mp3',
-          audioBitrate: '128'
-        }),
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ url: ytUrl, isAudioOnly: true, aFormat: 'mp3', audioBitrate: '128' }),
         signal: ctrl.signal
       });
       clearTimeout(tm);
@@ -572,6 +581,46 @@ function getLanguageQueries(lang) {
   return ['top english hits', 'taylor swift', 'ed sheeran'];
 }
 
+function getTrendingViralQueries(lang) {
+  if (lang === 'punjabi') return [
+    'trending punjabi songs 2026',
+    'viral punjabi hits',
+    'top punjabi songs this week',
+    'new punjabi music 2026',
+    'diljit dosanjh trending songs',
+    'ap dhillon viral hits',
+    'karan aujla new songs',
+    'sidhu moose wala hits'
+  ];
+  if (lang === 'urdu') return [
+    'trending urdu songs 2026',
+    'coke studio viral hits',
+    'atif aslam trending',
+    'nusrat fateh ali qawwali hits',
+    'viral pakistani music 2026'
+  ];
+  if (lang === 'english') return [
+    'trending english songs 2026',
+    'top billboard hits 2026',
+    'viral pop songs',
+    'new english music 2026',
+    'spotify top 50 hits',
+    'tiktok viral songs'
+  ];
+  return [
+    'trending hindi songs 2026',
+    'viral bollywood hits',
+    'top hindi songs this week',
+    'new bollywood songs 2026',
+    'hindi trending music 2026',
+    'latest hindi hits',
+    'arijit singh new songs',
+    'atif aslam hits 2026',
+    'bollywood chart toppers',
+    'hindi viral songs'
+  ];
+}
+
 /* ═══════════ CACHE ═══════════ */
 function initCacheDB() {
   return new Promise(resolve => {
@@ -793,7 +842,6 @@ function setupMediaSession() {
 
   mainAudio.addEventListener('ended', () => {
     setVisualState(false);
-    // auto next
     if (currentPlaylist.length > 1) playNext();
   });
 }
@@ -915,12 +963,10 @@ async function playTrack(index, broadcast = true) {
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
   setTimeout(() => autoExtendQueue(track), 2000);
 
-  // Destroy old HLS
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
   const tryPlay = async (url) => {
     if (!url) return false;
-    // HLS check
     if (url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
       try {
         currentHls = new Hls({ enableWorker: true, lowLatencyMode: false });
@@ -935,28 +981,21 @@ async function playTrack(index, broadcast = true) {
     try { await mainAudio.play(); setVisualState(true); return true; } catch (e) { return false; }
   };
 
-  // blob
   if (track.id.startsWith('blob:')) { await tryPlay(track.id); return; }
 
-  // direct stream
   if (track._directStream && track._directStream.startsWith('http')) {
     if (await tryPlay(track._directStream)) return;
   }
 
-  // blob cache
   const c = trackBlobCache.get(track.id);
-  if (c && c.startsWith('blob:')) {
-    if (await tryPlay(c)) return;
-  }
+  if (c && c.startsWith('blob:')) { if (await tryPlay(c)) return; }
 
-  // IndexedDB cache
   const db = await cacheGet(track.id);
   if (db && db.url) {
     trackBlobCache.set(track.id, db.url);
     if (await tryPlay(db.url)) return;
   }
 
-  // Fresh stream
   const streamUrl = await fetchDirectAudioStreamUrl(track.id);
   if (streamUrl && await tryPlay(streamUrl)) return;
 
@@ -1006,32 +1045,44 @@ async function autoExtendQueue(track) {
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
   const now = Date.now();
-  if (now - lastAutoFetchTime < 4000) return [];
+  if (now - lastAutoFetchTime < 3000) return [];
   lastAutoFetchTime = now;
+
   const seedLang = detectLanguage((seedTrack.title || '') + ' ' + (seedTrack.artist || ''));
   currentLanguage = seedLang;
-  let artist = (seedTrack.artist || '').replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios/gi, '').replace(/[-_,]/g, ' ').trim();
-  if (artist.includes(' - ')) artist = artist.split(' - ')[0].trim();
-  const existingIds = new Set(currentPlaylist.map(t => t.id));
-  const existingKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
+
+  const existingIds = new Set();
+  const existingKeys = new Set();
+  currentPlaylist.forEach(t => {
+    existingIds.add(t.id);
+    existingKeys.add(((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim());
+  });
+  playbackHistoryList.forEach(t => {
+    existingIds.add(t.id);
+    existingKeys.add(((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim());
+  });
+  existingIds.add(seedTrack.id);
+  existingKeys.add(((seedTrack.title || '') + '|' + (seedTrack.artist || '')).toLowerCase().trim());
+
+  const queries = getTrendingViralQueries(seedLang);
+  const shuffled = queries.slice().sort(() => Math.random() - 0.5);
+
   let results = [];
-  const queries = [];
-  if (artist && artist.length > 2 && artist !== lastFetchedArtist) { queries.push(artist); lastFetchedArtist = artist; }
-  const langQ = getLanguageQueries(seedLang);
-  queries.push(langQ[Math.floor(Math.random() * langQ.length)]);
-  for (const q of queries) {
+  for (const q of shuffled.slice(0, 3)) {
     if (results.length >= 12) break;
     try {
       const batch = await searchAll(q);
       batch.forEach(t => {
+        if (results.length >= 12) return;
         const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-        if (!existingIds.has(t.id) && !existingKeys.has(key) && !results.some(r => r.id === t.id)) {
-          existingKeys.add(key);
-          results.push(t);
-        }
+        if (existingIds.has(t.id) || existingKeys.has(key)) return;
+        existingKeys.add(key);
+        existingIds.add(t.id);
+        results.push(t);
       });
     } catch (e) {}
   }
+  results.sort(() => Math.random() - 0.5);
   return results.slice(0, 10);
 }
 
@@ -1270,14 +1321,14 @@ async function executeLiveSearch(isAuto = false) {
 
   const saavnResults = await searchSaavnAndSC(q, 25);
   l.style.display = 'none';
-  
+
   if (saavnResults.length > 0) {
     renderSearchResults(saavnResults);
     if (!isAuto) showToast(`✅ ${saavnResults.length} results`);
   } else {
     rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
   }
-  
+
   setTimeout(async () => {
     try {
       const ytResults = await searchYouTube(q, 8);
@@ -1610,7 +1661,7 @@ function initEmojiRunner() {
   i.style.transform = '';
   i.style.animation = '';
   i.innerText = activeEmoji;
-  
+
   if (emojiMode === 'mix') {
     i.classList.add('mode-mix');
     animateMixEmoji();
@@ -1618,7 +1669,7 @@ function initEmojiRunner() {
     i.classList.add('mode-flow');
     if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; }
   }
-  
+
   const flowBtn = document.getElementById('modeFlowBtn');
   const mixBtn = document.getElementById('modeMixBtn');
   if (flowBtn && mixBtn) {
@@ -1711,7 +1762,11 @@ function applyThemeScheme(c) {
   if (c !== 'theme-violet') document.body.classList.add(c);
   localStorage.setItem('vaultify_theme', c);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = (c === 'theme-midnight-oled') ? '#000000' : (c === 'theme-royal-gold' ? '#d4af37' : '#8b5cf6');
+  if (meta) {
+    if (c === 'theme-midnight-oled' || c === 'theme-black-white') meta.content = '#000000';
+    else if (c === 'theme-royal-gold') meta.content = '#d4af37';
+    else meta.content = '#8b5cf6';
+  }
   showToast(`Theme changed!`);
 }
 
@@ -1768,8 +1823,19 @@ function listenIPStats(callback) {
 }
 
 function renderIPStats(stats) {
-  const el = document.getElementById('ipStatsDisplay'); if (!el || !stats) return;
-  el.innerHTML = `<div style="font-size:11px;color:var(--text-sub);line-height:1.8"><div>🌐 Total IPs: <b style="color:#fff">${stats.totalIPs || 0}</b></div><div>📱 Total devices: <b style="color:#fff">${stats.totalDevices || 0}</b></div><div>🟢 Active 24h: <b style="color:#10b981">${stats.activeDevices24h || 0}</b></div></div>`;
+  const el = document.getElementById('ipStatsDisplay');
+  if (el && stats) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--text-sub);line-height:1.8">
+      <div>🌐 Total IPs: <b style="color:#fff">${stats.totalIPs || 0}</b></div>
+      <div>📱 Total devices: <b style="color:#fff">${stats.totalDevices || 0}</b></div>
+      <div>🟢 Active 24h: <b style="color:#10b981">${stats.activeDevices24h || 0}</b></div>
+    </div>`;
+  }
+  const cnt = document.getElementById('certUserCount');
+  if (cnt && stats) {
+    const total = stats.activeDevices24h || stats.totalDevices || 1;
+    cnt.innerText = `${total} User${total > 1 ? 's' : ''}`;
+  }
 }
 
 /* ═══════════ PLAYBACK SAVE ═══════════ */
@@ -1798,12 +1864,43 @@ setTimeout(() => {
   loadEqFromStorage();
 }, 2000);
 
+/* ═══════════ CERTIFICATE LIVE DATE + TIME ═══════════ */
+function updateCertLiveDateTime() {
+  try {
+    const dateEl = document.getElementById('certLiveDate');
+    const timeEl = document.getElementById('certLiveTime');
+    if (!dateEl || !timeEl) return;
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    dateEl.textContent = dd + '/' + mm + '/' + yyyy;
+    let h = now.getHours();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12; if (h === 0) h = 12;
+    const hh = String(h).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    timeEl.textContent = hh + ':' + mi + ':' + ss + ' ' + ampm;
+  } catch (e) {}
+}
+
+/* Immediate + retry + interval */
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', updateCertLiveDateTime);
+} else {
+  updateCertLiveDateTime();
+}
+setTimeout(updateCertLiveDateTime, 100);
+setTimeout(updateCertLiveDateTime, 500);
+setTimeout(updateCertLiveDateTime, 1500);
+setInterval(updateCertLiveDateTime, 1000);
+
 /* ═══════════ BOOT ═══════════ */
 window.addEventListener('DOMContentLoaded', () => {
   mainAudio = document.getElementById('vaultifyAudio');
   silentLoop = document.getElementById('silentAudioLoop');
 
-  // Force-hide intro after 1.5s
   setTimeout(() => {
     const i = document.getElementById('appIntroScreen');
     if (i) {
@@ -1884,7 +1981,7 @@ Object.assign(window, {
   verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
   openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
   saveProfileData, performAppLogout, generatePartnerCode, syncUserPartnerCode, changeAppLanguage,
-  detectLanguage, getLanguageQueries, searchAll, fetchTrendingSongs,
+  detectLanguage, getLanguageQueries, getTrendingViralQueries, searchAll, fetchTrendingSongs,
   executeLiveSearch, instantSearch, renderSearchResults, playSearchedTrackImmediately,
   playTrack, playNext, playPrevious, autoplayNext, togglePlaybackState, setVisualState,
   syncPlayerUI, toggleShuffle, toggleRepeat, toggleSleepTimer, shareCurrentTrack,
@@ -1901,5 +1998,5 @@ Object.assign(window, {
   addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
   prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
-  saveQueueToStorage, loadQueueFromStorage
+  saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime
 });
