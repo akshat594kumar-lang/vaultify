@@ -132,54 +132,46 @@ window.onerror = function(msg, url, line) {
           <div class="cert-border-outer">
             <div class="cert-border-inner">
               <div class="cert-top-row">
-                <div class="cert-badge">
-                  <i class="fa-solid fa-shield-halved"></i>
-                </div>
+                <div class="cert-badge"><i class="fa-solid fa-shield-halved"></i></div>
                 <div class="cert-verified-tag">VERIFIED</div>
               </div>
+
               <div class="cert-title">Vaultify Certified</div>
               <div class="cert-subtitle">CERTIFICATE OF OWNERSHIP</div>
 
-              <div class="cert-seal">
-                <i class="fa-solid fa-crown"></i>
-              </div>
-
-              <div class="cert-body-text">This certificate is proudly presented to</div>
               <div class="cert-owner-name">Akshat Kumar</div>
               <div class="cert-owner-handle">@akshat.kumar_148</div>
 
-              <div class="cert-body-text" style="margin-top:14px">
-                Founder & Owner of Vaultify — Unlimited Soundscape
+              <div class="cert-roles-row">
+                <span class="cert-role-chip"><i class="fa-solid fa-crown"></i> Founder</span>
+                <span class="cert-role-chip"><i class="fa-solid fa-paintbrush"></i> GFX Designer</span>
+                <span class="cert-role-chip"><i class="fa-solid fa-wand-magic-sparkles"></i> UI/UX</span>
               </div>
 
-              <div class="cert-details-grid">
-                <div class="cert-detail">
-                  <div class="cert-detail-label">Issued</div>
-                  <div class="cert-detail-value">2026</div>
-                </div>
-                <div class="cert-detail">
-                  <div class="cert-detail-label">App Version</div>
-                  <div class="cert-detail-value">v2.0</div>
-                </div>
-                <div class="cert-detail">
-                  <div class="cert-detail-label">Status</div>
-                  <div class="cert-detail-value" style="color:#34d399">Active</div>
-                </div>
+              <div class="cert-user-count">
+                <span>Total Active Users:</span>
+                <b id="certUserCount">1 User</b>
               </div>
 
-              <div class="cert-signature-row">
-                <div class="cert-sig-block">
-                  <img src="./assets/signature.png" alt="Signature" class="cert-signature-img" onerror="this.style.display='none'" />
-                  <div class="cert-sig-line"></div>
-                  <div class="cert-sig-name">Akshat Kumar</div>
-                  <div class="cert-sig-role">Founder & Owner</div>
-                </div>
-                <div class="cert-sig-block">
-                  <div class="cert-seal-stamp">
-                    <i class="fa-solid fa-stamp"></i>
-                    <div class="cert-stamp-text">VAULTIFY<br/>OFFICIAL</div>
+              <div class="cert-signature-section">
+                <div class="cert-sig-label">SIGNATURE</div>
+                <div class="cert-signature-row">
+                  <div class="cert-sig-img-wrap">
+                    <img src="./assets/signature.png" alt="Signature" class="cert-signature-img" onerror="this.style.display='none'" />
+                  </div>
+                  <div class="cert-sig-meta">
+                    <div class="cert-sig-meta-line">Registry: <b>VK-2026-X99</b></div>
+                    <div class="cert-sig-meta-line">Seal: <b>Authentic</b></div>
                   </div>
                 </div>
+              </div>
+
+              <!-- ═══ LIVE DATE + TIME ═══ -->
+              <div class="cert-live-datetime">
+                <i class="fa-regular fa-clock"></i>
+                <span id="certLiveDate">--/--/----</span>
+                <span class="cert-live-sep">•</span>
+                <span id="certLiveTime">--:--:--</span>
               </div>
 
               <div class="cert-footer">
@@ -189,17 +181,15 @@ window.onerror = function(msg, url, line) {
             </div>
           </div>
 
-          <div class="cert-stats-box">
-            <div class="cert-stats-title">
-              <i class="fa-solid fa-chart-line"></i> LIVE STATS
-            </div>
-            <div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div>
-          </div>
-
           <a href="https://instagram.com/akshat.kumar_148" target="_blank" class="cert-insta-btn">
             <i class="fa-brands fa-instagram"></i>
             <span>Follow @akshat.kumar_148</span>
           </a>
+
+          <div class="cert-stats-box">
+            <div class="cert-stats-title"><i class="fa-solid fa-chart-line"></i> LIVE STATS</div>
+            <div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div>
+          </div>
         </div>
       </div>
 
@@ -265,6 +255,7 @@ window.onerror = function(msg, url, line) {
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#f3e8ff;color:#000" onclick="applyThemeScheme('theme-amethyst-light')">Light</button>
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#059669" onclick="applyThemeScheme('theme-emerald-neon')">Emerald</button>
               <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#d97706" onclick="applyThemeScheme('theme-cyberpunk-amber')">Amber</button>
+              <button class="submit-btn" style="font-size:10px;padding:6px 2px;background:#fff;color:#000;border:1px solid #000;grid-column:span 3" onclick="applyThemeScheme('theme-black-white')"><i class="fa-solid fa-circle-half-stroke"></i> Black & White (Monochrome)</button>
             </div>
           </div>
         </div>
@@ -374,7 +365,6 @@ window.onerror = function(msg, url, line) {
     </div>
   </div>
 
-  <!-- ═══ SUPPORT — COMING SOON ═══ -->
   <div class="modal-overlay" id="modalSupport">
     <div class="card-popup" style="text-align:center">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
