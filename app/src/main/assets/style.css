@@ -182,7 +182,7 @@ body.auth-locked .mobile-frame{pointer-events:none}
 .section-heading{font-family:'Vacancy',cursive;font-size:36px;font-weight:400;letter-spacing:.5px;line-height:1.15;color:#fff;margin:4px 0 12px}
 
 /* ═══════════════════════════════════════════ */
-/* CERTIFICATE (Final)                          */
+/* CERTIFICATE                                  */
 /* ═══════════════════════════════════════════ */
 .cert-wrapper {
   position: relative;
@@ -269,29 +269,58 @@ body.auth-locked .mobile-frame{pointer-events:none}
 .cert-user-count b { color: #d4af37; font-weight: 700; }
 .cert-signature-section {
   border-top: 1px dashed rgba(212,175,55,.25);
-  padding-top: 12px; margin-bottom: 12px;
+  padding-top: 14px; margin-bottom: 12px;
 }
 .cert-sig-label {
   font-size: 9.5px; letter-spacing: 2px; color: var(--text-sub);
-  text-transform: uppercase; margin-bottom: 8px;
+  text-transform: uppercase; margin-bottom: 10px;
 }
+
+/* ✅ SIGNATURE ROW — FULL WIDTH, BIG & CLEAR */
 .cert-signature-row {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
+
 .cert-sig-img-wrap {
-  background: #fff; border-radius: 10px;
-  padding: 10px 18px; min-width: 120px; max-width: 60%;
-  box-shadow: 0 4px 20px rgba(212,175,55,.2);
-  display: flex; align-items: center; justify-content: center;
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 10px 14px;
+  width: 100%;
+  height: 110px;
+  box-shadow:
+    0 6px 24px rgba(212,175,55,.3),
+    inset 0 0 0 1.5px rgba(212,175,55,.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
+
 .cert-signature-img {
-  max-width: 100%; max-height: 55px; height: auto; object-fit: contain;
+  width: 100%;
+  height: 100%;
+  max-height: 95px;
+  object-fit: contain;
+  object-position: center;
+  display: block;
+  image-rendering: -webkit-optimize-contrast;
+  filter: contrast(1.2) brightness(0.95) drop-shadow(0 1px 2px rgba(0,0,0,.08));
 }
+
 .cert-sig-meta {
-  text-align: right; font-size: 10.5px; color: var(--text-sub);
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-sub);
   line-height: 1.7;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
+  gap: 8px;
 }
 .cert-sig-meta-line b { color: #d4af37; font-weight: 700; }
+
 .cert-live-datetime {
   display: flex; align-items: center; justify-content: center;
   gap: 8px;
@@ -307,12 +336,14 @@ body.auth-locked .mobile-frame{pointer-events:none}
 }
 .cert-live-datetime i { color: #d4af37; font-size: 12px; }
 .cert-live-sep { color: rgba(212,175,55,.5); }
+
 .cert-footer {
   text-align: center; font-size: 9.5px; color: var(--text-sub);
   padding-top: 10px; border-top: 1px dashed rgba(212,175,55,.2);
   letter-spacing: 0.3px;
 }
 .cert-footer i { color: #d4af37; margin-right: 4px; }
+
 .cert-insta-btn {
   display: flex; align-items: center; justify-content: center;
   gap: 8px; margin-top: 12px;
@@ -325,6 +356,7 @@ body.auth-locked .mobile-frame{pointer-events:none}
 }
 .cert-insta-btn:active { transform: scale(0.97); }
 .cert-insta-btn i { font-size: 16px; }
+
 .cert-stats-box {
   margin-top: 12px;
   background: rgba(255,255,255,.04);
@@ -356,13 +388,12 @@ body.theme-black-white .notch-island {
 body.theme-black-white .notch-bolt { color: #fff !important; }
 body.theme-black-white .logo-font,
 body.theme-black-white .intro-brand-title,
-body.theme-black-white .recommended-header span,
-body.theme-black-white .section-heading {
+body.theme-black-white .recommended-header span {
   background: linear-gradient(135deg, #fff, #999);
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-body.theme-black-white .section-heading { color: #fff; -webkit-text-fill-color: #fff; }
+body.theme-black-white .section-heading { color: #fff; }
 body.theme-black-white .top-icons i { color: #fff !important; }
 body.theme-black-white .mic-icon-btn { color: #fff !important; }
 body.theme-black-white .submit-btn {
@@ -406,7 +437,6 @@ body.theme-black-white .song-tile.playing {
   background: rgba(255,255,255,.08);
   box-shadow: 0 0 12px rgba(255,255,255,.2);
 }
-body.theme-black-white #fullPlayerModal { background: var(--player-bg); }
 body.theme-black-white .capsule-fill { background: linear-gradient(90deg, #666, #fff); }
 body.theme-black-white .capsule-thumb { box-shadow: 0 0 10px #fff; }
 body.theme-black-white .support-card {
@@ -479,7 +509,7 @@ body.theme-black-white .cert-stats-box {
 }
 body.theme-black-white .cert-stats-title { color: #fff; }
 body.theme-black-white .cert-sig-img-wrap {
-  box-shadow: 0 4px 20px rgba(255,255,255,.15);
+  box-shadow: 0 6px 24px rgba(255,255,255,.15), inset 0 0 0 1.5px rgba(255,255,255,.2);
 }
 body.theme-black-white .emoji-chip.active {
   border-color: #fff;
