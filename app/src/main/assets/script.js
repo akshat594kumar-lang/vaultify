@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════ */
 /* VAULTIFY — FULL FINAL                                           */
 /* Sources: Saavn + SoundCloud + Jamendo + Internet Archive + YT   */
-/* Queue: Saavn Suggestions + Same Artist + Smart Language Match   */
+/* QUEUE: Har related song queue me jaayega — Recommended me nahi  */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 3;
@@ -77,6 +77,10 @@ let isLoginMode = false;
 let loggedInUser = null;
 let navigationHistory = ['home'];
 let queueSeenIds = new Set();
+
+const QUEUE_TARGET_MIN = 15;   // minimum tracks ahead to keep filling
+const QUEUE_EXTEND_BATCH = 15; // how many songs to fetch per extend call
+const QUEUE_MAX_TOTAL = 200;   // hard cap
 
 /* ═══════════ HELPERS ═══════════ */
 function showToast(msg) {
@@ -966,7 +970,7 @@ function seekAudioTo(s) { if (mainAudio && mainAudio.duration) mainAudio.current
 function saveQueueToStorage() {
   try {
     localStorage.setItem('vaultify_queue', JSON.stringify({
-      tracks: currentPlaylist.slice(0, 100),
+      tracks: currentPlaylist.slice(0, 200),
       index: currentTrackIndex,
       timestamp: Date.now()
     }));
@@ -1025,7 +1029,11 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => initForegroundAudioBridge(), 0);
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
-  setTimeout(() => autoExtendQueue(track), 3000);
+
+  // ✅ AGGRESSIVE queue fill — har song pe
+  setTimeout(() => autoExtendQueue(track), 1500);
+  setTimeout(() => autoExtendQueue(track), 5000);
+  setTimeout(() => autoExtendQueue(track), 12000);
 
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
@@ -1073,22 +1081,14 @@ async function autoplayNext() {
   if (isRepeat) { playTrack(currentTrackIndex); return; }
   if (currentPlaylist.length === 0) return;
 
+  // ✅ Before moving next, aggressively fill queue
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
-  if (remaining < 4) {
+  if (remaining < QUEUE_TARGET_MIN) {
     const ct = currentPlaylist[currentTrackIndex];
     if (ct) {
       try {
         const related = await fetchRelatedSongs(ct);
-        if (related.length) {
-          related.forEach(t => {
-            if (!currentPlaylist.some(x => x.id === t.id) && !queueSeenIds.has(t.id)) {
-              currentPlaylist.push(t);
-              queueSeenIds.add(t.id);
-            }
-          });
-          renderHomeQueue();
-          saveQueueToStorage();
-        }
+        addToQueueSilently(related);
       } catch (e) {}
     }
   }
@@ -1098,34 +1098,55 @@ async function autoplayNext() {
   playTrack(currentTrackIndex);
 }
 
+/* ═══════════ AUTO EXTEND QUEUE ═══════════ */
 async function autoExtendQueue(track) {
   if (autoMixFetching || !track) return;
+
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
-  if (remaining >= 4) return;
+  if (remaining >= QUEUE_TARGET_MIN) return;         // queue already healthy
+  if (currentPlaylist.length >= QUEUE_MAX_TOTAL) return; // hard cap
+
   autoMixFetching = true;
   try {
     const related = await fetchRelatedSongs(track);
-    if (related.length) {
-      related.forEach(t => {
-        if (!currentPlaylist.some(x => x.id === t.id) && !queueSeenIds.has(t.id)) {
-          currentPlaylist.push(t);
-          queueSeenIds.add(t.id);
-        }
-      });
-      renderHomeQueue();
-      saveQueueToStorage();
-    }
+    addToQueueSilently(related);
   } catch (e) {}
   autoMixFetching = false;
 }
 
+/* ✅ Silent queue add — no render spam, dedupe strict */
+function addToQueueSilently(tracks) {
+  if (!tracks || !tracks.length) return;
+  let added = 0;
+  const existingIds = new Set(currentPlaylist.map(t => t.id));
+  const existingKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
+
+  for (const t of tracks) {
+    if (currentPlaylist.length >= QUEUE_MAX_TOTAL) break;
+    if (existingIds.has(t.id)) continue;
+    const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
+    if (existingKeys.has(key)) continue;
+    if (queueSeenIds.has(t.id)) continue;
+    currentPlaylist.push(t);
+    queueSeenIds.add(t.id);
+    existingIds.add(t.id);
+    existingKeys.add(key);
+    added++;
+  }
+
+  if (added > 0) {
+    renderHomeQueue();
+    saveQueueToStorage();
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 SMART RELATED SONGS — Vibe + Language matched                */
+/* 🎯 RELATED SONGS — Ek saath ek badi list — sab queue me jaayegi  */
 /* ═══════════════════════════════════════════════════════════════ */
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
   const now = Date.now();
-  if (now - lastAutoFetchTime < 2500) return [];
+  if (now - lastAutoFetchTime < 1500) return [];
   lastAutoFetchTime = now;
 
   const seedLang = detectLanguage((seedTrack.title || '') + ' ' + (seedTrack.artist || '') + ' ' + (seedTrack._lang || ''));
@@ -1133,31 +1154,29 @@ async function fetchRelatedSongs(seedTrack) {
   currentLanguage = seedLang;
   currentVibe = seedVibe;
 
-  const existingIds = new Set([...currentPlaylist.map(t => t.id), ...queueSeenIds]);
-  playbackHistoryList.forEach(t => existingIds.add(t.id));
-  existingIds.add(seedTrack.id);
+  const allExisting = new Set([...currentPlaylist.map(t => t.id), ...queueSeenIds]);
+  playbackHistoryList.forEach(t => allExisting.add(t.id));
+  allExisting.add(seedTrack.id);
 
-  const existingKeys = new Set();
-  currentPlaylist.forEach(t => existingKeys.add(((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
+  const allKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
 
   const results = [];
-  const pick = (arr, max = 4) => {
-    const picked = [];
+  const push = (arr) => {
+    if (!arr) return;
     for (const t of arr) {
-      if (picked.length >= max) break;
+      if (results.length >= QUEUE_EXTEND_BATCH * 2) return;
       const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-      if (existingIds.has(t.id) || existingKeys.has(key)) continue;
-      existingIds.add(t.id);
-      existingKeys.add(key);
-      picked.push(t);
+      if (allExisting.has(t.id) || allKeys.has(key)) continue;
+      allExisting.add(t.id);
+      allKeys.add(key);
+      results.push(t);
     }
-    return picked;
   };
 
-  // STEP 1: Saavn suggestions API (best vibe match)
+  // ═══ 1. SAAVN SUGGESTIONS (seed song same vibe — best) ═══
   if (seedTrack.id.startsWith('saavn_') && seedTrack._saavnId) {
     try {
-      const r = await fetch(`${SAAVN_DELTA}/api/songs/${seedTrack._saavnId}/suggestions?limit=15`);
+      const r = await fetch(`${SAAVN_DELTA}/api/songs/${seedTrack._saavnId}/suggestions?limit=30`);
       if (r.ok) {
         const data = await r.json();
         const arr = data.data || [];
@@ -1172,12 +1191,12 @@ async function fetchRelatedSongs(seedTrack) {
             source: 'saavn', _saavnId: s.id
           };
         });
-        results.push(...pick(mapped, 5));
+        push(mapped);
       }
     } catch (e) {}
   }
 
-  // STEP 2: Same artist
+  // ═══ 2. SAME ARTIST (same vibe guaranteed) ═══
   const cleanArtist = (seedTrack.artist || '')
     .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios|label/gi, '')
     .replace(/- Topic$/i, '')
@@ -1185,48 +1204,50 @@ async function fetchRelatedSongs(seedTrack) {
     .replace(/[-_,]/g, ' ')
     .trim();
 
-  if (cleanArtist && cleanArtist.length > 2 && results.length < 6) {
+  if (cleanArtist && cleanArtist.length > 2) {
     try {
-      const artistSongs = await searchSaavn(cleanArtist, 12);
-      results.push(...pick(artistSongs, 4));
+      const artistSongs = await searchSaavn(cleanArtist, 20);
+      push(artistSongs);
     } catch (e) {}
   }
 
-  // STEP 3: Vibe-based
-  if (results.length < 5) {
-    const vibeKeywords = getVibeKeywords(seedVibe);
-    const langPrefix = seedLang === 'punjabi' ? 'punjabi ' : seedLang === 'urdu' ? 'urdu ' : seedLang === 'english' ? '' : 'hindi ';
-    const vibeQuery = vibeKeywords.length > 0 ? (langPrefix + vibeKeywords[0]).trim() : null;
-    if (vibeQuery) {
-      try {
-        const vibeSongs = await searchSaavn(vibeQuery, 10);
-        results.push(...pick(vibeSongs, 3));
-      } catch (e) {}
-    }
-  }
+  // ═══ 3. VIBE-BASED (same mood) ═══
+  const vibeKeywords = getVibeKeywords(seedVibe);
+  const langPrefix = seedLang === 'punjabi' ? 'punjabi ' : seedLang === 'urdu' ? 'urdu ' : seedLang === 'english' ? '' : 'hindi ';
+  const vibeQuery = vibeKeywords.length > 0 ? (langPrefix + vibeKeywords[0]).trim() : (langPrefix + 'hits').trim();
+  try {
+    const vibeSongs = await searchSaavn(vibeQuery, 20);
+    push(vibeSongs);
+  } catch (e) {}
 
-  // STEP 4: Language curated artists
-  if (results.length < 5) {
-    const artists = getLanguageArtists(seedLang);
-    const shuffled = artists.slice().sort(() => Math.random() - 0.5);
-    for (const a of shuffled.slice(0, 2)) {
-      if (results.length >= 8) break;
-      try {
-        const songs = await searchSaavn(a, 10);
-        results.push(...pick(songs, 3));
-      } catch (e) {}
-    }
-  }
-
-  // STEP 5: Jamendo fallback
-  if (results.length < 5) {
+  // ═══ 4. LANGUAGE CURATED ARTISTS (2-3 random) ═══
+  const artists = getLanguageArtists(seedLang);
+  const shuffled = artists.slice().sort(() => Math.random() - 0.5);
+  for (const a of shuffled.slice(0, 3)) {
+    if (results.length >= QUEUE_EXTEND_BATCH) break;
     try {
-      const jamSongs = await searchJamendo(seedVibe === 'general' ? 'chill' : seedVibe, 8);
-      results.push(...pick(jamSongs, 2));
+      const songs = await searchSaavn(a, 12);
+      push(songs);
     } catch (e) {}
   }
 
-  return results.slice(0, 12);
+  // ═══ 5. JAMENDO FALLBACK (creative commons) ═══
+  if (results.length < QUEUE_EXTEND_BATCH) {
+    try {
+      const jamSongs = await searchJamendo(seedVibe === 'general' ? (langPrefix + 'chill').trim() : seedVibe, 12);
+      push(jamSongs);
+    } catch (e) {}
+  }
+
+  // ═══ 6. LAST RESORT: trending ═══
+  if (results.length < QUEUE_EXTEND_BATCH) {
+    try {
+      const trending = await searchSaavn('trending hits', 12);
+      push(trending);
+    } catch (e) {}
+  }
+
+  return results.slice(0, QUEUE_EXTEND_BATCH);
 }
 
 function togglePlaybackState(broadcast = true) {
@@ -1430,7 +1451,7 @@ function renderHomeQueue() {
   }
   let h = '';
   const np = currentPlaylist[currentTrackIndex];
-  const un = currentPlaylist.slice(currentTrackIndex + 1, currentTrackIndex + 20);
+  const un = currentPlaylist.slice(currentTrackIndex + 1, currentTrackIndex + 40);
   if (np) {
     h += `<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--accent-neon)">▶ Now Playing</div>`;
     h += renderQueueTile(np, currentTrackIndex, true);
@@ -1489,8 +1510,6 @@ async function executeLiveSearch(isAuto = false) {
       }
     } catch (e) {}
   }, 500);
-
-  setTimeout(renderRecommendedSection, 2000);
 }
 
 function renderSearchResults(tracks) {
@@ -1600,33 +1619,20 @@ function renderSearchHistoryTags() {
 
 function clearSearchHistory() { searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
 
-/* ═══════════ RECOMMENDED ═══════════ */
-function buildRecommendationQuery() {
-  const tokens = [];
-  playbackHistoryList.slice(0, 5).forEach(t => { if (t.artist) tokens.push(t.artist.replace(/vevo|official|channel|records|music/gi, '').split(' - ')[0].trim()); });
-  searchHistoryList.slice(0, 3).forEach(s => tokens.push(s));
-  const u = [...new Set(tokens.filter(t => t && t.length > 2))];
-  if (u.length === 0) return getLanguageQueries(currentLanguage)[0];
-  return u.slice(0, 3).join(' ');
-}
-
+/* ═══════════ RECOMMENDED — ONLY Static Trending (no user rec) ═══════════ */
 async function renderRecommendedSection() {
   const c = document.getElementById('recommendedContainer');
   if (!c) return;
-  let found = [];
-  let headerText = 'Trending Now';
-  if (playbackHistoryList.length === 0 && searchHistoryList.length === 0) {
-    found = await fetchTrendingSongs(8);
-  } else {
-    headerText = 'Recommended For You';
-    const q = buildRecommendationQuery();
-    const seen = new Set(playbackHistoryList.map(t => t.id));
-    const all = await searchAll(q);
-    found = all.filter(t => !seen.has(t.id)).slice(0, 6);
-  }
+
+  // Recommended section me sirf generic trending — koi user-specific related nahi
+  const found = await fetchTrendingSongs(8);
   const h = document.querySelector('.recommended-header span');
-  if (h) h.innerText = headerText;
-  if (found.length === 0) { c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`; return; }
+  if (h) h.innerText = 'Trending Now';
+
+  if (found.length === 0) {
+    c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`;
+    return;
+  }
   c.innerHTML = found.map(t => {
     const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || '');
