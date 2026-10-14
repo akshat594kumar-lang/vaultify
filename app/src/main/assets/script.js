@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════ */
 /* VAULTIFY — FULL FINAL                                           */
 /* Sources: Saavn + SoundCloud + Jamendo + Internet Archive + YT   */
-/* QUEUE: Har related song queue me jaayega — Recommended me nahi  */
+/* QUEUE: Same Artist + Same Language (Search history blocked)     */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 3;
@@ -78,9 +78,9 @@ let loggedInUser = null;
 let navigationHistory = ['home'];
 let queueSeenIds = new Set();
 
-const QUEUE_TARGET_MIN = 15;   // minimum tracks ahead to keep filling
-const QUEUE_EXTEND_BATCH = 15; // how many songs to fetch per extend call
-const QUEUE_MAX_TOTAL = 200;   // hard cap
+const QUEUE_TARGET_MIN = 15;
+const QUEUE_EXTEND_BATCH = 15;
+const QUEUE_MAX_TOTAL = 200;
 
 /* ═══════════ HELPERS ═══════════ */
 function showToast(msg) {
@@ -1030,7 +1030,7 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
 
-  // ✅ AGGRESSIVE queue fill — har song pe
+  // Aggressive queue fill — 3 triggers
   setTimeout(() => autoExtendQueue(track), 1500);
   setTimeout(() => autoExtendQueue(track), 5000);
   setTimeout(() => autoExtendQueue(track), 12000);
@@ -1076,12 +1076,11 @@ async function playTrack(index, broadcast = true) {
   if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
 }
 
-/* ═══════════ SMART AUTOPLAY ═══════════ */
+/* ═══════════ AUTOPLAY ═══════════ */
 async function autoplayNext() {
   if (isRepeat) { playTrack(currentTrackIndex); return; }
   if (currentPlaylist.length === 0) return;
 
-  // ✅ Before moving next, aggressively fill queue
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if (remaining < QUEUE_TARGET_MIN) {
     const ct = currentPlaylist[currentTrackIndex];
@@ -1098,13 +1097,11 @@ async function autoplayNext() {
   playTrack(currentTrackIndex);
 }
 
-/* ═══════════ AUTO EXTEND QUEUE ═══════════ */
 async function autoExtendQueue(track) {
   if (autoMixFetching || !track) return;
-
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
-  if (remaining >= QUEUE_TARGET_MIN) return;         // queue already healthy
-  if (currentPlaylist.length >= QUEUE_MAX_TOTAL) return; // hard cap
+  if (remaining >= QUEUE_TARGET_MIN) return;
+  if (currentPlaylist.length >= QUEUE_MAX_TOTAL) return;
 
   autoMixFetching = true;
   try {
@@ -1114,7 +1111,6 @@ async function autoExtendQueue(track) {
   autoMixFetching = false;
 }
 
-/* ✅ Silent queue add — no render spam, dedupe strict */
 function addToQueueSilently(tracks) {
   if (!tracks || !tracks.length) return;
   let added = 0;
@@ -1141,7 +1137,7 @@ function addToQueueSilently(tracks) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 RELATED SONGS — Ek saath ek badi list — sab queue me jaayegi  */
+/* 🎯 RELATED — SAME ARTIST + SAME LANGUAGE (Search history blocked) */
 /* ═══════════════════════════════════════════════════════════════ */
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
@@ -1150,30 +1146,56 @@ async function fetchRelatedSongs(seedTrack) {
   lastAutoFetchTime = now;
 
   const seedLang = detectLanguage((seedTrack.title || '') + ' ' + (seedTrack.artist || '') + ' ' + (seedTrack._lang || ''));
-  const seedVibe = detectVibe((seedTrack.title || '') + ' ' + (seedTrack.artist || ''));
   currentLanguage = seedLang;
-  currentVibe = seedVibe;
 
+  // ═══ Existing blockers ═══
   const allExisting = new Set([...currentPlaylist.map(t => t.id), ...queueSeenIds]);
   playbackHistoryList.forEach(t => allExisting.add(t.id));
   allExisting.add(seedTrack.id);
 
   const allKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
 
+  // ═══ SEARCH HISTORY BLOCKER ═══
+  // Ye titles/phrases queue me kabhi nahi aayenge
+  const searchHistoryTitles = new Set();
+  searchHistoryList.forEach(q => {
+    if (!q) return;
+    const t = q.toLowerCase().trim();
+    if (t.length > 0) searchHistoryTitles.add(t);
+  });
+
   const results = [];
   const push = (arr) => {
     if (!arr) return;
     for (const t of arr) {
       if (results.length >= QUEUE_EXTEND_BATCH * 2) return;
-      const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
+
+      const titleLower = (t.title || '').toLowerCase().trim();
+      const key = titleLower + '|' + (t.artist || '').toLowerCase().trim();
+
+      // Dedupe
       if (allExisting.has(t.id) || allKeys.has(key)) continue;
+
+      // ✅ STRICT LANGUAGE MATCH — only same language
+      if (t._lang && t._lang !== seedLang) continue;
+
+      // ═══ SEARCH HISTORY BLOCK ═══
+      let blockBySearch = false;
+      for (const hist of searchHistoryTitles) {
+        // If seed song title contains search term OR search term contains title
+        if (titleLower === hist) { blockBySearch = true; break; }
+        if (titleLower.startsWith(hist + ' ')) { blockBySearch = true; break; }
+        if (hist.startsWith(titleLower + ' ') && titleLower.length > 5) { blockBySearch = true; break; }
+      }
+      if (blockBySearch) continue;
+
       allExisting.add(t.id);
       allKeys.add(key);
       results.push(t);
     }
   };
 
-  // ═══ 1. SAAVN SUGGESTIONS (seed song same vibe — best) ═══
+  // ═══ 1. SAAVN SUGGESTIONS (same vibe) ═══
   if (seedTrack.id.startsWith('saavn_') && seedTrack._saavnId) {
     try {
       const r = await fetch(`${SAAVN_DELTA}/api/songs/${seedTrack._saavnId}/suggestions?limit=30`);
@@ -1188,7 +1210,8 @@ async function fetchRelatedSongs(seedTrack) {
             title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
             artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
             cover, duration: s.duration || 0,
-            source: 'saavn', _saavnId: s.id
+            source: 'saavn', _saavnId: s.id,
+            _lang: (s.language || '').toLowerCase() || undefined
           };
         });
         push(mapped);
@@ -1196,7 +1219,7 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // ═══ 2. SAME ARTIST (same vibe guaranteed) ═══
+  // ═══ 2. SAME ARTIST (primary) ═══
   const cleanArtist = (seedTrack.artist || '')
     .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios|label/gi, '')
     .replace(/- Topic$/i, '')
@@ -1206,43 +1229,37 @@ async function fetchRelatedSongs(seedTrack) {
 
   if (cleanArtist && cleanArtist.length > 2) {
     try {
-      const artistSongs = await searchSaavn(cleanArtist, 20);
+      const artistSongs = await searchSaavn(cleanArtist, 30);
       push(artistSongs);
     } catch (e) {}
   }
 
-  // ═══ 3. VIBE-BASED (same mood) ═══
-  const vibeKeywords = getVibeKeywords(seedVibe);
-  const langPrefix = seedLang === 'punjabi' ? 'punjabi ' : seedLang === 'urdu' ? 'urdu ' : seedLang === 'english' ? '' : 'hindi ';
-  const vibeQuery = vibeKeywords.length > 0 ? (langPrefix + vibeKeywords[0]).trim() : (langPrefix + 'hits').trim();
-  try {
-    const vibeSongs = await searchSaavn(vibeQuery, 20);
-    push(vibeSongs);
-  } catch (e) {}
+  // ═══ 3. SAME LANGUAGE POPULAR ═══
+  const langQuery = seedLang === 'punjabi' ? 'punjabi hits' :
+                    seedLang === 'urdu' ? 'urdu hits' :
+                    seedLang === 'english' ? 'top english hits' : 'hindi hits';
+  if (results.length < QUEUE_EXTEND_BATCH) {
+    try {
+      const langSongs = await searchSaavn(langQuery, 20);
+      push(langSongs);
+    } catch (e) {}
+  }
 
-  // ═══ 4. LANGUAGE CURATED ARTISTS (2-3 random) ═══
+  // ═══ 4. SAME LANGUAGE CURATED ARTISTS ═══
   const artists = getLanguageArtists(seedLang);
   const shuffled = artists.slice().sort(() => Math.random() - 0.5);
   for (const a of shuffled.slice(0, 3)) {
     if (results.length >= QUEUE_EXTEND_BATCH) break;
     try {
-      const songs = await searchSaavn(a, 12);
+      const songs = await searchSaavn(a, 15);
       push(songs);
     } catch (e) {}
   }
 
-  // ═══ 5. JAMENDO FALLBACK (creative commons) ═══
+  // ═══ 5. FALLBACK: Same language trending ═══
   if (results.length < QUEUE_EXTEND_BATCH) {
     try {
-      const jamSongs = await searchJamendo(seedVibe === 'general' ? (langPrefix + 'chill').trim() : seedVibe, 12);
-      push(jamSongs);
-    } catch (e) {}
-  }
-
-  // ═══ 6. LAST RESORT: trending ═══
-  if (results.length < QUEUE_EXTEND_BATCH) {
-    try {
-      const trending = await searchSaavn('trending hits', 12);
+      const trending = await searchSaavn(langQuery + ' 2026', 20);
       push(trending);
     } catch (e) {}
   }
@@ -1619,12 +1636,10 @@ function renderSearchHistoryTags() {
 
 function clearSearchHistory() { searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
 
-/* ═══════════ RECOMMENDED — ONLY Static Trending (no user rec) ═══════════ */
+/* ═══════════ RECOMMENDED — ONLY Static Trending ═══════════ */
 async function renderRecommendedSection() {
   const c = document.getElementById('recommendedContainer');
   if (!c) return;
-
-  // Recommended section me sirf generic trending — koi user-specific related nahi
   const found = await fetchTrendingSongs(8);
   const h = document.querySelector('.recommended-header span');
   if (h) h.innerText = 'Trending Now';
