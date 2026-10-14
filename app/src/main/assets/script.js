@@ -1,30 +1,44 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FINAL (yt-dlp Server + Saavn + YT IFrame Fallback)   */
+/* VAULTIFY — FINAL (Multi-API Client-Side, No Server)             */
+/* Search: Playlist + YouTube | Play: Cobalt/Piped/Invidious/IFrame */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const MASTER_PLAYLIST_ID = 'PLWhIBP58b-Tr5kaNCUOYXuoNQLRaBDFeF';
-const YT_SERVER = 'https://vaultify-yt-service.onrender.com';
 
 const APP_VERSION = 2;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
 const SAAVN_DELTA = 'https://saavn-api-delta.vercel.app';
+
 const PIPED_APIS = [
   'https://pipedapi.kavin.rocks',
   'https://pipedapi.adminforge.de',
   'https://api.piped.yt',
-  'https://pipedapi.reallyaweso.me'
+  'https://pipedapi.reallyaweso.me',
+  'https://pipedapi.ducks.party'
 ];
 const INVIDIOUS_APIS = [
   'https://inv.nadeko.net',
   'https://invidious.nerdvpn.de',
-  'https://yewtu.be'
+  'https://yewtu.be',
+  'https://invidious.privacyredirect.com',
+  'https://iv.melmac.space'
 ];
+const COBALT_APIS = [
+  'https://api.cobalt.tools',
+  'https://co.wuk.sh',
+  'https://cobalt-api.kwiatekmiki.com',
+  'https://cobalt-api.ayo.tf',
+  'https://cobalt-backend.canine.tools'
+];
+
 const PLAYLIST_CACHE_KEY = 'vaultify_master_playlist_v2';
 const PLAYLIST_CACHE_TTL = 6 * 60 * 60 * 1000;
 const SAAVN_URL_CACHE_KEY = 'vaultify_saavn_url_cache_v3';
 const SAAVN_URL_CACHE_TTL = 3 * 60 * 60 * 1000;
+const YT_URL_CACHE_KEY = 'vaultify_yt_url_cache_v1';
+const YT_URL_CACHE_TTL = 60 * 60 * 1000; // 1 hour (stream URLs expire)
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
@@ -32,6 +46,7 @@ let masterPlaylist = [];
 let masterPlaylistLoaded = false;
 let masterPlaylistLoading = false;
 let saavnUrlCache = {};
+let ytUrlCache = {};
 
 try {
   if (typeof firebase !== 'undefined') {
@@ -82,7 +97,7 @@ let isLoginMode = false;
 let loggedInUser = null;
 let navigationHistory = ['home'];
 
-/* YouTube IFrame (fallback only) */
+/* YouTube IFrame (fallback) */
 let ytPlayer = null;
 let ytPlayerReady = false;
 let ytCurrentVideoId = null;
@@ -236,6 +251,30 @@ function setCachedSaavnUrl(title, artist, url) {
   const key = saavnCacheKey(title, artist);
   saavnUrlCache[key] = { url, timestamp: Date.now() };
   saveSaavnUrlCache();
+}
+
+/* ═══════════ YT URL CACHE ═══════════ */
+function loadYtUrlCache() {
+  try {
+    const raw = localStorage.getItem(YT_URL_CACHE_KEY);
+    if (!raw) return;
+    const cached = JSON.parse(raw);
+    const now = Date.now();
+    for (const k in cached) {
+      if (cached[k] && (now - cached[k].timestamp) < YT_URL_CACHE_TTL) ytUrlCache[k] = cached[k];
+    }
+  } catch (e) {}
+}
+function saveYtUrlCache() { try { localStorage.setItem(YT_URL_CACHE_KEY, JSON.stringify(ytUrlCache)); } catch (e) {} }
+function getCachedYtUrl(ytId) {
+  const entry = ytUrlCache[ytId];
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > YT_URL_CACHE_TTL) return null;
+  return entry.url;
+}
+function setCachedYtUrl(ytId, url) {
+  ytUrlCache[ytId] = { url, timestamp: Date.now() };
+  saveYtUrlCache();
 }
 
 /* ═══════════ SAAVN STRICT MATCH ═══════════ */
@@ -456,66 +495,181 @@ function searchInMasterPlaylist(query) {
 
 async function checkWorker() { workerReady = true; return true; }
 
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🔍 YOUTUBE SEARCH (client-side via Invidious + Piped)          */
+/* ═══════════════════════════════════════════════════════════════ */
+async function searchYouTubeDirect(query, limit = 20) {
+  if (!query) return [];
+
+  // ═══ Try Invidious search (most reliable) ═══
+  for (const api of INVIDIOUS_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (!Array.isArray(data) || !data.length) continue;
+      return data.slice(0, limit).map(v => ({
+        id: 'yt_' + v.videoId,
+        title: v.title || 'Unknown',
+        artist: v.author || 'YouTube',
+        cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+        duration: v.lengthSeconds || 0,
+        source: 'youtube',
+        _ytId: v.videoId
+      }));
+    } catch (e) { continue; }
+  }
+
+  // ═══ Piped search fallback ═══
+  for (const api of PIPED_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=music_songs`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      if (!data.items?.length) continue;
+      const streams = data.items.filter(i => i.type === 'stream' && i.url).slice(0, limit);
+      if (!streams.length) continue;
+      return streams.map(i => {
+        const vid = i.url.replace('/watch?v=', '');
+        return {
+          id: 'yt_' + vid,
+          title: i.title || 'Unknown',
+          artist: i.uploaderName || 'YouTube',
+          cover: i.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
+          duration: i.duration || 0,
+          source: 'youtube',
+          _ytId: vid
+        };
+      });
+    } catch (e) { continue; }
+  }
+
+  return [];
+}
+
+/* ═══════════ COMBINED SEARCH ═══════════ */
 async function workerSearch(query, limit = 25) {
-  if (!masterPlaylistLoaded) await fetchMasterPlaylist();
-  const inPlaylist = searchInMasterPlaylist(query);
-  if (inPlaylist.length > 0) return inPlaylist.slice(0, limit);
-  return masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, Math.min(limit, masterPlaylist.length));
+  const results = [];
+  const seen = new Set();
+  const addUnique = (t) => {
+    const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(t);
+  };
+
+  // 1. Playlist matches first (instant)
+  if (masterPlaylistLoaded && masterPlaylist.length > 0) {
+    const inPlaylist = searchInMasterPlaylist(query);
+    inPlaylist.slice(0, 10).forEach(addUnique);
+  }
+
+  // 2. YouTube search (fill remaining)
+  if (results.length < limit) {
+    try {
+      const ytResults = await searchYouTubeDirect(query, limit - results.length);
+      ytResults.forEach(addUnique);
+    } catch (e) {}
+  }
+
+  return results.slice(0, limit);
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 STREAM URL — Own yt-dlp Server → Piped Fallback              */
+/* 🎯 STREAM URL — Multi-API Fallback (Cobalt → Piped → Invid)     */
 /* ═══════════════════════════════════════════════════════════════ */
 async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) {
     return await getSaavnSongUrl(id.replace('saavn_', ''));
   }
+  if (!id.startsWith('yt_')) return null;
+  const ytId = id.replace('yt_', '');
 
-  if (id.startsWith('yt_')) {
-    const ytId = id.replace('yt_', '');
+  // Cache check
+  const cached = getCachedYtUrl(ytId);
+  if (cached) return cached;
 
-    // ═══ Primary: Own yt-dlp server ═══
+  // ═══ 1. COBALT ═══
+  for (const api of COBALT_APIS) {
     try {
       const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 20000);
-      const r = await fetch(`${YT_SERVER}/api/yt?id=${ytId}`, { signal: ctrl.signal });
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          url: `https://www.youtube.com/watch?v=${ytId}`,
+          downloadMode: 'audio',
+          audioFormat: 'mp3',
+          audioBitrate: '128'
+        }),
+        signal: ctrl.signal
+      });
       clearTimeout(tm);
-      if (r.ok) {
-        const data = await r.json();
-        if (data.proxyUrl) return data.proxyUrl;
-        if (data.directUrl) return data.directUrl;
-      }
-    } catch (e) { console.warn('YT server failed:', e.message); }
-
-    // ═══ Fallback: Piped ═══
-    for (const api of PIPED_APIS) {
-      try {
-        const ctrl = new AbortController();
-        const tm = setTimeout(() => ctrl.abort(), 8000);
-        const r = await fetch(`${api}/streams/${ytId}`, { signal: ctrl.signal });
-        clearTimeout(tm);
-        if (!r.ok) continue;
-        const data = await r.json();
-        const streams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
-        if (!streams.length) continue;
-        streams.sort((a, b) => {
-          const aM4a = (a.mimeType || '').includes('mp4') ? 1 : 0;
-          const bM4a = (b.mimeType || '').includes('mp4') ? 1 : 0;
-          if (aM4a !== bM4a) return bM4a - aM4a;
-          return (b.bitrate || 0) - (a.bitrate || 0);
-        });
-        const s = streams[0];
-        if (s.proxyUrl) {
-          let p = s.proxyUrl;
-          if (p.startsWith('/')) p = api + p;
-          return p;
-        }
-        if (s.url) return s.url;
-      } catch (e) { continue; }
-    }
+      if (!r.ok) continue;
+      const data = await r.json();
+      const url = data.url || (data.status === 'redirect' && data.url) || (data.status === 'tunnel' && data.url);
+      if (url) { setCachedYtUrl(ytId, url); return url; }
+    } catch (e) { continue; }
   }
 
-  return null;
+  // ═══ 2. PIPED ═══
+  for (const api of PIPED_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/streams/${ytId}`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const streams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
+      if (!streams.length) continue;
+      streams.sort((a, b) => {
+        const aM4a = (a.mimeType || '').includes('mp4') ? 1 : 0;
+        const bM4a = (b.mimeType || '').includes('mp4') ? 1 : 0;
+        if (aM4a !== bM4a) return bM4a - aM4a;
+        return (b.bitrate || 0) - (a.bitrate || 0);
+      });
+      const s = streams[0];
+      let url = null;
+      if (s.proxyUrl) {
+        let p = s.proxyUrl;
+        if (p.startsWith('/')) p = api + p;
+        url = p;
+      } else if (s.url) {
+        url = s.url;
+      }
+      if (url) { setCachedYtUrl(ytId, url); return url; }
+    } catch (e) { continue; }
+  }
+
+  // ═══ 3. INVIDIOUS ═══
+  for (const api of INVIDIOUS_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 6000);
+      const r = await fetch(`${api}/api/v1/videos/${ytId}`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const formats = (data.adaptiveFormats || []).filter(f => (f.type || '').includes('audio') && f.url);
+      if (!formats.length) continue;
+      formats.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+      if (formats[0].url) {
+        setCachedYtUrl(ytId, formats[0].url);
+        return formats[0].url;
+      }
+    } catch (e) { continue; }
+  }
+
+  // ═══ 4. IFrame fallback signal ═══
+  return '__IFRAME__';
 }
 
 /* ═══════════ AUTH ═══════════ */
@@ -1065,7 +1219,7 @@ async function fetchTrendingSongs(limit = 10) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 PLAY TRACK — Server → Saavn → IFrame fallback                */
+/* 🎯 PLAY TRACK — Multi-API fallback                              */
 /* ═══════════════════════════════════════════════════════════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
@@ -1084,7 +1238,7 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => autoExtendQueue(track), 2000);
 
   // ═══════════════════════════════════════════════
-  // 🎬 YT TRACK → Own yt-dlp server se exact audio
+  // 🎬 YT TRACK
   // ═══════════════════════════════════════════════
   if (track.id.startsWith('yt_')) {
     isYtPlayback = false;
@@ -1092,7 +1246,7 @@ async function playTrack(index, broadcast = true) {
     if (ytPlayer && ytPlayerReady) { try { ytPlayer.stopVideo(); } catch (e) {} }
     stopYtProgressSync();
 
-    // Cached blob
+    // Cache check
     const cachedBlob = trackBlobCache.get(track.id);
     if (cachedBlob && cachedBlob.startsWith('blob:')) {
       if (await tryPlayAudio(cachedBlob)) return;
@@ -1103,21 +1257,40 @@ async function playTrack(index, broadcast = true) {
       if (await tryPlayAudio(db.url)) return;
     }
 
-    // Fresh from server
+    // Multi-API stream
     showToast('⏳ Loading...');
-    const ytUrl = await workerStreamUrl(track.id);
-    if (ytUrl && await tryPlayAudio(ytUrl)) return;
+    const url = await workerStreamUrl(track.id);
 
-    // Last resort: YT IFrame
+    // IFrame fallback signal
+    if (url === '__IFRAME__' || !url) {
+      if (ytPlayerReady && ytPlayer && track._ytId) {
+        try {
+          isYtPlayback = true;
+          if (ytCurrentVideoId !== track._ytId) {
+            ytCurrentVideoId = track._ytId;
+            ytPlayer.loadVideoById(track._ytId);
+          } else {
+            ytPlayer.playVideo();
+          }
+          try { ytPlayer.setVolume(100); } catch (e) {}
+          startYtProgressSync();
+          setVisualState(true);
+          showToast('▶ Playing via YouTube');
+          return;
+        } catch (e) { isYtPlayback = false; }
+      }
+      if (currentPlaylist.length > 1) setTimeout(() => playNext(), 500);
+      return;
+    }
+
+    if (await tryPlayAudio(url)) return;
+
+    // Nothing worked → IFrame
     if (ytPlayerReady && ytPlayer && track._ytId) {
       try {
         isYtPlayback = true;
-        if (ytCurrentVideoId !== track._ytId) {
-          ytCurrentVideoId = track._ytId;
-          ytPlayer.loadVideoById(track._ytId);
-        } else {
-          ytPlayer.playVideo();
-        }
+        ytCurrentVideoId = track._ytId;
+        ytPlayer.loadVideoById(track._ytId);
         try { ytPlayer.setVolume(100); } catch (e) {}
         startYtProgressSync();
         setVisualState(true);
@@ -1125,13 +1298,12 @@ async function playTrack(index, broadcast = true) {
       } catch (e) { isYtPlayback = false; }
     }
 
-    // Nothing worked — skip
-    if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
+    if (currentPlaylist.length > 1) setTimeout(() => playNext(), 500);
     return;
   }
 
   // ═══════════════════════════════════════════════
-  // 🎵 Non-YT → Saavn / cache
+  // 🎵 Non-YT → Saavn
   // ═══════════════════════════════════════════════
   isYtPlayback = false;
   if (ytPlayer && ytPlayerReady) { try { ytPlayer.stopVideo(); } catch (e) {} }
@@ -1139,15 +1311,10 @@ async function playTrack(index, broadcast = true) {
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
   const cached = trackBlobCache.get(track.id);
-  if (cached && cached.startsWith('blob:')) {
-    if (await tryPlayAudio(cached)) return;
-  }
+  if (cached && cached.startsWith('blob:')) { if (await tryPlayAudio(cached)) return; }
 
   const db2 = await cacheGet(track.id);
-  if (db2 && db2.url) {
-    trackBlobCache.set(track.id, db2.url);
-    if (await tryPlayAudio(db2.url)) return;
-  }
+  if (db2 && db2.url) { trackBlobCache.set(track.id, db2.url); if (await tryPlayAudio(db2.url)) return; }
 
   try {
     const saavnUrl = await findSaavnStreamUrl(track.title, track.artist);
@@ -1158,7 +1325,7 @@ async function playTrack(index, broadcast = true) {
 }
 
 async function tryPlayAudio(url) {
-  if (!url) return false;
+  if (!url || typeof url !== 'string' || !url.startsWith('http')) return false;
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
   if (url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
     try {
@@ -1309,8 +1476,8 @@ async function cacheTrackInBackground(track) {
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
   try {
-    let url = null;
-    if (track.id.startsWith('yt_')) url = await workerStreamUrl(track.id);
+    let url = await workerStreamUrl(track.id);
+    if (url === '__IFRAME__') url = null;
     if (!url) url = await findSaavnStreamUrl(track.title, track.artist);
     if (!url || !url.startsWith('http')) return;
     const r = await fetch(url);
@@ -1329,7 +1496,8 @@ async function downloadCurrentTrack() {
   try {
     let u = trackBlobCache.get(t.id);
     if (!u) {
-      if (t.id.startsWith('yt_')) u = await workerStreamUrl(t.id);
+      u = await workerStreamUrl(t.id);
+      if (u === '__IFRAME__') u = null;
       if (!u) u = await findSaavnStreamUrl(t.title, t.artist);
     }
     if (!u) throw new Error('No URL');
@@ -1469,16 +1637,14 @@ async function executeLiveSearch(isAuto = false) {
   rc.innerHTML = '';
 
   if (!masterPlaylistLoaded) await fetchMasterPlaylist();
-  const found = searchInMasterPlaylist(q).slice(0, 30);
+  const found = await workerSearch(q, 30);
   l.style.display = 'none';
 
   if (found.length > 0) {
     renderSearchResults(found);
     if (!isAuto) showToast(`✅ ${found.length} results`);
   } else {
-    const random = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 20);
-    if (random.length > 0) { renderSearchResults(random); showToast(`Kuch match nahi, playlist se random songs`); }
-    else rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
+    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
   }
   setTimeout(renderRecommendedSection, 2000);
 }
@@ -1532,7 +1698,7 @@ function initLiveSearchInputListener() {
     clearTimeout(liveSearchDebounceTimer);
     const q = f.value.trim();
     if (q.length >= 2) {
-      liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === q) instantSearch(q); }, 400);
+      liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === q) instantSearch(q); }, 500);
     } else if (q.length === 0) {
       const rc = document.getElementById('searchResultsContainer');
       if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p>';
@@ -1548,16 +1714,12 @@ async function instantSearch(q) {
   if (l) { l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'; }
 
   if (!masterPlaylistLoaded) await fetchMasterPlaylist();
-  const found = searchInMasterPlaylist(q).slice(0, 25);
+  const found = await workerSearch(q, 25);
   if (myId !== liveSearchRequestId) return;
   if (l) l.style.display = 'none';
 
   if (found.length > 0) renderSearchResults(found);
-  else {
-    const random = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 20);
-    if (random.length > 0) renderSearchResults(random);
-    else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
-  }
+  else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
 }
 
 function renderSearchHistoryTags() {
@@ -2025,6 +2187,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   initCacheDB();
   loadSaavnUrlCache();
+  loadYtUrlCache();
   setupMediaSession();
   setupTimelineDraggableEngine();
   initLiveSearchInputListener();
@@ -2053,9 +2216,6 @@ window.addEventListener('DOMContentLoaded', () => {
     loadQueueFromStorage();
   }, 1500);
   setTimeout(refreshMasterPlaylistInBackground, 5000);
-
-  // Ping server at startup to reduce cold start
-  setTimeout(() => { try { fetch(`${YT_SERVER}/`).catch(() => {}); } catch (e) {} }, 500);
 
   const start = () => {
     initForegroundAudioBridge();
@@ -2111,7 +2271,7 @@ Object.assign(window, {
   openEqualizer, initEmojiRunner, initEmojiPicker,
   addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
-  checkWorker, workerSearch, workerStreamUrl,
+  checkWorker, workerSearch, workerStreamUrl, searchYouTubeDirect,
   saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
   fetchMasterPlaylist, manualRefreshPlaylist, searchInMasterPlaylist,
   findSaavnStreamUrl, initYouTubePlayer
