@@ -1,8 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FINAL (YouTube IFrame + Saavn Hybrid)                */
+/* VAULTIFY — FINAL (yt-dlp Server + Saavn + YT IFrame Fallback)   */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const MASTER_PLAYLIST_ID = 'PLWhIBP58b-Tr5kaNCUOYXuoNQLRaBDFeF';
+const YT_SERVER = 'https://vaultify-yt-service.onrender.com';
 
 const APP_VERSION = 2;
 const CACHE_MAX_SIZE_MB = 500;
@@ -81,7 +82,7 @@ let isLoginMode = false;
 let loggedInUser = null;
 let navigationHistory = ['home'];
 
-/* YouTube IFrame */
+/* YouTube IFrame (fallback only) */
 let ytPlayer = null;
 let ytPlayerReady = false;
 let ytCurrentVideoId = null;
@@ -159,49 +160,32 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎬 YOUTUBE IFRAME PLAYER                                        */
+/* 🎬 YOUTUBE IFRAME PLAYER (fallback)                             */
 /* ═══════════════════════════════════════════════════════════════ */
 function initYouTubePlayer() {
   if (ytPlayer) return;
   if (!window.YT || !window.YT.Player) return;
   try {
     ytPlayer = new YT.Player('ytPlayerContainer', {
-      height: '1',
-      width: '1',
+      height: '1', width: '1',
       playerVars: {
-        autoplay: 0,
-        controls: 0,
-        disablekb: 1,
-        fs: 0,
-        modestbranding: 1,
-        playsinline: 1,
-        rel: 0,
+        autoplay: 0, controls: 0, disablekb: 1, fs: 0,
+        modestbranding: 1, playsinline: 1, rel: 0,
         origin: window.location.origin
       },
       events: {
-        onReady: () => {
-          ytPlayerReady = true;
-          try { ytPlayer.setVolume(100); } catch (e) {}
-        },
+        onReady: () => { ytPlayerReady = true; try { ytPlayer.setVolume(100); } catch (e) {} },
         onStateChange: (e) => {
           if (e.data === 1) setVisualState(true);
           else if (e.data === 2) setVisualState(false);
-          else if (e.data === 0) {
-            setVisualState(false);
-            if (currentPlaylist.length > 1) playNext();
-          }
+          else if (e.data === 0) { setVisualState(false); if (currentPlaylist.length > 1) playNext(); }
         },
-        onError: () => {
-          if (currentPlaylist.length > 1) setTimeout(() => playNext(), 500);
-        }
+        onError: () => { if (currentPlaylist.length > 1) setTimeout(() => playNext(), 500); }
       }
     });
   } catch (e) {}
 }
-
-window.onYouTubeIframeAPIReady = function() {
-  initYouTubePlayer();
-};
+window.onYouTubeIframeAPIReady = function() { initYouTubePlayer(); };
 
 function startYtProgressSync() {
   if (ytProgressTimer) clearInterval(ytProgressTimer);
@@ -225,10 +209,7 @@ function startYtProgressSync() {
     } catch (e) {}
   }, 500);
 }
-
-function stopYtProgressSync() {
-  if (ytProgressTimer) { clearInterval(ytProgressTimer); ytProgressTimer = null; }
-}
+function stopYtProgressSync() { if (ytProgressTimer) { clearInterval(ytProgressTimer); ytProgressTimer = null; } }
 
 /* ═══════════ SAAVN URL CACHE ═══════════ */
 function loadSaavnUrlCache() {
@@ -238,23 +219,12 @@ function loadSaavnUrlCache() {
     const cached = JSON.parse(raw);
     const now = Date.now();
     for (const k in cached) {
-      if (cached[k] && (now - cached[k].timestamp) < SAAVN_URL_CACHE_TTL) {
-        saavnUrlCache[k] = cached[k];
-      }
+      if (cached[k] && (now - cached[k].timestamp) < SAAVN_URL_CACHE_TTL) saavnUrlCache[k] = cached[k];
     }
   } catch (e) {}
 }
-
-function saveSaavnUrlCache() {
-  try {
-    localStorage.setItem(SAAVN_URL_CACHE_KEY, JSON.stringify(saavnUrlCache));
-  } catch (e) {}
-}
-
-function saavnCacheKey(title, artist) {
-  return ((title || '') + '|' + (artist || '')).toLowerCase().trim().substring(0, 100);
-}
-
+function saveSaavnUrlCache() { try { localStorage.setItem(SAAVN_URL_CACHE_KEY, JSON.stringify(saavnUrlCache)); } catch (e) {} }
+function saavnCacheKey(title, artist) { return ((title || '') + '|' + (artist || '')).toLowerCase().trim().substring(0, 100); }
 function getCachedSaavnUrl(title, artist) {
   const key = saavnCacheKey(title, artist);
   const entry = saavnUrlCache[key];
@@ -262,7 +232,6 @@ function getCachedSaavnUrl(title, artist) {
   if (Date.now() - entry.timestamp > SAAVN_URL_CACHE_TTL) return null;
   return entry.url;
 }
-
 function setCachedSaavnUrl(title, artist, url) {
   const key = saavnCacheKey(title, artist);
   saavnUrlCache[key] = { url, timestamp: Date.now() };
@@ -275,22 +244,16 @@ async function findSaavnStreamUrl(title, artist) {
   if (cached) return cached;
 
   const cleanTitle = (title || '')
-    .replace(/\(.*?\)/g, '')
-    .replace(/\[.*?\]/g, '')
+    .replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '')
     .replace(/\b(official|video|audio|lyrical|lyrics|full|hd|4k|8k|music|feat|ft|prod|composer|singer|remix|version|new|latest|status|whatsapp|song|hits|hit)\b/gi, ' ')
     .replace(/[^\w\s\u0900-\u097F\u0600-\u06FF\u0A00-\u0A7F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+    .replace(/\s+/g, ' ').trim().toLowerCase();
 
   if (!cleanTitle || cleanTitle.length < 2) return null;
 
   const cleanArtist = (artist || '')
     .replace(/\b(vevo|official|topic|channel|records|music|entertainment|productions|studios|label)\b/gi, '')
-    .replace(/[-_,]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+    .replace(/[-_,]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
 
   const queries = [cleanTitle];
   if (cleanArtist && cleanArtist.length > 1) queries.push(cleanTitle + ' ' + cleanArtist);
@@ -328,14 +291,10 @@ async function findSaavnStreamUrl(title, artist) {
         }
 
         const streamUrl = await getSaavnSongUrl(s.id);
-        if (streamUrl) {
-          setCachedSaavnUrl(title, artist, streamUrl);
-          return streamUrl;
-        }
+        if (streamUrl) { setCachedSaavnUrl(title, artist, streamUrl); return streamUrl; }
       }
     } catch (e) { continue; }
   }
-
   return null;
 }
 
@@ -353,8 +312,7 @@ async function getSaavnSongUrl(songId) {
     if (!downloads.length) return null;
     const sorted = downloads.slice().sort((a, b) => (parseInt(b.quality) || 0) - (parseInt(a.quality) || 0));
     const preferred = sorted.find(d => (d.quality || '').includes('320')) ||
-                      sorted.find(d => (d.quality || '').includes('160')) ||
-                      sorted[0];
+                      sorted.find(d => (d.quality || '').includes('160')) || sorted[0];
     const u = preferred?.url || preferred?.link || sorted[0]?.url || sorted[0]?.link;
     return u || null;
   } catch (e) { return null; }
@@ -377,9 +335,7 @@ function loadMasterPlaylistFromCache() {
 function saveMasterPlaylistToCache() {
   try {
     localStorage.setItem(PLAYLIST_CACHE_KEY, JSON.stringify({
-      tracks: masterPlaylist,
-      timestamp: Date.now(),
-      playlistId: MASTER_PLAYLIST_ID
+      tracks: masterPlaylist, timestamp: Date.now(), playlistId: MASTER_PLAYLIST_ID
     }));
   } catch (e) {}
 }
@@ -387,15 +343,10 @@ function saveMasterPlaylistToCache() {
 async function fetchMasterPlaylist(forceRefresh = false) {
   if (masterPlaylistLoading) {
     let wait = 0;
-    while (masterPlaylistLoading && wait < 15000) {
-      await new Promise(r => setTimeout(r, 300));
-      wait += 300;
-    }
+    while (masterPlaylistLoading && wait < 15000) { await new Promise(r => setTimeout(r, 300)); wait += 300; }
     return masterPlaylist;
   }
-
   if (!forceRefresh && masterPlaylistLoaded && masterPlaylist.length > 0) return masterPlaylist;
-
   masterPlaylistLoading = true;
 
   for (const api of PIPED_APIS) {
@@ -408,24 +359,17 @@ async function fetchMasterPlaylist(forceRefresh = false) {
       const data = await r.json();
       const items = data.relatedStreams || data.videos || [];
       if (!items.length) continue;
-      const tracks = items
-        .filter(v => v.url && v.url.includes('watch?v='))
-        .map(v => {
-          const vid = v.url.replace('/watch?v=', '').split('&')[0];
-          return {
-            id: 'yt_' + vid,
-            title: v.title || 'Unknown',
-            artist: v.uploaderName || v.uploader || 'YouTube',
-            cover: v.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
-            duration: v.duration || 0,
-            source: 'youtube',
-            _ytId: vid
-          };
-        });
+      const tracks = items.filter(v => v.url && v.url.includes('watch?v=')).map(v => {
+        const vid = v.url.replace('/watch?v=', '').split('&')[0];
+        return {
+          id: 'yt_' + vid, title: v.title || 'Unknown',
+          artist: v.uploaderName || v.uploader || 'YouTube',
+          cover: v.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
+          duration: v.duration || 0, source: 'youtube', _ytId: vid
+        };
+      });
       if (tracks.length > 0) {
-        masterPlaylist = tracks;
-        masterPlaylistLoaded = true;
-        masterPlaylistLoading = false;
+        masterPlaylist = tracks; masterPlaylistLoaded = true; masterPlaylistLoading = false;
         saveMasterPlaylistToCache();
         return masterPlaylist;
       }
@@ -443,18 +387,12 @@ async function fetchMasterPlaylist(forceRefresh = false) {
       const videos = data.videos || [];
       if (!videos.length) continue;
       const tracks = videos.map(v => ({
-        id: 'yt_' + v.videoId,
-        title: v.title || 'Unknown',
-        artist: v.author || 'YouTube',
+        id: 'yt_' + v.videoId, title: v.title || 'Unknown', artist: v.author || 'YouTube',
         cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
-        duration: v.lengthSeconds || 0,
-        source: 'youtube',
-        _ytId: v.videoId
+        duration: v.lengthSeconds || 0, source: 'youtube', _ytId: v.videoId
       }));
       if (tracks.length > 0) {
-        masterPlaylist = tracks;
-        masterPlaylistLoaded = true;
-        masterPlaylistLoading = false;
+        masterPlaylist = tracks; masterPlaylistLoaded = true; masterPlaylistLoading = false;
         saveMasterPlaylistToCache();
         return masterPlaylist;
       }
@@ -467,8 +405,7 @@ async function fetchMasterPlaylist(forceRefresh = false) {
     if (raw) {
       const cached = JSON.parse(raw);
       if (cached && cached.tracks && cached.tracks.length && cached.playlistId === MASTER_PLAYLIST_ID) {
-        masterPlaylist = cached.tracks;
-        masterPlaylistLoaded = true;
+        masterPlaylist = cached.tracks; masterPlaylistLoaded = true;
         return masterPlaylist;
       }
     }
@@ -483,8 +420,7 @@ async function refreshMasterPlaylistInBackground() {
     const cached = JSON.parse(raw);
     if (!cached || !cached.timestamp) { fetchMasterPlaylist(true); return; }
     if (cached.playlistId !== MASTER_PLAYLIST_ID) { fetchMasterPlaylist(true); return; }
-    const age = Date.now() - cached.timestamp;
-    if (age < PLAYLIST_CACHE_TTL) return;
+    if (Date.now() - cached.timestamp < PLAYLIST_CACHE_TTL) return;
     await fetchMasterPlaylist(true);
   } catch (e) {}
 }
@@ -493,15 +429,9 @@ async function manualRefreshPlaylist() {
   showToast('🔄 Refreshing playlist...');
   try {
     const fresh = await fetchMasterPlaylist(true);
-    if (fresh && fresh.length > 0) {
-      showToast(`✅ ${fresh.length} songs loaded`);
-      renderRecommendedSection();
-    } else {
-      showToast('❌ Refresh failed');
-    }
-  } catch (e) {
-    showToast('❌ Refresh failed');
-  }
+    if (fresh && fresh.length > 0) { showToast(`✅ ${fresh.length} songs loaded`); renderRecommendedSection(); }
+    else showToast('❌ Refresh failed');
+  } catch (e) { showToast('❌ Refresh failed'); }
 }
 
 /* ═══════════ SEARCH IN PLAYLIST ═══════════ */
@@ -509,7 +439,6 @@ function searchInMasterPlaylist(query) {
   if (!query || !masterPlaylist.length) return [];
   const q = query.toLowerCase().trim();
   const tokens = q.split(/\s+/).filter(t => t.length > 0);
-
   return masterPlaylist
     .map(t => {
       const haystack = ((t.title || '') + ' ' + (t.artist || '')).toLowerCase();
@@ -534,13 +463,31 @@ async function workerSearch(query, limit = 25) {
   return masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, Math.min(limit, masterPlaylist.length));
 }
 
-/* ═══════════ YT STREAM FALLBACK (only if IFrame fails) ═══════════ */
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎯 STREAM URL — Own yt-dlp Server → Piped Fallback              */
+/* ═══════════════════════════════════════════════════════════════ */
 async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) {
     return await getSaavnSongUrl(id.replace('saavn_', ''));
   }
+
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
+
+    // ═══ Primary: Own yt-dlp server ═══
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 20000);
+      const r = await fetch(`${YT_SERVER}/api/yt?id=${ytId}`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (r.ok) {
+        const data = await r.json();
+        if (data.proxyUrl) return data.proxyUrl;
+        if (data.directUrl) return data.directUrl;
+      }
+    } catch (e) { console.warn('YT server failed:', e.message); }
+
+    // ═══ Fallback: Piped ═══
     for (const api of PIPED_APIS) {
       try {
         const ctrl = new AbortController();
@@ -559,14 +506,15 @@ async function workerStreamUrl(id) {
         });
         const s = streams[0];
         if (s.proxyUrl) {
-          let pUrl = s.proxyUrl;
-          if (pUrl.startsWith('/')) pUrl = api + pUrl;
-          return pUrl;
+          let p = s.proxyUrl;
+          if (p.startsWith('/')) p = api + p;
+          return p;
         }
-        if (s.url && s.url.startsWith('http')) return s.url;
+        if (s.url) return s.url;
       } catch (e) { continue; }
     }
   }
+
   return null;
 }
 
@@ -615,7 +563,6 @@ function verifyAuthGate() {
   const authModal = document.getElementById('modalAuthGate');
   const mainFrame = document.querySelector('.mobile-frame');
   if (!authModal) return;
-
   const applyModalStyle = () => {
     authModal.style.position = 'fixed';
     authModal.style.inset = '0';
@@ -631,7 +578,6 @@ function verifyAuthGate() {
     authModal.style.overflowY = 'auto';
     authModal.style.display = 'flex';
   };
-
   if (!s) {
     document.body.classList.add('auth-locked');
     if (mainFrame) mainFrame.style.pointerEvents = 'none';
@@ -912,10 +858,7 @@ function initEqChain() {
     const freqs = [60, 230, 910, 4000, 14000];
     const filters = freqs.map(f => {
       const b = audioContextNode.createBiquadFilter();
-      b.type = 'peaking';
-      b.frequency.value = f;
-      b.Q.value = 1;
-      b.gain.value = 0;
+      b.type = 'peaking'; b.frequency.value = f; b.Q.value = 1; b.gain.value = 0;
       return b;
     });
     for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
@@ -1042,9 +985,7 @@ function updateMediaSessionMetadata(track) {
     try {
       const cover = track.cover || 'vaultify.png';
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.title || 'Unknown',
-        artist: track.artist || 'Unknown',
-        album: 'Vaultify',
+        title: track.title || 'Unknown', artist: track.artist || 'Unknown', album: 'Vaultify',
         artwork: [{ src: cover, sizes: '96x96', type: 'image/jpeg' }, { src: cover, sizes: '256x256', type: 'image/jpeg' }, { src: cover, sizes: '512x512', type: 'image/jpeg' }]
       });
       navigator.mediaSession.playbackState = isPlayingAudio ? 'playing' : 'paused';
@@ -1074,10 +1015,7 @@ function setupTimelineDraggableEngine() {
     const r = bar.getBoundingClientRect();
     return Math.max(0, Math.min(1, (x - r.left) / r.width));
   };
-  const doSeek = p => {
-    const d = getDur();
-    if (d > 0) seekAudioTo(p * d);
-  };
+  const doSeek = p => { const d = getDur(); if (d > 0) seekAudioTo(p * d); };
   bar.addEventListener('pointerdown', e => { isDraggingTimeline = true; try { bar.setPointerCapture(e.pointerId); } catch (err) {} updUI(getPct(e.clientX)); });
   bar.addEventListener('pointermove', e => { if (isDraggingTimeline) updUI(getPct(e.clientX)); });
   bar.addEventListener('pointerup', e => { if (!isDraggingTimeline) return; isDraggingTimeline = false; doSeek(getPct(e.clientX)); });
@@ -1127,7 +1065,7 @@ async function fetchTrendingSongs(limit = 10) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 PLAY TRACK — YouTube IFrame → Saavn → Piped                 */
+/* 🎯 PLAY TRACK — Server → Saavn → IFrame fallback                */
 /* ═══════════════════════════════════════════════════════════════ */
 async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
@@ -1145,23 +1083,35 @@ async function playTrack(index, broadcast = true) {
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
   setTimeout(() => autoExtendQueue(track), 2000);
 
-  // ═══ 1. YouTube IFrame (instant, primary) ═══
-  if (track.id.startsWith('yt_') && track._ytId) {
-    if (!ytPlayerReady) {
-      // Wait for player to be ready
-      let waited = 0;
-      while (!ytPlayerReady && waited < 3000) {
-        await new Promise(r => setTimeout(r, 100));
-        waited += 100;
-      }
+  // ═══════════════════════════════════════════════
+  // 🎬 YT TRACK → Own yt-dlp server se exact audio
+  // ═══════════════════════════════════════════════
+  if (track.id.startsWith('yt_')) {
+    isYtPlayback = false;
+    if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
+    if (ytPlayer && ytPlayerReady) { try { ytPlayer.stopVideo(); } catch (e) {} }
+    stopYtProgressSync();
+
+    // Cached blob
+    const cachedBlob = trackBlobCache.get(track.id);
+    if (cachedBlob && cachedBlob.startsWith('blob:')) {
+      if (await tryPlayAudio(cachedBlob)) return;
     }
-    if (ytPlayerReady && ytPlayer) {
+    const db = await cacheGet(track.id);
+    if (db && db.url) {
+      trackBlobCache.set(track.id, db.url);
+      if (await tryPlayAudio(db.url)) return;
+    }
+
+    // Fresh from server
+    showToast('⏳ Loading...');
+    const ytUrl = await workerStreamUrl(track.id);
+    if (ytUrl && await tryPlayAudio(ytUrl)) return;
+
+    // Last resort: YT IFrame
+    if (ytPlayerReady && ytPlayer && track._ytId) {
       try {
         isYtPlayback = true;
-        stopYtProgressSync();
-        if (mainAudio) { try { mainAudio.pause(); mainAudio.src = ''; } catch (e) {} }
-        if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
-
         if (ytCurrentVideoId !== track._ytId) {
           ytCurrentVideoId = track._ytId;
           ytPlayer.loadVideoById(track._ytId);
@@ -1169,42 +1119,41 @@ async function playTrack(index, broadcast = true) {
           ytPlayer.playVideo();
         }
         try { ytPlayer.setVolume(100); } catch (e) {}
-        setTimeout(() => { try { ytPlayer.playVideo(); } catch (e) {} }, 300);
         startYtProgressSync();
         setVisualState(true);
         return;
-      } catch (e) {
-        isYtPlayback = false;
-      }
+      } catch (e) { isYtPlayback = false; }
     }
+
+    // Nothing worked — skip
+    if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
+    return;
   }
 
-  // ═══ 2. Cached blob (offline/prev) ═══
+  // ═══════════════════════════════════════════════
+  // 🎵 Non-YT → Saavn / cache
+  // ═══════════════════════════════════════════════
   isYtPlayback = false;
+  if (ytPlayer && ytPlayerReady) { try { ytPlayer.stopVideo(); } catch (e) {} }
+  stopYtProgressSync();
+  if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
+
   const cached = trackBlobCache.get(track.id);
   if (cached && cached.startsWith('blob:')) {
     if (await tryPlayAudio(cached)) return;
   }
 
-  const db = await cacheGet(track.id);
-  if (db && db.url) {
-    trackBlobCache.set(track.id, db.url);
-    if (await tryPlayAudio(db.url)) return;
+  const db2 = await cacheGet(track.id);
+  if (db2 && db2.url) {
+    trackBlobCache.set(track.id, db2.url);
+    if (await tryPlayAudio(db2.url)) return;
   }
 
-  // ═══ 3. Saavn CDN (fast fallback) ═══
   try {
     const saavnUrl = await findSaavnStreamUrl(track.title, track.artist);
     if (saavnUrl && await tryPlayAudio(saavnUrl)) return;
   } catch (e) {}
 
-  // ═══ 4. Piped proxy (last resort for YT) ═══
-  if (track.id.startsWith('yt_')) {
-    const ytUrl = await workerStreamUrl(track.id);
-    if (ytUrl && await tryPlayAudio(ytUrl)) return;
-  }
-
-  // ═══ 5. Auto-skip ═══
   if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
 }
 
@@ -1352,7 +1301,7 @@ function shareCurrentTrack() {
   else { try { navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`); showToast('Copied!'); } catch (e) { showToast('Share not supported'); } }
 }
 
-/* ═══════════ DOWNLOAD (only via Saavn for offline) ═══════════ */
+/* ═══════════ DOWNLOAD ═══════════ */
 async function cacheTrackInBackground(track) {
   if (!track) return;
   if (track.id.startsWith('blob:')) return;
@@ -1360,8 +1309,9 @@ async function cacheTrackInBackground(track) {
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
   try {
-    let url = await findSaavnStreamUrl(track.title, track.artist);
-    if (!url) url = await workerStreamUrl(track.id);
+    let url = null;
+    if (track.id.startsWith('yt_')) url = await workerStreamUrl(track.id);
+    if (!url) url = await findSaavnStreamUrl(track.title, track.artist);
     if (!url || !url.startsWith('http')) return;
     const r = await fetch(url);
     const blob = await r.blob();
@@ -1378,8 +1328,10 @@ async function downloadCurrentTrack() {
   showDownloadIndicator('Downloading...');
   try {
     let u = trackBlobCache.get(t.id);
-    if (!u) u = await findSaavnStreamUrl(t.title, t.artist);
-    if (!u) u = await workerStreamUrl(t.id);
+    if (!u) {
+      if (t.id.startsWith('yt_')) u = await workerStreamUrl(t.id);
+      if (!u) u = await findSaavnStreamUrl(t.title, t.artist);
+    }
     if (!u) throw new Error('No URL');
     const r = await fetch(u);
     const b = await r.blob();
@@ -1525,12 +1477,8 @@ async function executeLiveSearch(isAuto = false) {
     if (!isAuto) showToast(`✅ ${found.length} results`);
   } else {
     const random = masterPlaylist.slice().sort(() => Math.random() - 0.5).slice(0, 20);
-    if (random.length > 0) {
-      renderSearchResults(random);
-      showToast(`Kuch match nahi, playlist se random songs`);
-    } else {
-      rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
-    }
+    if (random.length > 0) { renderSearchResults(random); showToast(`Kuch match nahi, playlist se random songs`); }
+    else rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
   }
   setTimeout(renderRecommendedSection, 2000);
 }
@@ -2000,11 +1948,8 @@ async function savePlaybackState() {
     if (!currentPlaylist[currentTrackIndex]) return;
     const t = currentPlaylist[currentTrackIndex];
     let pos = 0;
-    if (isYtPlayback && ytPlayer && ytPlayerReady) {
-      try { pos = ytPlayer.getCurrentTime() || 0; } catch (e) {}
-    } else if (mainAudio) {
-      pos = mainAudio.currentTime || 0;
-    }
+    if (isYtPlayback && ytPlayer && ytPlayerReady) { try { pos = ytPlayer.getCurrentTime() || 0; } catch (e) {} }
+    else if (mainAudio) { pos = mainAudio.currentTime || 0; }
     localStorage.setItem('vaultify_playback_state', JSON.stringify({ wasPlaying: isPlayingAudio, lastTrackId: t.id, lastTrackTitle: t.title, lastTrackArtist: t.artist, lastTrackCover: t.cover, lastPosition: Math.floor(pos * 1000), lastIndex: currentTrackIndex, playlistJson: JSON.stringify(currentPlaylist.slice(0, 50)), timestamp: Date.now() }));
   } catch (e) {}
 }
@@ -2108,6 +2053,9 @@ window.addEventListener('DOMContentLoaded', () => {
     loadQueueFromStorage();
   }, 1500);
   setTimeout(refreshMasterPlaylistInBackground, 5000);
+
+  // Ping server at startup to reduce cold start
+  setTimeout(() => { try { fetch(`${YT_SERVER}/`).catch(() => {}); } catch (e) {} }, 500);
 
   const start = () => {
     initForegroundAudioBridge();
