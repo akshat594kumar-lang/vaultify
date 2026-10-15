@@ -1,13 +1,17 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — v8 FINAL                                             */
+/* VAULTIFY — v8.2 FINAL                                           */
 /* ✅ Hourly auto-sync (fast via getUpdates)                       */
 /* ✅ Lyrics search (LRCLIB API)                                   */
-/* ✅ Optimized UI (better tiles, spacing, animations)             */
+/* ✅ Optimized UI                                                 */
 /* ✅ Queue: random from Telegram only                             */
-/* ✅ No forward loop                                              */
+/* ✅ Instagram links → open in app/Chrome                         */
+/* ✅ "Cache" → "Downloads"                                        */
+/* ✅ Audio watchdog — never stops mid-song                        */
+/* ✅ Blob URL playback bug fixed                                  */
+/* ✅ YT/Spotify playlist import → search TG → instant play        */
 /* ═══════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 8;
+const APP_VERSION = 8.2;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -35,7 +39,7 @@ const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v3';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v1';
-const TG_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
+const TG_SYNC_INTERVAL = 60 * 60 * 1000;
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
@@ -116,6 +120,102 @@ function closeFullPlayer() { const el = document.getElementById('fullPlayerModal
 function openPartnerModal() { openModal('modalPartner'); }
 function openSupportModal() { openModal('modalSupport'); }
 
+/* ═══════════ INSTAGRAM OPENER ═══════════ */
+function openInstagram(username) {
+  if (!username) return false;
+  let u = String(username).trim();
+  u = u.replace(/^@+/, '');
+  u = u.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '');
+  u = u.replace(/[\/?#].*$/, '');
+  if (/^https?:\/\//i.test(String(username).trim())) {
+    const raw = String(username).trim();
+    try {
+      if (window.AndroidNativeBridge && window.AndroidNativeBridge.openUrl) { window.AndroidNativeBridge.openUrl(raw); return true; }
+    } catch (e) {}
+    window.open(raw, '_blank', 'noopener,noreferrer');
+    return true;
+  }
+  if (!u || !/^[a-zA-Z0-9._]+$/.test(u)) return false;
+  const webUrl = `https://instagram.com/${u}`;
+  try {
+    if (window.AndroidNativeBridge && window.AndroidNativeBridge.openUrl) {
+      window.AndroidNativeBridge.openUrl(webUrl);
+      return true;
+    }
+  } catch (e) {}
+  try {
+    if (/Android/i.test(navigator.userAgent)) {
+      const fallback = encodeURIComponent(webUrl);
+      const intentUrl = `intent://instagram.com/_u/${u}/#Intent;scheme=https;package=com.instagram.android;S.browser_fallback_url=${fallback};end`;
+      const a = document.createElement('a');
+      a.href = intentUrl; a.style.display = 'none'; a.rel = 'noopener noreferrer';
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { try { document.body.removeChild(a); } catch (e) {} }, 500);
+      return true;
+    }
+  } catch (e) {}
+  window.open(webUrl, '_blank', 'noopener,noreferrer');
+  return true;
+}
+function initInstagramLinkHandler() {
+  document.addEventListener('click', (e) => {
+    const tgt = e.target;
+    if (!tgt || !tgt.closest) return;
+    const el = tgt.closest('[data-instagram], [data-ig], .instagram-username, .ig-handle, .ig-username, .cert-owner-handle');
+    if (el) {
+      e.preventDefault();
+      e.stopPropagation();
+      const u = el.getAttribute('data-instagram') || el.getAttribute('data-ig') || el.innerText || '';
+      openInstagram(u);
+      return;
+    }
+    const a = tgt.closest('a[href*="instagram.com"]');
+    if (a) {
+      e.preventDefault();
+      e.stopPropagation();
+      openInstagram(a.getAttribute('href'));
+    }
+  }, true); // capture phase — click se pehle pakadta hai
+}
+
+/* ═══════════ CACHE → DOWNLOADS RENAME ═══════════ */
+function renameCacheLabels(root) {
+  root = root || document.body;
+  if (!root) return;
+  try {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const updates = [];
+    let n;
+    while ((n = walker.nextNode())) {
+      const v = n.nodeValue;
+      if (!v) continue;
+      const trimmed = v.trim();
+      if (!trimmed) continue;
+      if (/^\s*cache\s*$/i.test(v) || /^\s*cached\s*$/i.test(v)) {
+        updates.push([n, v.replace(/cache/gi, 'Downloads')]);
+        continue;
+      }
+      if (trimmed.length <= 40 && /\bCached?\b/i.test(v)) {
+        updates.push([n, v.replace(/\bCached?\b/gi, 'Downloads')]);
+      }
+    }
+    updates.forEach(([node, val]) => { try { node.nodeValue = val; } catch (e) {} });
+  } catch (e) {}
+}
+let _cacheRenameObserver = null;
+function setupCacheRenameObserver() {
+  try {
+    if (_cacheRenameObserver) _cacheRenameObserver.disconnect();
+    renameCacheLabels(document.body);
+    _cacheRenameObserver = new MutationObserver(() => {
+      if (_cacheRenameObserver) _cacheRenameObserver.disconnect();
+      renameCacheLabels(document.body);
+      if (_cacheRenameObserver) _cacheRenameObserver.observe(document.body, { childList: true, subtree: true });
+    });
+    _cacheRenameObserver.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
+}
+
 function switchNavTab(tab, th = true) {
   document.querySelectorAll('.view-screen').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -136,12 +236,14 @@ function switchNavTab(tab, th = true) {
   if (tab === 'library') renderLibrary();
   if (tab === 'profile') checkPermissionsStatus();
   if (tab === 'cert') updateCertLiveDateTime();
+  setTimeout(() => renameCacheLabels(document.body), 50);
 }
 function switchLibraryTab(tab, el) {
   currentLibraryTab = tab;
   document.querySelectorAll('#tabLibrary .nav-btn').forEach(p => p.classList.remove('active'));
   if (el) el.classList.add('active');
   renderLibrary();
+  setTimeout(() => renameCacheLabels(document.body), 50);
 }
 function handleSystemBackPress() {
   const fp = document.getElementById('fullPlayerModal');
@@ -157,16 +259,12 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎵 TELEGRAM — AUTO-SYNC (hourly, fast)                          */
+/* 🎵 TELEGRAM — AUTO-SYNC                                         */
 /* ═══════════════════════════════════════════════════════════════ */
 function loadTgLibrary() {
   try {
     const raw = localStorage.getItem(TG_LIBRARY_KEY);
-    if (raw) {
-      tgLibrary = JSON.parse(raw);
-      console.log(`📚 TG: ${tgLibrary.length} songs`);
-      return true;
-    }
+    if (raw) { tgLibrary = JSON.parse(raw); console.log(`📚 TG: ${tgLibrary.length} songs`); return true; }
   } catch (e) {}
   tgLibrary = [];
   return false;
@@ -192,24 +290,17 @@ async function fetchTgThumb(thumbFileId) {
   } catch (e) { return ''; }
 }
 
-/* 🚀 FAST SYNC — getUpdates based */
 async function syncTgLibrary(forceFull = false) {
   if (!TG_BOT_TOKEN || !TG_CHANNEL_ID) return tgLibrary;
   const t0 = Date.now();
   console.log('⚡ TG sync...');
-
-  let offset = 0;
-  let hasMore = true;
-  let added = 0;
-  let totalProcessed = 0;
-
+  let offset = 0, hasMore = true, added = 0, totalProcessed = 0;
   while (hasMore) {
     try {
       const url = `${TG_API}/getUpdates?offset=${offset}&limit=100&allowed_updates=["channel_post"]&timeout=0`;
       const r = await fetch(url);
       const d = await r.json();
       if (!d.ok || !d.result || d.result.length === 0) { hasMore = false; break; }
-
       for (const update of d.result) {
         offset = update.update_id + 1;
         totalProcessed++;
@@ -217,7 +308,6 @@ async function syncTgLibrary(forceFull = false) {
         if (!msg) continue;
         const doc = msg.document || msg.audio;
         if (!doc) continue;
-
         let title = '', artist = '', thumb = '';
         if (msg.audio) {
           title = (doc.title || '').trim();
@@ -235,31 +325,16 @@ async function syncTgLibrary(forceFull = false) {
         }
         if (!title || title === 'Unknown') continue;
         if (tgLibrary.some(s => s.fileId === doc.file_id)) continue;
-
         let thumbUrl = '';
         if (thumb) thumbUrl = await fetchTgThumb(thumb);
-
-        tgLibrary.push({
-          title, artist, cover: thumbUrl,
-          fileId: doc.file_id,
-          duration: doc.duration || 0,
-          size: doc.file_size || 0,
-          msgId: msg.message_id,
-          addedAt: Date.now()
-        });
+        tgLibrary.push({ title, artist, cover: thumbUrl, fileId: doc.file_id, duration: doc.duration || 0, size: doc.file_size || 0, msgId: msg.message_id, addedAt: Date.now() });
         added++;
       }
-
       if (d.result.length < 100) hasMore = false;
       await new Promise(r => setTimeout(r, 40));
     } catch (e) { hasMore = false; }
   }
-
-  if (totalProcessed === 0 && tgLibrary.length === 0) {
-    console.log('Fallback scan...');
-    await fallbackForwardScan();
-  }
-
+  if (totalProcessed === 0 && tgLibrary.length === 0) { await fallbackForwardScan(); }
   saveTgLibrary();
   localStorage.setItem(TG_LAST_SYNC_KEY, Date.now().toString());
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -310,7 +385,6 @@ async function fallbackForwardScan() {
   console.log(`Fallback: +${added}`);
 }
 
-/* ⏰ Hourly auto-sync */
 function startHourlySync() {
   if (tgSyncTimer) clearInterval(tgSyncTimer);
   tgSyncTimer = setInterval(async () => {
@@ -319,14 +393,12 @@ function startHourlySync() {
     if (Date.now() - last < TG_SYNC_INTERVAL) return;
     console.log('⏰ Hourly sync triggered');
     await syncTgLibrary(false).catch(() => {});
-  }, 60 * 1000); // check every minute, sync if hour passed
+  }, 60 * 1000);
 }
-
 async function autoSyncTgLibrary() {
   loadTgLibrary();
   if (navigator.onLine) {
     const last = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
-    /* Sync immediately if >1 hour since last */
     if (Date.now() - last > TG_SYNC_INTERVAL || tgLibrary.length === 0) {
       setTimeout(() => syncTgLibrary(false).catch(() => {}), 3000);
     }
@@ -347,7 +419,6 @@ async function searchLyrics(query) {
   if (!query || query.length < 3) return [];
   const key = query.toLowerCase().trim();
   if (lyricsCache[key]) return lyricsCache[key];
-
   try {
     const url = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
     const ctrl = new AbortController();
@@ -357,19 +428,15 @@ async function searchLyrics(query) {
     if (!r.ok) return [];
     const data = await r.json();
     if (!Array.isArray(data)) return [];
-
     const results = data.slice(0, 10).map(item => ({
       id: `lyric_${item.id}`,
       title: item.trackName || item.name || 'Unknown',
       artist: item.artistName || 'Unknown',
-      cover: '',
-      duration: item.duration || 0,
+      cover: '', duration: item.duration || 0,
       source: 'lyrics',
       _lyricQuery: `${item.trackName} ${item.artistName}`
     }));
-
     lyricsCache[key] = results;
-    /* Cache with size limit */
     if (Object.keys(lyricsCache).length > 50) lyricsCache = {};
     return results;
   } catch (e) { return []; }
@@ -464,14 +531,11 @@ async function searchYouTube(query, limit = 10) {
   return [];
 }
 
-/* 🎯 COMBINED SEARCH — Telegram + Saavn + Lyrics + SC + Jamendo */
 async function searchSaavnAndSC(query, limit = 30) {
   const results = [];
   const seen = new Set();
   const addUnique = (t) => { const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim(); if (seen.has(key)) return; seen.add(key); results.push(t); };
   const q = query.toLowerCase().trim();
-
-  /* 1. Telegram library */
   if (tgLibrary.length > 0) {
     tgLibrary.forEach(item => {
       const hay = (item.title + ' ' + item.artist).toLowerCase();
@@ -480,43 +544,28 @@ async function searchSaavnAndSC(query, limit = 30) {
       }
     });
   }
-
-  /* 2. Parallel fetch: Saavn + Lyrics + SC + Jamendo */
   const [saavn, lyrics, sc, jam] = await Promise.all([
     searchSaavn(query, Math.floor(limit * 0.5)).catch(() => []),
     searchLyrics(query).catch(() => []),
     searchSoundCloud(query, Math.floor(limit * 0.15)).catch(() => []),
     searchJamendo(query, Math.floor(limit * 0.15)).catch(() => [])
   ]);
-
   saavn.forEach(addUnique);
-
-  /* 3. Lyrics results — try to find Saavn match */
   for (const lyricResult of lyrics) {
     if (results.length >= limit) break;
-    try {
-      const sub = await searchSaavn(lyricResult._lyricQuery || lyricResult.title, 2);
-      sub.forEach(addUnique);
-    } catch (e) {}
+    try { const sub = await searchSaavn(lyricResult._lyricQuery || lyricResult.title, 2); sub.forEach(addUnique); } catch (e) {}
   }
-
   sc.forEach(addUnique);
   jam.forEach(addUnique);
-
-  /* 4. Multi-word retry for lyrics-ish queries */
   const words = q.split(/\s+/).filter(w => w.length > 2);
   if (words.length >= 3 && results.length < 10) {
     for (let i = 0; i < words.length - 2 && results.length < 20; i++) {
       const combo = words.slice(i, i + 3).join(' ');
-      if (combo.length > 4) {
-        try { const extra = await searchSaavn(combo, 8); extra.forEach(addUnique); } catch (e) {}
-      }
+      if (combo.length > 4) { try { const extra = await searchSaavn(combo, 8); extra.forEach(addUnique); } catch (e) {} }
     }
   }
-
   return results.slice(0, limit);
 }
-
 async function workerSearch(query, limit = 30) { return await searchSaavnAndSC(query, limit); }
 
 /* ═══════════ STREAM URL ═══════════ */
@@ -553,6 +602,178 @@ async function workerStreamUrl(id) {
     }
   }
   return null;
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎧 PLAYLIST IMPORT — YT/Spotify → TG search → INSTANT play       */
+/* ═══════════════════════════════════════════════════════════════ */
+
+function extractPlaylistInfo(url) {
+  if (!url) return null;
+  const u = String(url).trim();
+  const ytMatch = u.match(/[?&]list=([a-zA-Z0-9_-]+)/);
+  if (ytMatch && /(youtube\.com|youtu\.be|music\.youtube\.com)/i.test(u)) return { platform: 'youtube', id: ytMatch[1] };
+  const spMatch = u.match(/spotify\.com\/playlist\/([a-zA-Z0-9]+)/i);
+  if (spMatch) return { platform: 'spotify', id: spMatch[1] };
+  if (/^PL[a-zA-Z0-9_-]{10,}$/.test(u)) return { platform: 'youtube', id: u };
+  if (/^[a-zA-Z0-9]{22}$/.test(u)) return { platform: 'spotify', id: u };
+  return null;
+}
+
+function _norm(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]/g, '')
+    .replace(/ft\.?|feat\.?|featuring/gi, '')
+    .replace(/[^a-z0-9\u0900-\u097F\u0600-\u06FF\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function _fuzzyScore(a, b) {
+  a = _norm(a); b = _norm(b);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const ta = new Set(a.split(' ').filter(w => w.length > 2));
+  const tb = new Set(b.split(' ').filter(w => w.length > 2));
+  if (!ta.size || !tb.size) return a.includes(b) || b.includes(a) ? 0.8 : 0;
+  let inter = 0;
+  ta.forEach(w => { if (tb.has(w)) inter++; });
+  const jac = inter / (ta.size + tb.size - inter);
+  const contains = (a.includes(b) || b.includes(a)) ? 0.75 : 0;
+  return Math.max(jac, contains);
+}
+function _findInTgLibrary(title, artist) {
+  if (!tgLibrary.length) return null;
+  let best = null, bestScore = 0;
+  for (const s of tgLibrary) {
+    const tScore = _fuzzyScore(title, s.title);
+    if (tScore < 0.4) continue;
+    const aScore = artist ? _fuzzyScore(artist, s.artist) : 0;
+    const final = artist ? (tScore * 0.78) + (aScore * 0.22) : tScore;
+    if (final > bestScore) { bestScore = final; best = s; }
+  }
+  return bestScore >= 0.55 ? { song: best, score: bestScore } : null;
+}
+
+async function fetchYTPlaylistNames(playlistId) {
+  for (const api of PIPED_APIS) {
+    try {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 12000);
+      const r = await fetch(`${api}/playlists/${playlistId}`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const vids = data.relatedStreams || data.videos || data.items || [];
+      if (!vids.length) continue;
+      return vids.map(v => ({
+        title: v.title || '',
+        artist: v.uploaderName || data.uploader || ''
+      })).filter(t => t.title);
+    } catch (e) { continue; }
+  }
+  return [];
+}
+
+async function fetchSpotifyPlaylistNames(playlistId) {
+  try {
+    const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
+    const r = await fetch(embedUrl, { mode: 'cors' });
+    if (!r.ok) return null;
+    const html = await r.text();
+    const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (!m) return null;
+    const data = JSON.parse(m[1]);
+    const entity = data?.props?.pageProps?.state?.data?.entity || data?.props?.pageProps?.state?.data;
+    const list = entity?.trackList || entity?.tracks?.items || [];
+    if (!Array.isArray(list) || !list.length) return null;
+    return list.map(t => ({
+      title: t.title || t.name || t.track?.name || '',
+      artist: t.subtitle || t.artists?.map(a => a.name).join(', ') || t.track?.artists?.map(a => a.name).join(', ') || ''
+    })).filter(t => t.title);
+  } catch (e) { return null; }
+}
+
+async function importPlaylistFromUrl(urlOrId, opts = {}) {
+  const info = extractPlaylistInfo(urlOrId);
+  if (!info) { showToast('❌ Invalid playlist URL'); return null; }
+
+  if (!tgLibrary.length) loadTgLibrary();
+  if (!tgLibrary.length) { showToast('⚠️ Telegram library empty — wait for sync'); return null; }
+
+  showToast('⏳ Loading playlist...');
+
+  let meta = [];
+  if (info.platform === 'youtube') {
+    meta = await fetchYTPlaylistNames(info.id);
+  } else {
+    const sp = await fetchSpotifyPlaylistNames(info.id);
+    if (!sp) { showToast('⚠️ Spotify blocked — paste YT Music link'); return null; }
+    meta = sp;
+  }
+  if (!meta.length) { showToast('❌ Could not load playlist'); return null; }
+
+  showToast(`🔍 Matching ${meta.length} songs with Telegram...`);
+
+  const matched = [];
+  const usedFileIds = new Set();
+  let skipped = 0;
+  for (const m of meta) {
+    const hit = _findInTgLibrary(m.title, m.artist);
+    if (hit && !usedFileIds.has(hit.song.fileId)) {
+      usedFileIds.add(hit.song.fileId);
+      matched.push({
+        id: 'tg_' + hit.song.fileId,
+        title: hit.song.title,
+        artist: hit.song.artist,
+        cover: hit.song.cover || '',
+        duration: hit.song.duration || 0,
+        source: 'telegram',
+        _fileId: hit.song.fileId
+      });
+    } else {
+      skipped++;
+    }
+    if (matched.length >= QUEUE_MAX_TOTAL) break;
+  }
+
+  if (!matched.length) {
+    showToast(`❌ Koi match nahi mila (${meta.length} checked)`);
+    return null;
+  }
+
+  /* 🚀 INSTANT PLAY */
+  currentPlaylist = matched;
+  currentTrackIndex = 0;
+  queueSeenIds = new Set(matched.map(t => t.id));
+  renderHomeQueue();
+  saveQueueToStorage();
+  playTrack(0);
+
+  showToast(`✅ ${matched.length}/${meta.length} songs queued · ▶ playing`);
+  console.log(`[import] matched ${matched.length}, skipped ${skipped}`);
+  if (opts.saveAs) saveImportedPlaylist(opts.saveAs, matched);
+  return matched;
+}
+
+function saveImportedPlaylist(name, tracks) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('vaultify_imported_playlists') || '[]');
+    saved.unshift({ name, tracks, savedAt: Date.now() });
+    if (saved.length > 20) saved.pop();
+    localStorage.setItem('vaultify_imported_playlists', JSON.stringify(saved));
+  } catch (e) {}
+}
+
+async function promptImportPlaylist() {
+  const url = prompt(
+    '🔗 Playlist link paste karo:\n\n' +
+    '• YT Music / YouTube: youtube.com/playlist?list=...\n' +
+    '• Spotify: open.spotify.com/playlist/...\n\n' +
+    '(Telegram library se match hoke INSTANT bajenge)'
+  );
+  if (!url) return;
+  await importPlaylistFromUrl(url);
 }
 
 /* ═══════════ AUTH ═══════════ */
@@ -742,7 +963,7 @@ function getLanguageArtists(lang) {
   return ['arijit singh', 'atif aslam', 'shreya ghoshal', 'sonu nigam', 'neha kakkar', 'jubin nautiyal', 'darshan raval', 'armaan malik', 'kishore kumar', 'lata mangeshkar'];
 }
 
-/* ═══════════ CACHE ═══════════ */
+/* ═══════════ CACHE (IndexedDB) ═══════════ */
 function initCacheDB() { return new Promise(resolve => { try { const req = indexedDB.open('vaultify_cache', 3); req.onupgradeneeded = e => { const db = e.target.result; if (!db.objectStoreNames.contains('songs')) { const store = db.createObjectStore('songs', { keyPath: 'id' }); store.createIndex('cachedAt', 'cachedAt', { unique: false }); store.createIndex('lastAccess', 'lastAccess', { unique: false }); } }; req.onsuccess = e => { cacheDB = e.target.result; resolve(cacheDB); }; req.onerror = () => resolve(null); } catch (e) { resolve(null); } }); }
 function cacheGet(id) { return new Promise(resolve => { if (!cacheDB) return resolve(null); try { const tx = cacheDB.transaction('songs', 'readwrite'); const store = tx.objectStore('songs'); const rq = store.get(id); rq.onsuccess = () => { const x = rq.result; if (!x) return resolve(null); try { if (x.blob instanceof Blob) x.url = URL.createObjectURL(x.blob); x.lastAccess = Date.now(); store.put(x); } catch (e) {} resolve(x); }; rq.onerror = () => resolve(null); } catch (e) { resolve(null); } }); }
 function cachePut(id, blob, meta) { return new Promise(async resolve => { if (!cacheDB) return resolve(false); try { await cacheEnforceLimit(); const tx = cacheDB.transaction('songs', 'readwrite'); tx.objectStore('songs').put({ id, blob, title: meta.title, artist: meta.artist, cover: meta.cover, source: meta.source, size: blob.size, cachedAt: Date.now(), lastAccess: Date.now() }); tx.oncomplete = () => resolve(true); tx.onerror = () => resolve(false); } catch (e) { resolve(false); } }); }
@@ -770,7 +991,21 @@ function setupMediaSession() {
       navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime !== undefined) seekAudioTo(d.seekTime); });
     } catch (e) {}
   }
-  mainAudio.addEventListener('error', () => { showToast('⚠️ Audio error'); setVisualState(false); if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800); });
+  mainAudio.addEventListener('error', () => {
+    if (mainAudio._suppressError) return;
+    console.warn('[audio] error event');
+    showToast('⚠️ Audio error, retrying…');
+    const track = currentPlaylist[currentTrackIndex];
+    if (!track) { setVisualState(false); return; }
+    if (!track._retriedOnce) {
+      track._retriedOnce = true;
+      setTimeout(() => { if (currentPlaylist[currentTrackIndex] === track) playTrack(currentTrackIndex); }, 900);
+      return;
+    }
+    track._retriedOnce = false;
+    setVisualState(false);
+    if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
+  });
   mainAudio.addEventListener('timeupdate', () => {
     if (!mainAudio.duration || isDraggingTimeline) return;
     const pos = mainAudio.currentTime, dur = mainAudio.duration;
@@ -845,23 +1080,27 @@ async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
   const track = currentPlaylist[index];
-  if (track) { currentLanguage = detectLanguage((track.title || '') + ' ' + (track.artist || '') + ' ' + (track._lang || '')); currentVibe = detectVibe((track.title || '') + ' ' + (track.artist || '')); }
-
+  if (track) {
+    currentLanguage = detectLanguage((track.title || '') + ' ' + (track.artist || '') + ' ' + (track._lang || ''));
+    currentVibe = detectVibe((track.title || '') + ' ' + (track.artist || ''));
+    track._retriedOnce = false;
+  }
   syncPlayerUI(track);
   updateMediaSessionMetadata(track);
   logPlaybackHistory(track);
   renderHomeRecentVault();
-
   setTimeout(() => initForegroundAudioBridge(), 0);
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
   setTimeout(() => autoExtendQueue(), 2000);
-
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
   const tryPlay = async (url) => {
-    if (!url || !url.startsWith('http')) return false;
-    if (url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
+    if (!url) return false;
+    const isBlob = url.startsWith('blob:') || url.startsWith('data:');
+    const isHttp = /^https?:/i.test(url);
+    if (!isBlob && !isHttp) return false;
+    if (!isBlob && url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
       try {
         currentHls = new Hls({ enableWorker: true, lowLatencyMode: false });
         currentHls.loadSource(url); currentHls.attachMedia(mainAudio);
@@ -869,14 +1108,21 @@ async function playTrack(index, broadcast = true) {
         return true;
       } catch (e) { return false; }
     }
-    mainAudio.src = url; mainAudio.load();
-    try { await mainAudio.play(); setVisualState(true); return true; } catch (e) { return false; }
+    mainAudio._suppressError = true;
+    try {
+      mainAudio.src = url;
+      mainAudio.load();
+      await mainAudio.play();
+      mainAudio._suppressError = false;
+      setVisualState(true);
+      return true;
+    } catch (e) { mainAudio._suppressError = false; return false; }
   };
 
-  if (track.id.startsWith('blob:')) { await tryPlay(track.id); return; }
-  if (track._directStream && track._directStream.startsWith('http')) { if (await tryPlay(track._directStream)) return; }
+  if (track.id.startsWith('blob:')) { if (await tryPlay(track.id)) return; }
+  if (track._directStream && (track._directStream.startsWith('http') || track._directStream.startsWith('blob:'))) { if (await tryPlay(track._directStream)) return; }
   const c = trackBlobCache.get(track.id);
-  if (c && c.startsWith('blob:')) { if (await tryPlay(c)) return; }
+  if (c && (c.startsWith('blob:') || c.startsWith('http'))) { if (await tryPlay(c)) return; }
   const db = await cacheGet(track.id);
   if (db && db.url) { trackBlobCache.set(track.id, db.url); if (await tryPlay(db.url)) return; }
   const streamUrl = await fetchDirectAudioStreamUrl(track.id, track);
@@ -896,7 +1142,6 @@ async function autoplayNext() {
   else currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
   playTrack(currentTrackIndex);
 }
-
 async function autoExtendQueue() {
   if (autoMixFetching) return;
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
@@ -911,7 +1156,6 @@ async function autoExtendQueue() {
   } catch (e) {}
   autoMixFetching = false;
 }
-
 function pickRandomFromTg(count = 12) {
   if (tgLibrary.length === 0) return [];
   const existing = new Set([...currentPlaylist.map(t => t.id), ...queueSeenIds]);
@@ -929,16 +1173,11 @@ function pickRandomFromTg(count = 12) {
     source: 'telegram', _fileId: t.fileId
   }));
 }
-
 function shuffleArray(arr) {
   const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
-
 function addToQueueSilently(tracks) {
   if (!tracks || !tracks.length) return;
   let added = 0;
@@ -946,14 +1185,10 @@ function addToQueueSilently(tracks) {
   for (const t of tracks) {
     if (currentPlaylist.length >= QUEUE_MAX_TOTAL) break;
     if (existingIds.has(t.id)) continue;
-    currentPlaylist.push(t);
-    queueSeenIds.add(t.id);
-    existingIds.add(t.id);
-    added++;
+    currentPlaylist.push(t); queueSeenIds.add(t.id); existingIds.add(t.id); added++;
   }
   if (added > 0) { renderHomeQueue(); saveQueueToStorage(); }
 }
-
 function togglePlaybackState() { if (!mainAudio) return; if (mainAudio.paused) { initForegroundAudioBridge(); requestHardwareWakeLock(); mainAudio.play().then(() => setVisualState(true)).catch(() => {}); } else { mainAudio.pause(); setVisualState(false); } }
 function setVisualState(playing) {
   isPlayingAudio = playing; if (playing) requestHardwareWakeLock();
@@ -1181,7 +1416,7 @@ async function renderLibrary() {
     c.innerHTML = html;
   } else if (currentLibraryTab === 'cached') {
     const cached = await cacheAll();
-    if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No cached songs.</p>`; return; }
+    if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No downloads yet.</p>`; return; }
     let totalSize = 0; cached.forEach(t => { if (t.size) totalSize += t.size; });
     let html = `<div style="font-size:11px;color:var(--text-sub);margin-bottom:8px"><i class="fa-solid fa-database"></i> ${cached.length} songs · ~${(totalSize / (1024 * 1024)).toFixed(1)}MB</div>`;
     html += cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title || 'Unknown')}</h4><p>${escapeHtml(t.artist || '')}</p></div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g, "\\'")}')"></i></div>`).join('');
@@ -1343,6 +1578,25 @@ else updateCertLiveDateTime();
 setTimeout(updateCertLiveDateTime, 100); setTimeout(updateCertLiveDateTime, 500); setTimeout(updateCertLiveDateTime, 1500);
 setInterval(updateCertLiveDateTime, 1000);
 
+/* ═══════════ 🛡️ AUDIO WATCHDOG ═══════════ */
+let _lastWatchdogResume = 0;
+setInterval(() => {
+  try {
+    if (!mainAudio) return;
+    if (!isPlayingAudio) return;
+    if (isDraggingTimeline) return;
+    if (!mainAudio.src) return;
+    if (mainAudio.ended) return;
+    if (mainAudio.paused) {
+      const now = Date.now();
+      if (now - _lastWatchdogResume > 2000) {
+        _lastWatchdogResume = now;
+        mainAudio.play().catch(() => {});
+      }
+    }
+  } catch (e) {}
+}, 1500);
+
 /* ═══════════ BOOT ═══════════ */
 window.addEventListener('DOMContentLoaded', () => {
   mainAudio = document.getElementById('vaultifyAudio'); silentLoop = document.getElementById('silentAudioLoop');
@@ -1362,8 +1616,8 @@ window.addEventListener('DOMContentLoaded', () => {
   renderLibrary();
   renderSearchHistoryTags();
   renderNotificationCenter();
-
-  /* TG sync + hourly auto-refresh */
+  initInstagramLinkHandler();
+  setupCacheRenameObserver();
   autoSyncTgLibrary();
   startHourlySync();
 
@@ -1388,7 +1642,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (document.hidden && isPlayingAudio && mainAudio && mainAudio.paused) { mainAudio.play().catch(() => {}); }
     if (!document.hidden && 'wakeLock' in navigator) requestHardwareWakeLock();
     if (!document.hidden) {
-      /* App came to foreground — check if hour passed for sync */
+      if (isPlayingAudio && mainAudio && mainAudio.paused) setTimeout(() => mainAudio.play().catch(() => {}), 300);
       const last = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
       if (Date.now() - last > TG_SYNC_INTERVAL && navigator.onLine) {
         syncTgLibrary(false).catch(() => {});
@@ -1437,5 +1691,7 @@ Object.assign(window, {
   checkWorker, workerSearch, workerStreamUrl, searchLyrics,
   searchSaavn, searchSoundCloud, searchJamendo, searchYouTube,
   saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
-  syncTgLibrary, manualSyncTg, autoSyncTgLibrary, startHourlySync
+  syncTgLibrary, manualSyncTg, autoSyncTgLibrary, startHourlySync,
+  openInstagram, renameCacheLabels,
+  importPlaylistFromUrl, promptImportPlaylist, extractPlaylistInfo, saveImportedPlaylist
 });
