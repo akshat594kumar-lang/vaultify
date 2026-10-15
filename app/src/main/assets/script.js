@@ -1,13 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — v8 FIXED                                             */
+/* VAULTIFY — v8 FINAL                                             */
 /* ✅ Hourly auto-sync (fast via getUpdates)                       */
 /* ✅ Lyrics search (LRCLIB API)                                   */
-/* ✅ Optimized UI                                                 */
+/* ✅ Optimized UI (better tiles, spacing, animations)             */
 /* ✅ Queue: random from Telegram only                             */
 /* ✅ No forward loop                                              */
-/* ✅ Blob URL playback fixed                                      */
-/* ✅ Audio watchdog — never stops mid-song                        */
-/* ✅ Retry on error                                               */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const APP_VERSION = 8;
@@ -38,7 +35,7 @@ const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v3';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v1';
-const TG_SYNC_INTERVAL = 60 * 60 * 1000;
+const TG_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
@@ -160,7 +157,7 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎵 TELEGRAM — AUTO-SYNC                                         */
+/* 🎵 TELEGRAM — AUTO-SYNC (hourly, fast)                          */
 /* ═══════════════════════════════════════════════════════════════ */
 function loadTgLibrary() {
   try {
@@ -195,6 +192,7 @@ async function fetchTgThumb(thumbFileId) {
   } catch (e) { return ''; }
 }
 
+/* 🚀 FAST SYNC — getUpdates based */
 async function syncTgLibrary(forceFull = false) {
   if (!TG_BOT_TOKEN || !TG_CHANNEL_ID) return tgLibrary;
   const t0 = Date.now();
@@ -312,6 +310,7 @@ async function fallbackForwardScan() {
   console.log(`Fallback: +${added}`);
 }
 
+/* ⏰ Hourly auto-sync */
 function startHourlySync() {
   if (tgSyncTimer) clearInterval(tgSyncTimer);
   tgSyncTimer = setInterval(async () => {
@@ -320,13 +319,14 @@ function startHourlySync() {
     if (Date.now() - last < TG_SYNC_INTERVAL) return;
     console.log('⏰ Hourly sync triggered');
     await syncTgLibrary(false).catch(() => {});
-  }, 60 * 1000);
+  }, 60 * 1000); // check every minute, sync if hour passed
 }
 
 async function autoSyncTgLibrary() {
   loadTgLibrary();
   if (navigator.onLine) {
     const last = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
+    /* Sync immediately if >1 hour since last */
     if (Date.now() - last > TG_SYNC_INTERVAL || tgLibrary.length === 0) {
       setTimeout(() => syncTgLibrary(false).catch(() => {}), 3000);
     }
@@ -369,6 +369,7 @@ async function searchLyrics(query) {
     }));
 
     lyricsCache[key] = results;
+    /* Cache with size limit */
     if (Object.keys(lyricsCache).length > 50) lyricsCache = {};
     return results;
   } catch (e) { return []; }
@@ -463,12 +464,14 @@ async function searchYouTube(query, limit = 10) {
   return [];
 }
 
+/* 🎯 COMBINED SEARCH — Telegram + Saavn + Lyrics + SC + Jamendo */
 async function searchSaavnAndSC(query, limit = 30) {
   const results = [];
   const seen = new Set();
   const addUnique = (t) => { const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim(); if (seen.has(key)) return; seen.add(key); results.push(t); };
   const q = query.toLowerCase().trim();
 
+  /* 1. Telegram library */
   if (tgLibrary.length > 0) {
     tgLibrary.forEach(item => {
       const hay = (item.title + ' ' + item.artist).toLowerCase();
@@ -478,6 +481,7 @@ async function searchSaavnAndSC(query, limit = 30) {
     });
   }
 
+  /* 2. Parallel fetch: Saavn + Lyrics + SC + Jamendo */
   const [saavn, lyrics, sc, jam] = await Promise.all([
     searchSaavn(query, Math.floor(limit * 0.5)).catch(() => []),
     searchLyrics(query).catch(() => []),
@@ -487,6 +491,7 @@ async function searchSaavnAndSC(query, limit = 30) {
 
   saavn.forEach(addUnique);
 
+  /* 3. Lyrics results — try to find Saavn match */
   for (const lyricResult of lyrics) {
     if (results.length >= limit) break;
     try {
@@ -498,6 +503,7 @@ async function searchSaavnAndSC(query, limit = 30) {
   sc.forEach(addUnique);
   jam.forEach(addUnique);
 
+  /* 4. Multi-word retry for lyrics-ish queries */
   const words = q.split(/\s+/).filter(w => w.length > 2);
   if (words.length >= 3 && results.length < 10) {
     for (let i = 0; i < words.length - 2 && results.length < 20; i++) {
@@ -764,21 +770,7 @@ function setupMediaSession() {
       navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime !== undefined) seekAudioTo(d.seekTime); });
     } catch (e) {}
   }
-  mainAudio.addEventListener('error', () => {
-    if (mainAudio._suppressError) return;
-    console.warn('[audio] error event');
-    showToast('⚠️ Audio error, retrying…');
-    const track = currentPlaylist[currentTrackIndex];
-    if (!track) { setVisualState(false); return; }
-    if (!track._retriedOnce) {
-      track._retriedOnce = true;
-      setTimeout(() => { if (currentPlaylist[currentTrackIndex] === track) playTrack(currentTrackIndex); }, 900);
-      return;
-    }
-    track._retriedOnce = false;
-    setVisualState(false);
-    if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
-  });
+  mainAudio.addEventListener('error', () => { showToast('⚠️ Audio error'); setVisualState(false); if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800); });
   mainAudio.addEventListener('timeupdate', () => {
     if (!mainAudio.duration || isDraggingTimeline) return;
     const pos = mainAudio.currentTime, dur = mainAudio.duration;
@@ -853,11 +845,7 @@ async function playTrack(index, broadcast = true) {
   if (index < 0 || index >= currentPlaylist.length) return;
   currentTrackIndex = index;
   const track = currentPlaylist[index];
-  if (track) {
-    currentLanguage = detectLanguage((track.title || '') + ' ' + (track.artist || '') + ' ' + (track._lang || ''));
-    currentVibe = detectVibe((track.title || '') + ' ' + (track.artist || ''));
-    track._retriedOnce = false;
-  }
+  if (track) { currentLanguage = detectLanguage((track.title || '') + ' ' + (track.artist || '') + ' ' + (track._lang || '')); currentVibe = detectVibe((track.title || '') + ' ' + (track.artist || '')); }
 
   syncPlayerUI(track);
   updateMediaSessionMetadata(track);
@@ -871,13 +859,9 @@ async function playTrack(index, broadcast = true) {
 
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
-  /* ✅ FIXED: accept blob:/data:/http(s) */
   const tryPlay = async (url) => {
-    if (!url) return false;
-    const isBlob = url.startsWith('blob:') || url.startsWith('data:');
-    const isHttp = /^https?:/i.test(url);
-    if (!isBlob && !isHttp) return false;
-    if (!isBlob && url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
+    if (!url || !url.startsWith('http')) return false;
+    if (url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
       try {
         currentHls = new Hls({ enableWorker: true, lowLatencyMode: false });
         currentHls.loadSource(url); currentHls.attachMedia(mainAudio);
@@ -885,21 +869,14 @@ async function playTrack(index, broadcast = true) {
         return true;
       } catch (e) { return false; }
     }
-    mainAudio._suppressError = true;
-    try {
-      mainAudio.src = url;
-      mainAudio.load();
-      await mainAudio.play();
-      mainAudio._suppressError = false;
-      setVisualState(true);
-      return true;
-    } catch (e) { mainAudio._suppressError = false; return false; }
+    mainAudio.src = url; mainAudio.load();
+    try { await mainAudio.play(); setVisualState(true); return true; } catch (e) { return false; }
   };
 
-  if (track.id.startsWith('blob:')) { if (await tryPlay(track.id)) return; }
-  if (track._directStream && (track._directStream.startsWith('http') || track._directStream.startsWith('blob:'))) { if (await tryPlay(track._directStream)) return; }
+  if (track.id.startsWith('blob:')) { await tryPlay(track.id); return; }
+  if (track._directStream && track._directStream.startsWith('http')) { if (await tryPlay(track._directStream)) return; }
   const c = trackBlobCache.get(track.id);
-  if (c && (c.startsWith('blob:') || c.startsWith('http'))) { if (await tryPlay(c)) return; }
+  if (c && c.startsWith('blob:')) { if (await tryPlay(c)) return; }
   const db = await cacheGet(track.id);
   if (db && db.url) { trackBlobCache.set(track.id, db.url); if (await tryPlay(db.url)) return; }
   const streamUrl = await fetchDirectAudioStreamUrl(track.id, track);
@@ -1204,7 +1181,7 @@ async function renderLibrary() {
     c.innerHTML = html;
   } else if (currentLibraryTab === 'cached') {
     const cached = await cacheAll();
-    if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No downloads yet.</p>`; return; }
+    if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No cached songs.</p>`; return; }
     let totalSize = 0; cached.forEach(t => { if (t.size) totalSize += t.size; });
     let html = `<div style="font-size:11px;color:var(--text-sub);margin-bottom:8px"><i class="fa-solid fa-database"></i> ${cached.length} songs · ~${(totalSize / (1024 * 1024)).toFixed(1)}MB</div>`;
     html += cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title || 'Unknown')}</h4><p>${escapeHtml(t.artist || '')}</p></div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g, "\\'")}')"></i></div>`).join('');
@@ -1366,25 +1343,6 @@ else updateCertLiveDateTime();
 setTimeout(updateCertLiveDateTime, 100); setTimeout(updateCertLiveDateTime, 500); setTimeout(updateCertLiveDateTime, 1500);
 setInterval(updateCertLiveDateTime, 1000);
 
-/* ═══════════ 🛡️ AUDIO WATCHDOG ═══════════ */
-let _lastWatchdogResume = 0;
-setInterval(() => {
-  try {
-    if (!mainAudio) return;
-    if (!isPlayingAudio) return;
-    if (isDraggingTimeline) return;
-    if (!mainAudio.src) return;
-    if (mainAudio.ended) return;
-    if (mainAudio.paused) {
-      const now = Date.now();
-      if (now - _lastWatchdogResume > 2000) {
-        _lastWatchdogResume = now;
-        mainAudio.play().catch(() => {});
-      }
-    }
-  } catch (e) {}
-}, 1500);
-
 /* ═══════════ BOOT ═══════════ */
 window.addEventListener('DOMContentLoaded', () => {
   mainAudio = document.getElementById('vaultifyAudio'); silentLoop = document.getElementById('silentAudioLoop');
@@ -1430,8 +1388,7 @@ window.addEventListener('DOMContentLoaded', () => {
     if (document.hidden && isPlayingAudio && mainAudio && mainAudio.paused) { mainAudio.play().catch(() => {}); }
     if (!document.hidden && 'wakeLock' in navigator) requestHardwareWakeLock();
     if (!document.hidden) {
-      /* Resume if we were playing */
-      if (isPlayingAudio && mainAudio && mainAudio.paused) setTimeout(() => mainAudio.play().catch(() => {}), 300);
+      /* App came to foreground — check if hour passed for sync */
       const last = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
       if (Date.now() - last > TG_SYNC_INTERVAL && navigator.onLine) {
         syncTgLibrary(false).catch(() => {});
