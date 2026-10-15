@@ -1,10 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL v4                                        */
-/* Sources: Telegram (priority) + Saavn + SC + Jamendo + IA + YT   */
-/* Queue: Same Artist + Same Language (Search history blocked)     */
+/* VAULTIFY — FULL FINAL v5 (Audio + Document Fix)                 */
+/* Sources: Telegram + Saavn + SC + Jamendo + IA + YT              */
 /* ═══════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 4;
+const APP_VERSION = 5;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -163,7 +162,7 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎵 TELEGRAM LIBRARY                                             */
+/* 🎵 TELEGRAM LIBRARY — FIXED (Audio + Document)                  */
 /* ═══════════════════════════════════════════════════════════════ */
 function loadTgLibrary() {
   try {
@@ -199,13 +198,14 @@ function getTgUrl(fileId) {
   return null;
 }
 
+/* ✅ FIXED: Handles both document AND audio formats */
 async function syncTgLibrary(forceFull = false) {
   if (!TG_BOT_TOKEN || !TG_CHANNEL_ID) return tgLibrary;
   console.log('🔄 TG sync started...');
 
   const lastId = parseInt(localStorage.getItem(TG_LAST_MSG_KEY) || '0');
   let startId = forceFull ? 1 : Math.max(1, lastId - 5);
-  let endId = forceFull ? 1000 : lastId + 50;
+  let endId = forceFull ? 1000 : lastId + 100;
   let highestId = lastId;
   let added = 0;
 
@@ -222,41 +222,66 @@ async function syncTgLibrary(forceFull = false) {
         })
       });
       const d = await r.json();
-      if (d.ok && d.result && d.result.document) {
-        const doc = d.result.document;
-        const fileName = doc.file_name || '';
-        if (!/\.(mp3|m4a|aac|opus|ogg)$/i.test(fileName)) continue;
 
-        const name = fileName.replace(/\.(mp3|m4a|aac|opus|ogg)$/i, '');
-        const parts = name.split(' - ');
-        const title = parts[0]?.trim() || name;
-        const artist = parts[1]?.trim() || 'Unknown';
+      if (d.ok && d.result) {
+        // ✅ Try document first, then audio
+        const doc = d.result.document || d.result.audio;
 
-        if (!tgLibrary.some(s => s.fileId === doc.file_id)) {
-          tgLibrary.push({
-            title, artist, cover: '',
-            fileId: doc.file_id,
-            duration: doc.duration || 0,
-            size: doc.file_size || 0,
-            msgId: id,
-            addedAt: Date.now()
-          });
-          added++;
+        if (doc) {
+          let title = '';
+          let artist = '';
+
+          if (d.result.audio) {
+            // ✅ Audio format — has title/performer
+            title = (doc.title || '').trim();
+            artist = (doc.performer || doc.artist || '').trim();
+            if (!title) {
+              const fn = doc.file_name || '';
+              title = fn.replace(/\.[^.]+$/, '') || 'Unknown Song';
+            }
+            if (!artist) artist = 'Unknown';
+          } else {
+            // Document format — parse filename
+            const fn = doc.file_name || '';
+            const name = fn.replace(/\.(mp3|m4a|aac|opus|ogg|flac)$/i, '');
+            const parts = name.split(' - ');
+            title = parts[0]?.trim() || name || 'Unknown Song';
+            artist = parts[1]?.trim() || 'Unknown';
+          }
+
+          if (title && title !== 'Unknown Song') {
+            if (!tgLibrary.some(s => s.fileId === doc.file_id)) {
+              tgLibrary.push({
+                title,
+                artist,
+                cover: '',
+                fileId: doc.file_id,
+                duration: doc.duration || 0,
+                size: doc.file_size || 0,
+                msgId: id,
+                addedAt: Date.now()
+              });
+              added++;
+              console.log(`✅ Added: ${title} - ${artist}`);
+            }
+          }
+          if (id > highestId) highestId = id;
         }
-        if (id > highestId) highestId = id;
       }
-      await new Promise(r => setTimeout(r, 40));
-    } catch (e) {}
+      await new Promise(r => setTimeout(r, 50));
+    } catch (e) {
+      // skip errors
+    }
   }
 
   if (highestId > lastId) localStorage.setItem(TG_LAST_MSG_KEY, highestId.toString());
   saveTgLibrary();
 
+  console.log(`✅ Sync done. Added: ${added}, Total: ${tgLibrary.length}`);
   if (added > 0) {
-    console.log(`✅ TG: +${added} songs. Total: ${tgLibrary.length}`);
-    if (typeof showToast === 'function') showToast(`🎵 ${added} new songs`);
-  } else {
-    console.log(`ℹ️ TG: ${tgLibrary.length} songs (no new)`);
+    if (typeof showToast === 'function') showToast(`🎵 ${added} new songs added`);
+  } else if (forceFull && tgLibrary.length > 0) {
+    if (typeof showToast === 'function') showToast(`📚 Library: ${tgLibrary.length} songs`);
   }
   return tgLibrary;
 }
@@ -428,7 +453,7 @@ async function searchYouTube(query, limit = 10) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 COMBINED SEARCH — Telegram (priority) + Saavn + SC + Jamendo */
+/* 🎯 COMBINED SEARCH — Telegram + Saavn + SC + Jamendo            */
 /* ═══════════════════════════════════════════════════════════════ */
 async function searchSaavnAndSC(query, limit = 30) {
   const results = [];
@@ -442,7 +467,7 @@ async function searchSaavnAndSC(query, limit = 30) {
 
   const q = query.toLowerCase().trim();
 
-  // ═══ 1. TELEGRAM LIBRARY (priority — instant, offline) ═══
+  // ═══ 1. TELEGRAM LIBRARY (priority) ═══
   if (tgLibrary.length > 0) {
     tgLibrary.forEach(item => {
       const hay = (item.title + ' ' + item.artist).toLowerCase();
@@ -489,12 +514,10 @@ async function workerSearch(query, limit = 30) {
 /* 🎯 STREAM URL RESOLVER                                          */
 /* ═══════════════════════════════════════════════════════════════ */
 async function workerStreamUrl(id) {
-  // ═══ SAAVN ═══
   if (id.startsWith('saavn_')) {
     return await saavnStreamUrl(id.replace('saavn_', ''));
   }
 
-  // ═══ TELEGRAM ═══
   if (id.startsWith('tg_')) {
     const fileId = id.replace('tg_', '');
     const cached = getTgUrl(fileId);
@@ -510,7 +533,6 @@ async function workerStreamUrl(id) {
     } catch (e) { return null; }
   }
 
-  // ═══ YOUTUBE (Piped → Cobalt) ═══
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
     for (const api of PIPED_APIS) {
@@ -1278,7 +1300,7 @@ function addToQueueSilently(tracks) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 RELATED — SAME ARTIST + SAME LANGUAGE (Search history block) */
+/* 🎯 RELATED — SAME ARTIST + SAME LANGUAGE                        */
 /* ═══════════════════════════════════════════════════════════════ */
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
@@ -1320,7 +1342,6 @@ async function fetchRelatedSongs(seedTrack) {
     }
   };
 
-  // 1. SAAVN SUGGESTIONS
   if (seedTrack.id.startsWith('saavn_') && seedTrack._saavnId) {
     try {
       const r = await fetch(`${SAAVN_DELTA}/api/songs/${seedTrack._saavnId}/suggestions?limit=30`);
@@ -1343,7 +1364,6 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // 2. SAME ARTIST
   const cleanArtist = (seedTrack.artist || '')
     .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios|label/gi, '')
     .replace(/- Topic$/i, '')
@@ -1357,7 +1377,6 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // 3. SAME LANGUAGE POPULAR
   const langQuery = seedLang === 'punjabi' ? 'punjabi hits' :
                     seedLang === 'urdu' ? 'urdu hits' :
                     seedLang === 'english' ? 'top english hits' : 'hindi hits';
@@ -1368,7 +1387,6 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // 4. CURATED ARTISTS
   const artists = getLanguageArtists(seedLang);
   const shuffled = artists.slice().sort(() => Math.random() - 0.5);
   for (const a of shuffled.slice(0, 3)) {
@@ -1379,7 +1397,6 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // 5. TRENDING FALLBACK
   if (results.length < QUEUE_EXTEND_BATCH) {
     try {
       const trending = await searchSaavn(langQuery + ' 2026', 20);
@@ -1731,7 +1748,7 @@ function renderSearchHistoryTags() {
 
 function clearSearchHistory() { searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
 
-/* ═══════════ RECOMMENDED (Trending only) ═══════════ */
+/* ═══════════ RECOMMENDED ═══════════ */
 async function renderRecommendedSection() {
   const c = document.getElementById('recommendedContainer');
   if (!c) return;
@@ -2142,7 +2159,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ═══ TELEGRAM AUTO-SYNC ═══
   autoSyncTgLibrary();
-  // Periodic sync every 30 min
   setInterval(() => {
     if (navigator.onLine && document.visibilityState === 'visible') {
       syncTgLibrary(false).catch(() => {});
