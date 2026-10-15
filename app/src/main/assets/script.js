@@ -1,9 +1,13 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL v5 (Audio + Document Fix)                 */
-/* Sources: Telegram + Saavn + SC + Jamendo + IA + YT              */
+/* VAULTIFY — v6 FINAL                                             */
+/* - TG audio metadata (title + thumbnail from Telegram)           */
+/* - Lyrics-ish search (multi-word split + retry)                  */
+/* - Queue from user's history VIBE (not searched song)            */
+/* - Auto refresh every 5 min                                      */
+/* - Vaultify.png logo in TG badge                                 */
 /* ═══════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 5;
+const APP_VERSION = 6;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -26,10 +30,12 @@ const INVIDIOUS_APIS = [
 const TG_BOT_TOKEN = '8927248625:AAGBFepeiq3jutY4XQjn7qxZu43a_x41YNw';
 const TG_CHANNEL_ID = '-1004487475420';
 const TG_API = `https://api.telegram.org/bot${TG_BOT_TOKEN}`;
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v1';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v2';
 const TG_LAST_MSG_KEY = 'vaultify_tg_last_msg_id';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v1';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v2';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v1';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
+const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
@@ -87,7 +93,7 @@ let loggedInUser = null;
 let navigationHistory = ['home'];
 let queueSeenIds = new Set();
 
-const QUEUE_TARGET_MIN = 15;
+const QUEUE_TARGET_MIN = 12;
 const QUEUE_EXTEND_BATCH = 15;
 const QUEUE_MAX_TOTAL = 200;
 
@@ -162,14 +168,14 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎵 TELEGRAM LIBRARY — FIXED (Audio + Document)                  */
+/* 🎵 TELEGRAM — METADATA + THUMBNAIL EXTRACTOR                    */
 /* ═══════════════════════════════════════════════════════════════ */
 function loadTgLibrary() {
   try {
     const raw = localStorage.getItem(TG_LIBRARY_KEY);
     if (raw) {
       tgLibrary = JSON.parse(raw);
-      console.log(`📚 TG: ${tgLibrary.length} songs loaded`);
+      console.log(`📚 TG loaded: ${tgLibrary.length}`);
       return true;
     }
   } catch (e) {}
@@ -198,10 +204,43 @@ function getTgUrl(fileId) {
   return null;
 }
 
-/* ✅ FIXED: Handles both document AND audio formats */
+function saveTgThumb(fileId, url) {
+  try {
+    const c = JSON.parse(localStorage.getItem(TG_THUMB_CACHE_KEY) || '{}');
+    c[fileId] = { url, timestamp: Date.now() };
+    localStorage.setItem(TG_THUMB_CACHE_KEY, JSON.stringify(c));
+  } catch (e) {}
+}
+
+function getTgThumb(thumbFileId) {
+  try {
+    const c = JSON.parse(localStorage.getItem(TG_THUMB_CACHE_KEY) || '{}');
+    const e = c[thumbFileId];
+    if (e && (Date.now() - e.timestamp) < TG_THUMB_CACHE_TTL) return e.url;
+  } catch (e) {}
+  return null;
+}
+
+/* ✅ Fetch thumbnail URL from Telegram thumb file_id */
+async function fetchTgThumb(thumbFileId) {
+  if (!thumbFileId) return '';
+  const cached = getTgThumb(thumbFileId);
+  if (cached) return cached;
+  try {
+    const r = await fetch(`${TG_API}/getFile?file_id=${encodeURIComponent(thumbFileId)}`);
+    if (!r.ok) return '';
+    const d = await r.json();
+    if (!d.ok || !d.result?.file_path) return '';
+    const url = `https://api.telegram.org/file/bot${TG_BOT_TOKEN}/${d.result.file_path}`;
+    saveTgThumb(thumbFileId, url);
+    return url;
+  } catch (e) { return ''; }
+}
+
+/* ✅ Sync — extracts title, performer, thumbnail from audio */
 async function syncTgLibrary(forceFull = false) {
   if (!TG_BOT_TOKEN || !TG_CHANNEL_ID) return tgLibrary;
-  console.log('🔄 TG sync started...');
+  console.log('🔄 TG sync...');
 
   const lastId = parseInt(localStorage.getItem(TG_LAST_MSG_KEY) || '0');
   let startId = forceFull ? 1 : Math.max(1, lastId - 5);
@@ -222,39 +261,38 @@ async function syncTgLibrary(forceFull = false) {
         })
       });
       const d = await r.json();
-
       if (d.ok && d.result) {
-        // ✅ Try document first, then audio
         const doc = d.result.document || d.result.audio;
-
         if (doc) {
-          let title = '';
-          let artist = '';
+          let title = '', artist = '', thumb = '';
 
           if (d.result.audio) {
-            // ✅ Audio format — has title/performer
             title = (doc.title || '').trim();
             artist = (doc.performer || doc.artist || '').trim();
-            if (!title) {
-              const fn = doc.file_name || '';
-              title = fn.replace(/\.[^.]+$/, '') || 'Unknown Song';
-            }
+            // ✅ Extract thumbnail
+            if (doc.thumb?.file_id) thumb = doc.thumb.file_id;
+            else if (doc.thumbnail?.file_id) thumb = doc.thumbnail.file_id;
+            if (!title) title = (doc.file_name || '').replace(/\.[^.]+$/, '') || 'Unknown';
             if (!artist) artist = 'Unknown';
           } else {
-            // Document format — parse filename
             const fn = doc.file_name || '';
             const name = fn.replace(/\.(mp3|m4a|aac|opus|ogg|flac)$/i, '');
             const parts = name.split(' - ');
-            title = parts[0]?.trim() || name || 'Unknown Song';
+            title = parts[0]?.trim() || name || 'Unknown';
             artist = parts[1]?.trim() || 'Unknown';
           }
 
-          if (title && title !== 'Unknown Song') {
+          if (title && title !== 'Unknown') {
             if (!tgLibrary.some(s => s.fileId === doc.file_id)) {
+              // ✅ Fetch thumbnail URL
+              let thumbUrl = '';
+              if (thumb) {
+                thumbUrl = await fetchTgThumb(thumb);
+              }
+              
               tgLibrary.push({
-                title,
-                artist,
-                cover: '',
+                title, artist,
+                cover: thumbUrl,
                 fileId: doc.file_id,
                 duration: doc.duration || 0,
                 size: doc.file_size || 0,
@@ -262,35 +300,26 @@ async function syncTgLibrary(forceFull = false) {
                 addedAt: Date.now()
               });
               added++;
-              console.log(`✅ Added: ${title} - ${artist}`);
+              console.log(`✅ ${title} - ${artist}${thumbUrl ? ' 🖼️' : ''}`);
             }
           }
           if (id > highestId) highestId = id;
         }
       }
-      await new Promise(r => setTimeout(r, 50));
-    } catch (e) {
-      // skip errors
-    }
+      await new Promise(r => setTimeout(r, 60));
+    } catch (e) {}
   }
 
   if (highestId > lastId) localStorage.setItem(TG_LAST_MSG_KEY, highestId.toString());
   saveTgLibrary();
-
-  console.log(`✅ Sync done. Added: ${added}, Total: ${tgLibrary.length}`);
-  if (added > 0) {
-    if (typeof showToast === 'function') showToast(`🎵 ${added} new songs added`);
-  } else if (forceFull && tgLibrary.length > 0) {
-    if (typeof showToast === 'function') showToast(`📚 Library: ${tgLibrary.length} songs`);
-  }
+  if (added > 0 && typeof showToast === 'function') showToast(`🎵 ${added} new songs`);
+  console.log(`✅ Sync done. +${added}, total ${tgLibrary.length}`);
   return tgLibrary;
 }
 
 async function autoSyncTgLibrary() {
   loadTgLibrary();
-  if (navigator.onLine) {
-    setTimeout(() => syncTgLibrary(false).catch(() => {}), 3000);
-  }
+  if (navigator.onLine) setTimeout(() => syncTgLibrary(false).catch(() => {}), 3000);
 }
 
 async function manualSyncTg() {
@@ -453,7 +482,7 @@ async function searchYouTube(query, limit = 10) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 COMBINED SEARCH — Telegram + Saavn + SC + Jamendo            */
+/* 🎯 COMBINED SEARCH — with lyrics-ish multi-word retry            */
 /* ═══════════════════════════════════════════════════════════════ */
 async function searchSaavnAndSC(query, limit = 30) {
   const results = [];
@@ -467,7 +496,7 @@ async function searchSaavnAndSC(query, limit = 30) {
 
   const q = query.toLowerCase().trim();
 
-  // ═══ 1. TELEGRAM LIBRARY (priority) ═══
+  // ═══ 1. TELEGRAM ═══
   if (tgLibrary.length > 0) {
     tgLibrary.forEach(item => {
       const hay = (item.title + ' ' + item.artist).toLowerCase();
@@ -491,15 +520,30 @@ async function searchSaavnAndSC(query, limit = 30) {
     saavn.forEach(addUnique);
   } catch (e) {}
 
-  // ═══ 3. SOUNDCLOUD ═══
+  // ═══ 3. LYRICS-ISH: multi-word split retry ═══
+  const words = q.split(/\s+/).filter(w => w.length > 2);
+  if (words.length >= 3 && results.length < 8) {
+    // Try 2-word combos
+    for (let i = 0; i < words.length && results.length < 15; i++) {
+      const combo = words.slice(i, i + 3).join(' ');
+      if (combo.length > 4) {
+        try {
+          const extra = await searchSaavn(combo, 8);
+          extra.forEach(addUnique);
+        } catch (e) {}
+      }
+    }
+  }
+
+  // ═══ 4. SOUNDCLOUD ═══
   try {
     const sc = await searchSoundCloud(query, Math.floor(limit * 0.15));
     sc.forEach(addUnique);
   } catch (e) {}
 
-  // ═══ 4. JAMENDO ═══
+  // ═══ 5. JAMENDO ═══
   try {
-    const jam = await searchJamendo(query, Math.floor(limit * 0.25));
+    const jam = await searchJamendo(query, Math.floor(limit * 0.15));
     jam.forEach(addUnique);
   } catch (e) {}
 
@@ -514,9 +558,7 @@ async function workerSearch(query, limit = 30) {
 /* 🎯 STREAM URL RESOLVER                                          */
 /* ═══════════════════════════════════════════════════════════════ */
 async function workerStreamUrl(id) {
-  if (id.startsWith('saavn_')) {
-    return await saavnStreamUrl(id.replace('saavn_', ''));
-  }
+  if (id.startsWith('saavn_')) return await saavnStreamUrl(id.replace('saavn_', ''));
 
   if (id.startsWith('tg_')) {
     const fileId = id.replace('tg_', '');
@@ -631,38 +673,23 @@ function verifyAuthGate() {
   const mainFrame = document.querySelector('.mobile-frame');
   if (!authModal) return;
   const applyModalStyle = () => {
-    authModal.style.position = 'fixed';
-    authModal.style.inset = '0';
-    authModal.style.width = '100vw';
-    authModal.style.height = '100vh';
-    authModal.style.zIndex = '99999';
-    authModal.style.background = 'rgba(0,0,0,0.94)';
-    authModal.style.backdropFilter = 'blur(8px)';
-    authModal.style.webkitBackdropFilter = 'blur(8px)';
-    authModal.style.alignItems = 'center';
-    authModal.style.justifyContent = 'center';
-    authModal.style.padding = '16px';
-    authModal.style.overflowY = 'auto';
-    authModal.style.display = 'flex';
+    authModal.style.position = 'fixed'; authModal.style.inset = '0'; authModal.style.width = '100vw'; authModal.style.height = '100vh';
+    authModal.style.zIndex = '99999'; authModal.style.background = 'rgba(0,0,0,0.94)';
+    authModal.style.backdropFilter = 'blur(8px)'; authModal.style.webkitBackdropFilter = 'blur(8px)';
+    authModal.style.alignItems = 'center'; authModal.style.justifyContent = 'center';
+    authModal.style.padding = '16px'; authModal.style.overflowY = 'auto'; authModal.style.display = 'flex';
   };
   if (!s) {
     document.body.classList.add('auth-locked');
     if (mainFrame) mainFrame.style.pointerEvents = 'none';
-    authModal.classList.add('open');
-    applyModalStyle();
+    authModal.classList.add('open'); applyModalStyle();
   } else {
     try {
-      loggedInUser = JSON.parse(s);
-      applyUserDataUI(loggedInUser);
+      loggedInUser = JSON.parse(s); applyUserDataUI(loggedInUser);
       document.body.classList.remove('auth-locked');
       if (mainFrame) mainFrame.style.pointerEvents = '';
-      authModal.classList.remove('open');
-      authModal.style.display = 'none';
-    } catch (e) {
-      document.body.classList.add('auth-locked');
-      authModal.classList.add('open');
-      applyModalStyle();
-    }
+      authModal.classList.remove('open'); authModal.style.display = 'none';
+    } catch (e) { document.body.classList.add('auth-locked'); authModal.classList.add('open'); applyModalStyle(); }
   }
 }
 
@@ -727,7 +754,6 @@ function applyUserDataUI(user) {
   if (editName) editName.value = user.displayName || user.username;
   if (editBio) editBio.value = user.bio || '';
   if (avatar && user.avatar) avatar.src = user.avatar;
-  if (typeof syncUserPartnerCode === 'function') syncUserPartnerCode();
 }
 
 function openForgotPasswordFlow() { closeModal('modalAuthGate'); openModal('modalForgotPass'); }
@@ -749,61 +775,28 @@ async function executePasswordReset() {
 }
 
 function triggerDpPicker() { const picker = document.getElementById('avatarPicker'); if (picker) picker.click(); }
-
 function handleDpUpload(e) {
-  const f = e.target.files[0];
-  if (!f) return;
-  if (f.size > 3 * 1024 * 1024) { showToast('Max 3MB'); return; }
-  if (!f.type.startsWith('image/')) { showToast('Image only'); return; }
+  const f = e.target.files[0]; if (!f) return;
+  if (f.size > 3 * 1024 * 1024) return showToast('Max 3MB');
+  if (!f.type.startsWith('image/')) return showToast('Image only');
   const r = new FileReader();
   r.onload = ev => {
-    const b = ev.target.result;
-    document.getElementById('userAvatarImg').src = b;
-    if (loggedInUser) {
-      loggedInUser.avatar = b;
-      const db = getUserDB();
-      if (db[loggedInUser.username]) { db[loggedInUser.username].avatar = b; saveUserDB(db); }
-      localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-    }
+    const b = ev.target.result; document.getElementById('userAvatarImg').src = b;
+    if (loggedInUser) { loggedInUser.avatar = b; const db = getUserDB(); if (db[loggedInUser.username]) { db[loggedInUser.username].avatar = b; saveUserDB(db); } localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser)); }
     showToast('✅ DP Updated!');
   };
-  r.readAsDataURL(f);
-  e.target.value = '';
+  r.readAsDataURL(f); e.target.value = '';
 }
-
 function saveProfileData() {
   if (!loggedInUser) return;
-  const n = document.getElementById('editDisplayName').value.trim();
-  if (!n) return showToast('Name required');
+  const n = document.getElementById('editDisplayName').value.trim(); if (!n) return showToast('Name required');
   const bio = (document.getElementById('editBio')?.value || '').trim();
   loggedInUser.displayName = n; loggedInUser.bio = bio;
-  const db = getUserDB();
-  if (db[loggedInUser.username]) { db[loggedInUser.username].displayName = n; db[loggedInUser.username].bio = bio; saveUserDB(db); }
-  localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-  applyUserDataUI(loggedInUser); showToast('Profile updated!');
+  const db = getUserDB(); if (db[loggedInUser.username]) { db[loggedInUser.username].displayName = n; db[loggedInUser.username].bio = bio; saveUserDB(db); }
+  localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser)); applyUserDataUI(loggedInUser); showToast('Profile updated!');
 }
-
-function performAppLogout() { if (!confirm('Log out from this device?')) return; localStorage.removeItem('vaultify_active_user'); location.reload(); }
-
-function generatePartnerCode(username) {
-  if (!username) return 'VAULT-XXXXXX';
-  let hash = 0;
-  const seed = username + '_vaultify_2026';
-  for (let i = 0; i < seed.length; i++) { hash = ((hash << 5) - hash) + seed.charCodeAt(i); hash = hash & hash; }
-  const code = Math.abs(hash).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
-  return 'VAULT-' + code;
-}
-
-function syncUserPartnerCode() {
-  if (!loggedInUser) return;
-  const db = getUserDB();
-  const user = db[loggedInUser.username];
-  if (!user) return;
-  if (!user.partnerCode) { user.partnerCode = generatePartnerCode(loggedInUser.username); db[loggedInUser.username] = user; saveUserDB(db); }
-  loggedInUser.partnerCode = user.partnerCode;
-  localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
-}
-
+function performAppLogout() { if (!confirm('Log out?')) return; localStorage.removeItem('vaultify_active_user'); location.reload(); }
+function generatePartnerCode(u) { if (!u) return 'VAULT-XXXXXX'; let h = 0; const s = u + '_vaultify_2026'; for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h = h & h; } return 'VAULT-' + Math.abs(h).toString(36).toUpperCase().padStart(6, '0').slice(0, 6); }
 function changeAppLanguage(lang) { appLanguage = lang; localStorage.setItem('vaultify_app_lang', lang); showToast(lang === 'hi' ? 'हिंदी चुनी गई' : 'English Selected'); }
 
 /* ═══════════ LANGUAGE + VIBE ═══════════ */
@@ -839,17 +832,17 @@ function detectVibe(text) {
 }
 
 function getLanguageQueries(lang) {
-  if (lang === 'hindi') return ['arijit singh hits', 'atif aslam songs', 'bollywood hits', 'punjabi hits'];
+  if (lang === 'hindi') return ['arijit singh hits', 'atif aslam songs', 'bollywood hits'];
   if (lang === 'urdu') return ['atif aslam hits', 'coke studio pakistan'];
   if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla'];
   return ['top english hits', 'taylor swift', 'ed sheeran'];
 }
 
 function getLanguageArtists(lang) {
-  if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla', 'sidhu moose wala', 'guru randhawa', 'jass manak', 'ammy virk', 'b praak', 'shubh', 'divine', 'badshah', 'harrdy sandhu'];
-  if (lang === 'urdu') return ['atif aslam', 'rahat fateh ali khan', 'nusrat fateh ali khan', 'coke studio', 'momina mustehsan', 'ali zafar', 'farhan saeed'];
-  if (lang === 'english') return ['taylor swift', 'ed sheeran', 'the weeknd', 'drake', 'post malone', 'ariana grande', 'billie eilish', 'justin bieber', 'bruno mars', 'coldplay', 'imagine dragons', 'dua lipa'];
-  return ['arijit singh', 'atif aslam', 'shreya ghoshal', 'sonu nigam', 'neha kakkar', 'jubin nautiyal', 'darshan raval', 'armaan malik', 'sunidhi chauhan', 'kishore kumar', 'lata mangeshkar', 'udit narayan'];
+  if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla', 'sidhu moose wala', 'guru randhawa', 'jass manak', 'ammy virk', 'b praak', 'shubh', 'badshah'];
+  if (lang === 'urdu') return ['atif aslam', 'rahat fateh ali khan', 'nusrat fateh ali khan', 'coke studio', 'momina mustehsan', 'ali zafar'];
+  if (lang === 'english') return ['taylor swift', 'ed sheeran', 'the weeknd', 'drake', 'post malone', 'ariana grande', 'billie eilish', 'justin bieber', 'bruno mars', 'coldplay'];
+  return ['arijit singh', 'atif aslam', 'shreya ghoshal', 'sonu nigam', 'neha kakkar', 'jubin nautiyal', 'darshan raval', 'armaan malik', 'kishore kumar', 'lata mangeshkar'];
 }
 
 function getVibeKeywords(vibe) {
@@ -861,13 +854,13 @@ function getVibeKeywords(vibe) {
     classical: ['sufi hits', 'qawwali'],
     rock: ['rock hits'],
     lofi: ['lofi chill', 'chill beats'],
-    workout: ['workout songs', 'gym motivation'],
+    workout: ['workout songs'],
     general: []
   };
   return map[vibe] || [];
 }
 
-/* ═══════════ CACHE (IndexedDB) ═══════════ */
+/* ═══════════ CACHE ═══════════ */
 function initCacheDB() {
   return new Promise(resolve => {
     try {
@@ -968,12 +961,9 @@ function initForegroundAudioBridge() {
     if (!audioContextNode._oscStarted) {
       const osc = audioContextNode.createOscillator();
       const gain = audioContextNode.createGain();
-      osc.frequency.value = 30;
-      gain.gain.value = 0.0001;
-      osc.connect(gain);
-      gain.connect(audioContextNode.destination);
-      osc.start();
-      audioContextNode._oscStarted = true;
+      osc.frequency.value = 30; gain.gain.value = 0.0001;
+      osc.connect(gain); gain.connect(audioContextNode.destination);
+      osc.start(); audioContextNode._oscStarted = true;
     }
     if (!eqNodes) initEqChain();
   } catch (e) {}
@@ -984,66 +974,21 @@ function initEqChain() {
     if (!audioContextNode) audioContextNode = new (window.AudioContext || window.webkitAudioContext)();
     if (eqNodes || !mainAudio) return;
     const freqs = [60, 230, 910, 4000, 14000];
-    const filters = freqs.map(f => {
-      const b = audioContextNode.createBiquadFilter();
-      b.type = 'peaking'; b.frequency.value = f; b.Q.value = 1; b.gain.value = 0;
-      return b;
-    });
+    const filters = freqs.map(f => { const b = audioContextNode.createBiquadFilter(); b.type = 'peaking'; b.frequency.value = f; b.Q.value = 1; b.gain.value = 0; return b; });
     for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
-    const masterGain = audioContextNode.createGain();
-    masterGain.gain.value = 1;
-    filters[filters.length - 1].connect(masterGain);
-    masterGain.connect(audioContextNode.destination);
-    eqNodes = { filters, masterGain };
-    try {
-      eqSourceNode = audioContextNode.createMediaElementSource(mainAudio);
-      eqSourceNode.connect(filters[0]);
-    } catch (e) { eqSourceNode = null; }
+    const mg = audioContextNode.createGain(); mg.gain.value = 1;
+    filters[filters.length - 1].connect(mg); mg.connect(audioContextNode.destination);
+    eqNodes = { filters, masterGain: mg };
+    try { eqSourceNode = audioContextNode.createMediaElementSource(mainAudio); eqSourceNode.connect(filters[0]); } catch (e) { eqSourceNode = null; }
   } catch (e) {}
 }
 
-function applyEqNow() {
-  try {
-    if (!audioContextNode) initForegroundAudioBridge();
-    if (!eqNodes) initEqChain();
-    if (!eqNodes) return showToast('EQ not ready');
-    const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'];
-    ids.forEach((id, i) => { const el = document.getElementById(id); if (el && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0; });
-    saveEqToStorage(); showToast('✅ EQ applied'); closeModal('modalEqualizer');
-  } catch (e) {}
-}
+function applyEqNow() { try { if (!audioContextNode) initForegroundAudioBridge(); if (!eqNodes) initEqChain(); if (!eqNodes) return showToast('EQ not ready'); const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k']; ids.forEach((id, i) => { const el = document.getElementById(id); if (el && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0; }); saveEqToStorage(); showToast('✅ EQ applied'); closeModal('modalEqualizer'); } catch (e) {} }
+function resetEqSliders() { ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach(id => { const el = document.getElementById(id); if (el) el.value = 0; }); if (eqNodes) eqNodes.filters.forEach(f => f.gain.value = 0); saveEqToStorage(); showToast('EQ Reset'); }
+function loadEqFromStorage() { try { const s = JSON.parse(localStorage.getItem('vaultify_eq') || 'null'); if (!s) return; const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k']; ids.forEach((id, i) => { const el = document.getElementById(id); if (el) el.value = s[i] || 0; }); } catch (e) {} }
+function saveEqToStorage() { try { const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k']; const v = ids.map(id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; }); localStorage.setItem('vaultify_eq', JSON.stringify(v)); } catch (e) {} }
 
-function resetEqSliders() {
-  ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach(id => { const el = document.getElementById(id); if (el) el.value = 0; });
-  if (eqNodes) eqNodes.filters.forEach(f => f.gain.value = 0);
-  saveEqToStorage(); showToast('EQ Reset');
-}
-
-function loadEqFromStorage() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('vaultify_eq') || 'null');
-    if (!saved) return;
-    const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'];
-    ids.forEach((id, i) => { const el = document.getElementById(id); if (el) el.value = saved[i] || 0; });
-  } catch (e) {}
-}
-
-function saveEqToStorage() {
-  try {
-    const ids = ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'];
-    const vals = ids.map(id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; });
-    localStorage.setItem('vaultify_eq', JSON.stringify(vals));
-  } catch (e) {}
-}
-
-async function requestHardwareWakeLock() {
-  try {
-    if ('wakeLock' in navigator && (!wakeLockSentinel || wakeLockSentinel.released)) {
-      wakeLockSentinel = await navigator.wakeLock.request('screen');
-      wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; });
-    }
-  } catch (e) {}
-}
+async function requestHardwareWakeLock() { try { if ('wakeLock' in navigator && (!wakeLockSentinel || wakeLockSentinel.released)) { wakeLockSentinel = await navigator.wakeLock.request('screen'); wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; }); } } catch (e) {} }
 
 function setupMediaSession() {
   if (!mainAudio) return;
@@ -1056,48 +1001,26 @@ function setupMediaSession() {
       navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime !== undefined) seekAudioTo(d.seekTime); });
     } catch (e) {}
   }
-  mainAudio.addEventListener('error', () => {
-    showToast('⚠️ Audio error');
-    setVisualState(false);
-    if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
-  });
+  mainAudio.addEventListener('error', () => { showToast('⚠️ Audio error'); setVisualState(false); if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800); });
   mainAudio.addEventListener('timeupdate', () => {
     if (!mainAudio.duration || isDraggingTimeline) return;
     const pos = mainAudio.currentTime, dur = mainAudio.duration;
-    const c = document.getElementById('labelCurrentTime');
-    const d = document.getElementById('labelTotalDuration');
-    const f = document.getElementById('capsuleFill');
-    const mf = document.getElementById('miniProgressFill');
-    if (c) c.innerText = formatClock(pos);
-    if (d) d.innerText = formatClock(dur);
+    const c = document.getElementById('labelCurrentTime'); const d = document.getElementById('labelTotalDuration');
+    const f = document.getElementById('capsuleFill'); const mf = document.getElementById('miniProgressFill');
+    if (c) c.innerText = formatClock(pos); if (d) d.innerText = formatClock(dur);
     if (f) f.style.width = ((pos / dur) * 100) + '%';
     if (mf) mf.style.width = ((pos / dur) * 100) + '%';
-    if (window.AndroidNativeBridge && window.AndroidNativeBridge.updateProgress) {
-      try { window.AndroidNativeBridge.updateProgress(Math.floor(pos * 1000), Math.floor(dur * 1000)); } catch (e) {}
-    }
+    if (window.AndroidNativeBridge && window.AndroidNativeBridge.updateProgress) { try { window.AndroidNativeBridge.updateProgress(Math.floor(pos * 1000), Math.floor(dur * 1000)); } catch (e) {} }
   });
-  mainAudio.addEventListener('loadedmetadata', () => {
-    const d = document.getElementById('labelTotalDuration');
-    if (d) d.innerText = formatClock(mainAudio.duration);
-  });
-  mainAudio.addEventListener('ended', () => {
-    setVisualState(false);
-    if (currentPlaylist.length > 1) playNext();
-  });
+  mainAudio.addEventListener('loadedmetadata', () => { const d = document.getElementById('labelTotalDuration'); if (d) d.innerText = formatClock(mainAudio.duration); });
+  mainAudio.addEventListener('ended', () => { setVisualState(false); if (currentPlaylist.length > 1) playNext(); });
 }
 
 window.onNativePlay = function () { if (mainAudio && mainAudio.paused) mainAudio.play().catch(() => {}); setVisualState(true); };
 window.onNativePause = function () { if (mainAudio) mainAudio.pause(); setVisualState(false); };
 window.onNativeNext = function () { playNext(); };
 window.onNativePrev = function () { playPrevious(); };
-window.handleNativeMediaAction = function (action) {
-  switch (action) {
-    case 'PLAY': onNativePlay(); break;
-    case 'PAUSE': onNativePause(); break;
-    case 'NEXT': onNativeNext(); break;
-    case 'PREV': onNativePrev(); break;
-  }
-};
+window.handleNativeMediaAction = function (action) { switch (action) { case 'PLAY': onNativePlay(); break; case 'PAUSE': onNativePause(); break; case 'NEXT': onNativeNext(); break; case 'PREV': onNativePrev(); break; } };
 window.handleNativeSeek = function (ms) { seekAudioTo(ms / 1000); };
 window.onNativePermissionResult = function () { checkPermissionsStatus(); };
 
@@ -1113,21 +1036,13 @@ function updateMediaSessionMetadata(track) {
       navigator.mediaSession.playbackState = isPlayingAudio ? 'playing' : 'paused';
     } catch (e) {}
   }
-  if (window.AndroidNativeBridge && window.AndroidNativeBridge.updateNotification) {
-    try { window.AndroidNativeBridge.updateNotification(track.title || 'Vaultify', track.artist || '', track.cover || '', isPlayingAudio); } catch (e) {}
-  }
+  if (window.AndroidNativeBridge && window.AndroidNativeBridge.updateNotification) { try { window.AndroidNativeBridge.updateNotification(track.title || 'Vaultify', track.artist || '', track.cover || '', isPlayingAudio); } catch (e) {} }
 }
 
 function setupTimelineDraggableEngine() {
-  const bar = document.getElementById('capsuleProgressBar');
-  if (!bar || !mainAudio) return;
+  const bar = document.getElementById('capsuleProgressBar'); if (!bar || !mainAudio) return;
   const getDur = () => mainAudio.duration || 0;
-  const updUI = p => {
-    const f = document.getElementById('capsuleFill');
-    if (f) f.style.width = (p * 100) + '%';
-    const c = document.getElementById('labelCurrentTime');
-    if (c) c.innerText = formatClock(p * getDur());
-  };
+  const updUI = p => { const f = document.getElementById('capsuleFill'); if (f) f.style.width = (p * 100) + '%'; const c = document.getElementById('labelCurrentTime'); if (c) c.innerText = formatClock(p * getDur()); };
   const getPct = x => { const r = bar.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)); };
   const doSeek = p => { const d = getDur(); if (d > 0) mainAudio.currentTime = p * d; };
   bar.addEventListener('pointerdown', e => { isDraggingTimeline = true; try { bar.setPointerCapture(e.pointerId); } catch (err) {} updUI(getPct(e.clientX)); });
@@ -1135,29 +1050,17 @@ function setupTimelineDraggableEngine() {
   bar.addEventListener('pointerup', e => { if (!isDraggingTimeline) return; isDraggingTimeline = false; doSeek(getPct(e.clientX)); });
   bar.addEventListener('click', e => { if (!isDraggingTimeline) doSeek(getPct(e.clientX)); });
 }
-
 function seekAudioTo(s) { if (mainAudio && mainAudio.duration) mainAudio.currentTime = s; }
 
 /* ═══════════ QUEUE ═══════════ */
-function saveQueueToStorage() {
-  try {
-    localStorage.setItem('vaultify_queue', JSON.stringify({
-      tracks: currentPlaylist.slice(0, 200),
-      index: currentTrackIndex,
-      timestamp: Date.now()
-    }));
-  } catch (e) {}
-}
-
+function saveQueueToStorage() { try { localStorage.setItem('vaultify_queue', JSON.stringify({ tracks: currentPlaylist.slice(0, 200), index: currentTrackIndex, timestamp: Date.now() })); } catch (e) {} }
 function loadQueueFromStorage() {
   try {
-    const saved = localStorage.getItem('vaultify_queue');
-    if (!saved) return false;
-    const queueData = JSON.parse(saved);
-    if (!queueData.tracks || !queueData.tracks.length) return false;
-    if (Date.now() - queueData.timestamp > 2 * 60 * 60 * 1000) { localStorage.removeItem('vaultify_queue'); return false; }
-    currentPlaylist = queueData.tracks;
-    currentTrackIndex = Math.min(queueData.index || 0, currentPlaylist.length - 1);
+    const saved = localStorage.getItem('vaultify_queue'); if (!saved) return false;
+    const q = JSON.parse(saved); if (!q.tracks || !q.tracks.length) return false;
+    if (Date.now() - q.timestamp > 2 * 60 * 60 * 1000) { localStorage.removeItem('vaultify_queue'); return false; }
+    currentPlaylist = q.tracks;
+    currentTrackIndex = Math.min(q.index || 0, currentPlaylist.length - 1);
     currentPlaylist.forEach(t => queueSeenIds.add(t.id));
     renderHomeQueue();
     if (currentPlaylist[currentTrackIndex]) syncPlayerUI(currentPlaylist[currentTrackIndex]);
@@ -1167,15 +1070,7 @@ function loadQueueFromStorage() {
 
 /* ═══════════ SEARCH ═══════════ */
 async function searchAll(q) { return await workerSearch(q, 30); }
-
-async function fetchTrendingSongs(limit = 10) {
-  const trending = await workerSearch('arijit singh', limit);
-  if (trending.length >= 3) return trending.slice(0, limit);
-  const hindi = await workerSearch('bollywood hits', limit);
-  if (hindi.length >= 3) return hindi.slice(0, limit);
-  return [];
-}
-
+async function fetchTrendingSongs(limit = 10) { const t = await workerSearch('arijit singh', limit); if (t.length >= 3) return t.slice(0, limit); return (await workerSearch('bollywood hits', limit)).slice(0, limit); }
 async function fetchDirectAudioStreamUrl(input, track) {
   if (!input) return null;
   if (input.startsWith('blob:') || input.startsWith('data:')) return input;
@@ -1204,7 +1099,6 @@ async function playTrack(index, broadcast = true) {
 
   setTimeout(() => autoExtendQueue(track), 1500);
   setTimeout(() => autoExtendQueue(track), 5000);
-  setTimeout(() => autoExtendQueue(track), 12000);
 
   if (currentHls) { try { currentHls.destroy(); } catch (e) {} currentHls = null; }
 
@@ -1213,31 +1107,23 @@ async function playTrack(index, broadcast = true) {
     if (url.includes('.m3u8') && window.Hls && Hls.isSupported()) {
       try {
         currentHls = new Hls({ enableWorker: true, lowLatencyMode: false });
-        currentHls.loadSource(url);
-        currentHls.attachMedia(mainAudio);
+        currentHls.loadSource(url); currentHls.attachMedia(mainAudio);
         currentHls.on(Hls.Events.MANIFEST_PARSED, () => { mainAudio.play().then(() => setVisualState(true)).catch(() => {}); });
         return true;
       } catch (e) { return false; }
     }
-    mainAudio.src = url;
-    mainAudio.load();
+    mainAudio.src = url; mainAudio.load();
     try { await mainAudio.play(); setVisualState(true); return true; } catch (e) { return false; }
   };
 
   if (track.id.startsWith('blob:')) { await tryPlay(track.id); return; }
-
-  if (track._directStream && track._directStream.startsWith('http')) {
-    if (await tryPlay(track._directStream)) return;
-  }
+  if (track._directStream && track._directStream.startsWith('http')) { if (await tryPlay(track._directStream)) return; }
 
   const c = trackBlobCache.get(track.id);
   if (c && c.startsWith('blob:')) { if (await tryPlay(c)) return; }
 
   const db = await cacheGet(track.id);
-  if (db && db.url) {
-    trackBlobCache.set(track.id, db.url);
-    if (await tryPlay(db.url)) return;
-  }
+  if (db && db.url) { trackBlobCache.set(track.id, db.url); if (await tryPlay(db.url)) return; }
 
   const streamUrl = await fetchDirectAudioStreamUrl(track.id, track);
   if (streamUrl && await tryPlay(streamUrl)) return;
@@ -1253,13 +1139,10 @@ async function autoplayNext() {
   if (currentPlaylist.length === 0) return;
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if (remaining < QUEUE_TARGET_MIN) {
-    const ct = currentPlaylist[currentTrackIndex];
-    if (ct) {
-      try {
-        const related = await fetchRelatedSongs(ct);
-        addToQueueSilently(related);
-      } catch (e) {}
-    }
+    try {
+      const related = await fetchVibeQueue();
+      addToQueueSilently(related);
+    } catch (e) {}
   }
   if (isShuffle) currentTrackIndex = Math.floor(Math.random() * currentPlaylist.length);
   else currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
@@ -1267,13 +1150,13 @@ async function autoplayNext() {
 }
 
 async function autoExtendQueue(track) {
-  if (autoMixFetching || !track) return;
+  if (autoMixFetching) return;
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if (remaining >= QUEUE_TARGET_MIN) return;
   if (currentPlaylist.length >= QUEUE_MAX_TOTAL) return;
   autoMixFetching = true;
   try {
-    const related = await fetchRelatedSongs(track);
+    const related = await fetchVibeQueue();
     addToQueueSilently(related);
   } catch (e) {}
   autoMixFetching = false;
@@ -1300,20 +1183,40 @@ function addToQueueSilently(tracks) {
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 RELATED — SAME ARTIST + SAME LANGUAGE                        */
+/* 🎯 VIBE QUEUE — user history based, NOT searched song           */
 /* ═══════════════════════════════════════════════════════════════ */
-async function fetchRelatedSongs(seedTrack) {
-  if (!seedTrack) return [];
+async function fetchVibeQueue() {
   const now = Date.now();
   if (now - lastAutoFetchTime < 1500) return [];
   lastAutoFetchTime = now;
 
-  const seedLang = detectLanguage((seedTrack.title || '') + ' ' + (seedTrack.artist || '') + ' ' + (seedTrack._lang || ''));
-  currentLanguage = seedLang;
+  // ═══ Detect user's vibe from history ═══
+  const recent = playbackHistoryList.slice(0, 10);
+  const liked = likedSongs.slice(0, 20);
+  const allSeed = [...recent, ...liked];
+
+  const langCount = {};
+  const artistCount = {};
+  const vibeCount = {};
+
+  allSeed.forEach(t => {
+    const l = detectLanguage((t.title || '') + ' ' + (t.artist || ''));
+    const v = detectVibe((t.title || '') + ' ' + (t.artist || ''));
+    langCount[l] = (langCount[l] || 0) + 1;
+    vibeCount[v] = (vibeCount[v] || 0) + 1;
+    if (t.artist) {
+      const cleanA = t.artist.replace(/vevo|official|records|channel|music|topic/gi, '').split(/[&,]/)[0].trim();
+      if (cleanA.length > 2) artistCount[cleanA] = (artistCount[cleanA] || 0) + 1;
+    }
+  });
+
+  // Default → language of current track
+  const topLang = Object.keys(langCount).sort((a, b) => langCount[b] - langCount[a])[0] || currentLanguage || 'hindi';
+  const topVibe = Object.keys(vibeCount).sort((a, b) => vibeCount[b] - vibeCount[a])[0] || 'general';
+  const topArtists = Object.keys(artistCount).sort((a, b) => artistCount[b] - artistCount[a]).slice(0, 4);
 
   const allExisting = new Set([...currentPlaylist.map(t => t.id), ...queueSeenIds]);
   playbackHistoryList.forEach(t => allExisting.add(t.id));
-  allExisting.add(seedTrack.id);
 
   const allKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
 
@@ -1324,72 +1227,24 @@ async function fetchRelatedSongs(seedTrack) {
   const push = (arr) => {
     if (!arr) return;
     for (const t of arr) {
-      if (results.length >= QUEUE_EXTEND_BATCH * 2) return;
+      if (results.length >= QUEUE_EXTEND_BATCH) return;
       const titleLower = (t.title || '').toLowerCase().trim();
       const key = titleLower + '|' + (t.artist || '').toLowerCase().trim();
       if (allExisting.has(t.id) || allKeys.has(key)) continue;
-      if (t._lang && t._lang !== seedLang) continue;
-      let blockBySearch = false;
+      if (t._lang && t._lang !== topLang) continue;
+      let block = false;
       for (const hist of searchHistoryTitles) {
-        if (titleLower === hist) { blockBySearch = true; break; }
-        if (titleLower.startsWith(hist + ' ')) { blockBySearch = true; break; }
-        if (hist.startsWith(titleLower + ' ') && titleLower.length > 5) { blockBySearch = true; break; }
+        if (titleLower === hist || titleLower.startsWith(hist + ' ')) { block = true; break; }
       }
-      if (blockBySearch) continue;
-      allExisting.add(t.id);
-      allKeys.add(key);
+      if (block) continue;
+      allExisting.add(t.id); allKeys.add(key);
       results.push(t);
     }
   };
 
-  if (seedTrack.id.startsWith('saavn_') && seedTrack._saavnId) {
-    try {
-      const r = await fetch(`${SAAVN_DELTA}/api/songs/${seedTrack._saavnId}/suggestions?limit=30`);
-      if (r.ok) {
-        const data = await r.json();
-        const mapped = (data.data || []).map(s => {
-          const cover = s.image?.[2]?.url || s.image?.[1]?.url || s.image?.[0]?.url || '';
-          const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || s.singers || 'Unknown';
-          return {
-            id: 'saavn_' + s.id,
-            title: (s.name || s.title || 'Unknown').replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-            artist: artist.replace(/&quot;/g, '"').replace(/&amp;/g, '&'),
-            cover, duration: s.duration || 0,
-            source: 'saavn', _saavnId: s.id,
-            _lang: (s.language || '').toLowerCase() || undefined
-          };
-        });
-        push(mapped);
-      }
-    } catch (e) {}
-  }
-
-  const cleanArtist = (seedTrack.artist || '')
-    .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios|label/gi, '')
-    .replace(/- Topic$/i, '')
-    .split(/[&,]/)[0]
-    .replace(/[-_,]/g, ' ').trim();
-
-  if (cleanArtist && cleanArtist.length > 2) {
-    try {
-      const artistSongs = await searchSaavn(cleanArtist, 30);
-      push(artistSongs);
-    } catch (e) {}
-  }
-
-  const langQuery = seedLang === 'punjabi' ? 'punjabi hits' :
-                    seedLang === 'urdu' ? 'urdu hits' :
-                    seedLang === 'english' ? 'top english hits' : 'hindi hits';
-  if (results.length < QUEUE_EXTEND_BATCH) {
-    try {
-      const langSongs = await searchSaavn(langQuery, 20);
-      push(langSongs);
-    } catch (e) {}
-  }
-
-  const artists = getLanguageArtists(seedLang);
-  const shuffled = artists.slice().sort(() => Math.random() - 0.5);
-  for (const a of shuffled.slice(0, 3)) {
+  // 1. User's top artists
+  const shuffledArtists = topArtists.sort(() => Math.random() - 0.5);
+  for (const a of shuffledArtists) {
     if (results.length >= QUEUE_EXTEND_BATCH) break;
     try {
       const songs = await searchSaavn(a, 15);
@@ -1397,51 +1252,57 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
+  // 2. Vibe + language
   if (results.length < QUEUE_EXTEND_BATCH) {
+    const vibeKw = getVibeKeywords(topVibe);
+    const q = vibeKw.length > 0 ? vibeKw[0] : (topLang === 'punjabi' ? 'punjabi hits' : topLang === 'english' ? 'top english hits' : 'hindi hits');
     try {
-      const trending = await searchSaavn(langQuery + ' 2026', 20);
-      push(trending);
+      const vibeSongs = await searchSaavn(q, 15);
+      push(vibeSongs);
     } catch (e) {}
   }
 
-  return results.slice(0, QUEUE_EXTEND_BATCH);
-}
-
-function togglePlaybackState(broadcast = true) {
-  if (!mainAudio) return;
-  if (mainAudio.paused) {
-    initForegroundAudioBridge();
-    requestHardwareWakeLock();
-    mainAudio.play().then(() => setVisualState(true)).catch(() => {});
-  } else {
-    mainAudio.pause();
-    setVisualState(false);
+  // 3. Random language artists
+  if (results.length < QUEUE_EXTEND_BATCH) {
+    const artists = getLanguageArtists(topLang);
+    const shuffled = artists.slice().sort(() => Math.random() - 0.5);
+    for (const a of shuffled.slice(0, 4)) {
+      if (results.length >= QUEUE_EXTEND_BATCH) break;
+      try { const songs = await searchSaavn(a, 12); push(songs); } catch (e) {}
+    }
   }
+
+  // 4. Random from telegram library (same language)
+  if (results.length < QUEUE_EXTEND_BATCH && tgLibrary.length > 0) {
+    const tgSongs = tgLibrary.filter(t => {
+      const l = detectLanguage((t.title || '') + ' ' + (t.artist || ''));
+      return l === topLang || topLang === 'hindi';
+    }).map(t => ({
+      id: 'tg_' + t.fileId,
+      title: t.title, artist: t.artist,
+      cover: t.cover || '',
+      duration: t.duration || 0,
+      source: 'telegram', _fileId: t.fileId
+    })).sort(() => Math.random() - 0.5);
+    push(tgSongs);
+  }
+
+  // Shuffle a bit so first few are not predictable
+  return results.slice(0, QUEUE_EXTEND_BATCH).sort(() => Math.random() - 0.5);
 }
 
+function togglePlaybackState() { if (!mainAudio) return; if (mainAudio.paused) { initForegroundAudioBridge(); requestHardwareWakeLock(); mainAudio.play().then(() => setVisualState(true)).catch(() => {}); } else { mainAudio.pause(); setVisualState(false); } }
 function setVisualState(playing) {
-  isPlayingAudio = playing;
-  if (playing) requestHardwareWakeLock();
-  const mi = document.getElementById('miniPlayIcon');
-  if (mi) mi.className = playing ? 'fa-solid fa-pause' : 'fa-solid fa-play';
-  const fi = document.getElementById('fullPlayIcon');
-  if (fi) fi.className = playing ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+  isPlayingAudio = playing; if (playing) requestHardwareWakeLock();
+  const mi = document.getElementById('miniPlayIcon'); if (mi) mi.className = playing ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+  const fi = document.getElementById('fullPlayIcon'); if (fi) fi.className = playing ? 'fa-solid fa-pause' : 'fa-solid fa-play';
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
   const t = currentPlaylist[currentTrackIndex];
-  if (t && window.AndroidNativeBridge && window.AndroidNativeBridge.updateNotification) {
-    try { window.AndroidNativeBridge.updateNotification(t.title || 'Vaultify', t.artist || '', t.cover || '', playing); } catch (e) {}
-  }
-  const q = document.getElementById('modalQueueDrawer');
-  if (q && q.classList.contains('open')) renderHomeQueue();
+  if (t && window.AndroidNativeBridge && window.AndroidNativeBridge.updateNotification) { try { window.AndroidNativeBridge.updateNotification(t.title || 'Vaultify', t.artist || '', t.cover || '', playing); } catch (e) {} }
+  const q = document.getElementById('modalQueueDrawer'); if (q && q.classList.contains('open')) renderHomeQueue();
 }
-
 async function playNext() { autoplayNext(); }
-
-function playPrevious() {
-  if (currentPlaylist.length === 0) return;
-  currentTrackIndex = (currentTrackIndex - 1 + currentPlaylist.length) % currentPlaylist.length;
-  playTrack(currentTrackIndex);
-}
+function playPrevious() { if (currentPlaylist.length === 0) return; currentTrackIndex = (currentTrackIndex - 1 + currentPlaylist.length) % currentPlaylist.length; playTrack(currentTrackIndex); }
 
 function syncPlayerUI(track) {
   if (!track) return;
@@ -1450,51 +1311,29 @@ function syncPlayerUI(track) {
   const mA = document.getElementById('miniArtImg'); if (mA) mA.src = track.cover || 'vaultify.png';
   const fA = document.getElementById('fullArtImg'); if (fA) fA.src = track.cover || 'vaultify.png';
   const hb = document.getElementById('fullHeartBtn');
-  if (hb) {
-    const isL = likedSongs.some(s => s.id === track.id);
-    hb.className = isL ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
-    hb.style.color = isL ? 'var(--partner-pink)' : 'inherit';
-  }
+  if (hb) { const isL = likedSongs.some(s => s.id === track.id); hb.className = isL ? 'fa-solid fa-heart' : 'fa-regular fa-heart'; hb.style.color = isL ? 'var(--partner-pink)' : 'inherit'; }
 }
-
 function toggleShuffle() { isShuffle = !isShuffle; const el = document.getElementById('fullShuffleBtn'); if (el) el.style.color = isShuffle ? 'var(--accent-neon)' : 'inherit'; showToast(isShuffle ? 'Shuffle On' : 'Shuffle Off'); }
 function toggleRepeat() { isRepeat = !isRepeat; const el = document.getElementById('fullRepeatBtn'); if (el) el.style.color = isRepeat ? 'var(--accent-neon)' : 'inherit'; showToast(isRepeat ? 'Repeat On' : 'Repeat Off'); }
 function toggleSleepTimer() { showToast('Sleep 30 Min'); setTimeout(() => { if (isPlayingAudio) togglePlaybackState(); }, 30 * 60 * 1000); }
-function shareCurrentTrack() {
-  if (currentPlaylist.length === 0) return;
-  const t = currentPlaylist[currentTrackIndex];
-  if (navigator.share) navigator.share({ title: t.title, text: `Listening to ${t.title} on Vaultify` }).catch(() => {});
-  else { try { navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`); showToast('Copied!'); } catch (e) { showToast('Share not supported'); } }
-}
+function shareCurrentTrack() { if (currentPlaylist.length === 0) return; const t = currentPlaylist[currentTrackIndex]; if (navigator.share) navigator.share({ title: t.title, text: `Listening to ${t.title} on Vaultify` }).catch(() => {}); else { try { navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`); showToast('Copied!'); } catch (e) {} } }
 
 /* ═══════════ CACHE + DOWNLOAD ═══════════ */
 async function cacheTrackInBackground(track) {
-  if (!track) return;
-  if (track.id.startsWith('blob:')) return;
+  if (!track || track.id.startsWith('blob:')) return;
   if (trackBlobCache.has(track.id)) return;
   const existing = await cacheGet(track.id);
   if (existing?.url) { trackBlobCache.set(track.id, existing.url); return; }
   try {
     const url = await fetchDirectAudioStreamUrl(track.id, track);
     if (!url || !url.startsWith('http')) return;
-    const r = await fetch(url);
-    const blob = await r.blob();
+    const r = await fetch(url); const blob = await r.blob();
     await cachePut(track.id, blob, { title: track.title, artist: track.artist, cover: track.cover, source: track.source });
-    const bu = URL.createObjectURL(blob);
-    trackBlobCache.set(track.id, bu);
+    const bu = URL.createObjectURL(blob); trackBlobCache.set(track.id, bu);
     if (currentLibraryTab === 'cached' && document.getElementById('tabLibrary').classList.contains('active')) renderLibrary();
   } catch (e) {}
 }
-
-function preCacheNextTracks(startIdx, count = 1) {
-  for (let i = 1; i <= count; i++) {
-    const idx = startIdx + i;
-    if (idx < currentPlaylist.length) {
-      const t = currentPlaylist[idx];
-      setTimeout(() => cacheTrackInBackground(t), i * 15000);
-    }
-  }
-}
+function preCacheNextTracks(startIdx, count = 1) { for (let i = 1; i <= count; i++) { const idx = startIdx + i; if (idx < currentPlaylist.length) { const t = currentPlaylist[idx]; setTimeout(() => cacheTrackInBackground(t), i * 15000); } } }
 
 async function downloadCurrentTrack() {
   if (currentPlaylist.length === 0) return showToast('No track!');
@@ -1504,12 +1343,8 @@ async function downloadCurrentTrack() {
     let u = trackBlobCache.get(t.id) || t._directStream;
     if (!u || !u.startsWith('blob:')) u = u || await fetchDirectAudioStreamUrl(t.id, t);
     if (!u) throw new Error('No URL');
-    const r = await fetch(u);
-    const b = await r.blob();
-    const bu = URL.createObjectURL(b);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = bu;
+    const r = await fetch(u); const b = await r.blob(); const bu = URL.createObjectURL(b);
+    const a = document.createElement('a'); a.style.display = 'none'; a.href = bu;
     a.download = `${(t.title || 'track').replace(/[^a-zA-Z0-9 ]/g, '')}.mp3`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     await cacheTrackInBackground(t);
@@ -1517,24 +1352,18 @@ async function downloadCurrentTrack() {
     hideDownloadIndicator(); showToast('✅ Downloaded!');
   } catch (e) { hideDownloadIndicator(); showToast('❌ Failed'); }
 }
-
 function showDownloadIndicator(text) { const i = document.getElementById('downloadIndicator'); if (!i) return; const t = document.getElementById('downloadText'); if (t) t.innerText = text; i.classList.add('show'); }
 function hideDownloadIndicator() { const i = document.getElementById('downloadIndicator'); if (i) i.classList.remove('show'); }
 
 /* ═══════════ MIC ═══════════ */
 async function requestMicAndListen() {
-  if (window.AndroidNativeBridge && !window.AndroidNativeBridge.hasMicPermission()) {
-    if (window.AndroidNativeBridge.requestPermissions) window.AndroidNativeBridge.requestPermissions();
-    showToast('Mic permission needed'); return;
-  }
+  if (window.AndroidNativeBridge && !window.AndroidNativeBridge.hasMicPermission()) { if (window.AndroidNativeBridge.requestPermissions) window.AndroidNativeBridge.requestPermissions(); showToast('Mic permission needed'); return; }
   const b = document.getElementById('voiceMicTrigger');
   try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); }
   catch (e) { return showToast('Mic permission denied!'); }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return showToast('Voice not supported.');
-  const r = new SR();
-  r.lang = appLanguage === 'hi' ? 'hi-IN' : 'en-US';
-  r.interimResults = false;
+  const r = new SR(); r.lang = appLanguage === 'hi' ? 'hi-IN' : 'en-US'; r.interimResults = false;
   r.onstart = () => { if (b) b.classList.add('recording'); showToast('Listening...'); };
   r.onresult = e => { const v = e.results[0][0].transcript; document.getElementById('mobileSearchField').value = v; showToast(`Heard: "${v}"`); executeLiveSearch(); };
   r.onerror = () => { if (b) b.classList.remove('recording'); };
@@ -1551,76 +1380,36 @@ function logPlaybackHistory(track) {
   if (currentLibraryTab === 'history') renderLibrary();
   saveQueueToStorage();
 }
-
-function clearRecentlyPlayed() {
-  if (!confirm('Clear recently played?')) return;
-  playbackHistoryList = [];
-  localStorage.removeItem('vaultify_playback_history');
-  renderHomeRecentVault();
-  renderLibrary();
-  showToast('✅ Cleared');
-}
+function clearRecentlyPlayed() { if (!confirm('Clear?')) return; playbackHistoryList = []; localStorage.removeItem('vaultify_playback_history'); renderHomeRecentVault(); renderLibrary(); showToast('✅ Cleared'); }
 
 function renderHomeRecentVault() {
-  const c = document.getElementById('homeRecentGrid');
-  if (!c) return;
+  const c = document.getElementById('homeRecentGrid'); if (!c) return;
   const r = playbackHistoryList.slice(0, 10);
-  if (r.length === 0) {
-    c.innerHTML = `<div style="min-width:100%;font-size:12.5px;color:var(--text-sub);text-align:center;padding:16px 0;background:rgba(255,255,255,.03);border-radius:14px;border:1px dashed var(--border)">No recently played.</div>`;
-    return;
-  }
+  if (r.length === 0) { c.innerHTML = `<div style="min-width:100%;font-size:12.5px;color:var(--text-sub);text-align:center;padding:16px 0;background:rgba(255,255,255,.03);border-radius:14px;border:1px dashed var(--border)">No recently played.</div>`; return; }
   c.innerHTML = r.map(t => {
-    const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
-    const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || '');
-    return `<div class="history-card-turnable" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')">
-      <div style="width:120px;height:120px;border-radius:12px;overflow:hidden;position:relative;background:linear-gradient(135deg,rgba(139,92,246,.3),rgba(168,85,247,.15));box-shadow:0 4px 16px rgba(0,0,0,.4)">
-        <img src="${t.cover || 'vaultify.png'}" onerror="this.src='vaultify.png'" style="width:100%;height:100%;object-fit:cover" />
-        <div style="position:absolute;bottom:6px;right:6px;width:28px;height:28px;border-radius:50%;background:var(--accent-neon);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.5)">
-          <i class="fa-solid fa-play" style="color:#fff;font-size:11px;margin-left:2px"></i>
-        </div>
-      </div>
-      <div style="margin-top:8px;font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.title)}</div>
-      <div style="font-size:10.5px;color:var(--text-sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${escapeHtml(t.artist)}</div>
-    </div>`;
+    const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || '');
+    return `<div class="history-card-turnable" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div style="width:120px;height:120px;border-radius:12px;overflow:hidden;position:relative;background:linear-gradient(135deg,rgba(139,92,246,.3),rgba(168,85,247,.15));box-shadow:0 4px 16px rgba(0,0,0,.4)"><img src="${t.cover || 'vaultify.png'}" onerror="this.src='vaultify.png'" style="width:100%;height:100%;object-fit:cover" /><div style="position:absolute;bottom:6px;right:6px;width:28px;height:28px;border-radius:50%;background:var(--accent-neon);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.5)"><i class="fa-solid fa-play" style="color:#fff;font-size:11px;margin-left:2px"></i></div></div><div style="margin-top:8px;font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.title)}</div><div style="font-size:10.5px;color:var(--text-sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">${escapeHtml(t.artist)}</div></div>`;
   }).join('');
 }
-
 function playSingleTrackObject(idEnc, title, artist, cover) {
   const id = decodeURIComponent(idEnc);
   const t = { id, title: decodeURIComponent(title), artist: decodeURIComponent(artist), cover: decodeURIComponent(cover) };
   if (id.startsWith('saavn_')) t._saavnId = id.replace('saavn_', '');
   if (id.startsWith('tg_')) t._fileId = id.replace('tg_', '');
-  currentPlaylist = [t];
-  currentTrackIndex = 0;
+  currentPlaylist = [t]; currentTrackIndex = 0;
   queueSeenIds = new Set([t.id]);
-  renderHomeQueue();
-  saveQueueToStorage();
-  playTrack(0);
+  renderHomeQueue(); saveQueueToStorage(); playTrack(0);
 }
-
 function renderHomeQueue() {
-  const el = document.getElementById('homeQueueContainer');
-  const c = document.getElementById('queueCountSubtitle');
+  const el = document.getElementById('homeQueueContainer'); const c = document.getElementById('queueCountSubtitle');
   if (c) c.innerText = `${currentPlaylist.length} tracks`;
   if (!el) return;
-  if (currentPlaylist.length === 0) {
-    el.innerHTML = `<div style="font-size:12px;color:var(--text-sub);text-align:center;padding:12px 0">Empty queue.</div>`;
-    return;
-  }
-  let h = '';
-  const np = currentPlaylist[currentTrackIndex];
-  const un = currentPlaylist.slice(currentTrackIndex + 1, currentTrackIndex + 40);
-  if (np) {
-    h += `<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--accent-neon)">▶ Now Playing</div>`;
-    h += renderQueueTile(np, currentTrackIndex, true);
-  }
-  if (un.length > 0) {
-    h += `<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--text-sub)">🎵 Up Next (${un.length})</div>`;
-    un.forEach((t, i) => { h += renderQueueTile(t, currentTrackIndex + 1 + i, false); });
-  }
+  if (currentPlaylist.length === 0) { el.innerHTML = `<div style="font-size:12px;color:var(--text-sub);text-align:center;padding:12px 0">Empty queue.</div>`; return; }
+  let h = ''; const np = currentPlaylist[currentTrackIndex]; const un = currentPlaylist.slice(currentTrackIndex + 1, currentTrackIndex + 40);
+  if (np) { h += `<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--accent-neon)">▶ Now Playing</div>`; h += renderQueueTile(np, currentTrackIndex, true); }
+  if (un.length > 0) { h += `<div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin:12px 0 6px;color:var(--text-sub)">🎵 Up Next (${un.length})</div>`; un.forEach((t, i) => { h += renderQueueTile(t, currentTrackIndex + 1 + i, false); }); }
   el.innerHTML = h;
 }
-
 function renderQueueTile(t, i, ic) {
   const isC = trackBlobCache.has(t.id);
   return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isC ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
@@ -1628,36 +1417,20 @@ function renderQueueTile(t, i, ic) {
 
 /* ═══════════ SEARCH UI ═══════════ */
 async function executeLiveSearch(isAuto = false) {
-  const q = document.getElementById('mobileSearchField').value.trim();
-  if (!q) return;
-  if (!isAuto && !searchHistoryList.includes(q)) {
-    searchHistoryList.unshift(q);
-    if (searchHistoryList.length > 8) searchHistoryList.pop();
-    localStorage.setItem('vaultify_search_history', JSON.stringify(searchHistoryList));
-    renderSearchHistoryTags();
-  }
-  currentLanguage = detectLanguage(q);
-  currentVibe = detectVibe(q);
-  const l = document.getElementById('searchLoadingIndicator');
-  const rc = document.getElementById('searchResultsContainer');
-  l.style.display = 'block';
-  l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
-  rc.innerHTML = '';
-
+  const q = document.getElementById('mobileSearchField').value.trim(); if (!q) return;
+  if (!isAuto && !searchHistoryList.includes(q)) { searchHistoryList.unshift(q); if (searchHistoryList.length > 8) searchHistoryList.pop(); localStorage.setItem('vaultify_search_history', JSON.stringify(searchHistoryList)); renderSearchHistoryTags(); }
+  currentLanguage = detectLanguage(q); currentVibe = detectVibe(q);
+  const l = document.getElementById('searchLoadingIndicator'); const rc = document.getElementById('searchResultsContainer');
+  l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>'; rc.innerHTML = '';
   const found = await workerSearch(q, 30);
   l.style.display = 'none';
-
-  if (found.length > 0) {
-    renderSearchResults(found);
-    if (!isAuto) showToast(`✅ ${found.length} results`);
-  } else {
-    rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
-  }
+  if (found.length > 0) { renderSearchResults(found); if (!isAuto) showToast(`✅ ${found.length} results`); }
+  else rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
 }
 
+/* ✅ Telegram badge with Vaultify logo instead of telegram icon */
 function renderSearchResults(tracks) {
-  const c = document.getElementById('searchResultsContainer');
-  currentSearchResults = tracks;
+  const c = document.getElementById('searchResultsContainer'); currentSearchResults = tracks;
   if (tracks.length === 0) { c.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No results.</p>'; return; }
   c.innerHTML = tracks.map(t => {
     const sId = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
@@ -1665,7 +1438,7 @@ function renderSearchResults(tracks) {
     const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
     const sDur = t.duration || 0;
     let srcBadge = '';
-    if (t.source === 'telegram') srcBadge = '<i class="fa-brands fa-telegram" style="color:#229ED9;font-size:12px;margin-left:6px"></i>';
+    if (t.source === 'telegram') srcBadge = '<img src="vaultify.png" style="width:14px;height:14px;border-radius:50%;margin-left:6px;vertical-align:middle;border:1px solid #229ED9" onerror="this.style.display=\'none\'" />';
     else if (t.source === 'soundcloud') srcBadge = '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>';
     else if (t.source === 'youtube') srcBadge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
     else if (t.source === 'jamendo') srcBadge = '<span style="font-size:9px;background:#00b8a9;color:#fff;padding:1px 4px;border-radius:3px;margin-left:6px">JAM</span>';
@@ -1708,27 +1481,20 @@ let liveSearchDebounceTimer = null;
 let liveSearchRequestId = 0;
 
 function initLiveSearchInputListener() {
-  const f = document.getElementById('mobileSearchField');
-  if (!f) return;
+  const f = document.getElementById('mobileSearchField'); if (!f) return;
   f.addEventListener('input', () => {
     clearTimeout(liveSearchDebounceTimer);
     const q = f.value.trim();
-    if (q.length >= 2) {
-      liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === q) instantSearch(q); }, 400);
-    } else if (q.length === 0) {
-      const rc = document.getElementById('searchResultsContainer');
-      if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p>';
-    }
+    if (q.length >= 2) liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === q) instantSearch(q); }, 400);
+    else if (q.length === 0) { const rc = document.getElementById('searchResultsContainer'); if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p>'; }
   });
   f.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(liveSearchDebounceTimer); e.preventDefault(); executeLiveSearch(false); } });
 }
 
 async function instantSearch(q) {
-  currentLanguage = detectLanguage(q);
-  currentVibe = detectVibe(q);
+  currentLanguage = detectLanguage(q); currentVibe = detectVibe(q);
   const myId = ++liveSearchRequestId;
-  const l = document.getElementById('searchLoadingIndicator');
-  const rc = document.getElementById('searchResultsContainer');
+  const l = document.getElementById('searchLoadingIndicator'); const rc = document.getElementById('searchResultsContainer');
   if (l) { l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'; }
   const found = await workerSearch(q, 25);
   if (myId !== liveSearchRequestId) return;
@@ -1738,23 +1504,30 @@ async function instantSearch(q) {
 }
 
 function renderSearchHistoryTags() {
-  const b = document.getElementById('searchHistoryBox');
-  const tb = document.getElementById('searchHistoryTags');
-  if (!b) return;
+  const b = document.getElementById('searchHistoryBox'); const tb = document.getElementById('searchHistoryTags'); if (!b) return;
   if (searchHistoryList.length === 0) { b.style.display = 'none'; return; }
   b.style.display = 'block';
   tb.innerHTML = searchHistoryList.map(tag => `<span style="font-size:11px;background:rgba(255,255,255,.06);padding:5px 10px;border-radius:10px;border:1px solid var(--border);cursor:pointer" onclick="document.getElementById('mobileSearchField').value='${escapeHtml(tag).replace(/'/g, "\\'")}';executeLiveSearch();">${escapeHtml(tag)}</span>`).join('');
 }
-
 function clearSearchHistory() { searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
 
-/* ═══════════ RECOMMENDED ═══════════ */
+/* ═══════════ RECOMMENDED — user history based ═══════════ */
 async function renderRecommendedSection() {
-  const c = document.getElementById('recommendedContainer');
-  if (!c) return;
-  const found = await fetchTrendingSongs(8);
+  const c = document.getElementById('recommendedContainer'); if (!c) return;
+  
+  let found = [];
+  if (playbackHistoryList.length > 0 || likedSongs.length > 0) {
+    // User history based
+    try { found = await fetchVibeQueue(); } catch (e) {}
+    found = found.slice(0, 8);
+  }
+  if (found.length === 0) {
+    found = await fetchTrendingSongs(8);
+  }
+  
   const h = document.querySelector('.recommended-header span');
-  if (h) h.innerText = 'Trending Now';
+  if (h) h.innerText = playbackHistoryList.length > 0 ? 'For You' : 'Trending Now';
+  
   if (found.length === 0) { c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`; return; }
   c.innerHTML = found.map(t => {
     const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
@@ -1767,15 +1540,14 @@ async function renderRecommendedSection() {
 
 /* ═══════════ LIBRARY ═══════════ */
 async function renderLibrary() {
-  const c = document.getElementById('libraryContent');
-  if (!c) return;
+  const c = document.getElementById('libraryContent'); if (!c) return;
   if (currentLibraryTab === 'history') {
     if (playbackHistoryList.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No history yet.</p>`; return; }
     let html = `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:11px;color:var(--accent-neon);cursor:pointer;padding:4px 8px" onclick="manualSyncTg()"><i class="fa-solid fa-rotate"></i> Sync TG</span><span style="font-size:11px;color:#ef4444;cursor:pointer;padding:4px 8px" onclick="clearRecentlyPlayed()">Clear History</span></div>`;
     html += playbackHistoryList.map(t => { const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || ''); return `<div class="song-tile" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`; }).join('');
     c.innerHTML = html;
   } else if (currentLibraryTab === 'liked') {
-    if (likedSongs.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No liked songs yet.</p>`; return; }
+    if (likedSongs.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No liked songs.</p>`; return; }
     c.innerHTML = likedSongs.map(t => { const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || ''); return `<div class="song-tile" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-heart" style="color:var(--partner-pink);font-size:14px" onclick="event.stopPropagation();unlikeSong('${t.id.replace(/'/g, "\\'")}')"></i></div>`; }).join('');
   } else if (currentLibraryTab === 'playlists') {
     let html = `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:10px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="openModal('modalAddToPlaylist')"><div style="width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;flex-shrink:0"><i class="fa-solid fa-plus"></i></div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Create New Playlist</div></div></div>`;
@@ -1783,67 +1555,31 @@ async function renderLibrary() {
     c.innerHTML = html;
   } else if (currentLibraryTab === 'cached') {
     const cached = await cacheAll();
-    if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No cached songs yet.</p>`; return; }
-    let totalSize = 0;
-    cached.forEach(t => { try { if (t.size) totalSize += t.size; } catch (e) {} });
+    if (cached.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No cached songs.</p>`; return; }
+    let totalSize = 0; cached.forEach(t => { if (t.size) totalSize += t.size; });
     let html = `<div style="font-size:11px;color:var(--text-sub);margin-bottom:8px"><i class="fa-solid fa-database"></i> ${cached.length} songs · ~${(totalSize / (1024 * 1024)).toFixed(1)}MB</div>`;
     html += cached.map(t => `<div class="song-tile" onclick="playCached('${t.id.replace(/'/g, "\\'")}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title || 'Unknown')}</h4><p>${escapeHtml(t.artist || '')}</p></div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:13px" onclick="event.stopPropagation();removeCache('${t.id.replace(/'/g, "\\'")}')"></i></div>`).join('');
     c.innerHTML = html;
   }
 }
 
-async function playCached(id) {
-  const c = await cacheGet(id);
-  if (c && c.url) {
-    const t = { id, title: c.title, artist: c.artist, cover: c.cover, _directStream: c.url };
-    currentPlaylist = [t]; currentTrackIndex = 0;
-    queueSeenIds = new Set([t.id]);
-    renderHomeQueue();
-    playTrack(0);
-  }
-}
-
-async function removeCache(id) {
-  const u = trackBlobCache.get(id);
-  if (u && u.startsWith('blob:')) { try { URL.revokeObjectURL(u); } catch (e) {} }
-  trackBlobCache.delete(id);
-  await cacheDelete(id);
-  renderLibrary();
-  showToast('Removed');
-}
-
-function openPlaylist(i) {
-  const p = playlists[i];
-  if (!p) return showToast('Playlist empty');
-  if (p.songs.length === 0) return showToast('Empty playlist');
-  currentPlaylist = p.songs.slice();
-  queueSeenIds = new Set(currentPlaylist.map(t => t.id));
-  renderHomeQueue();
-  saveQueueToStorage();
-  playTrack(0);
-  closeModal('modalAddToPlaylist');
-  showToast(`▶ ${p.name}`);
-}
-
-function deletePlaylist(i) { if (!confirm('Delete this playlist?')) return; playlists.splice(i, 1); savePlaylists(); renderLibrary(); }
+async function playCached(id) { const c = await cacheGet(id); if (c && c.url) { const t = { id, title: c.title, artist: c.artist, cover: c.cover, _directStream: c.url }; currentPlaylist = [t]; currentTrackIndex = 0; queueSeenIds = new Set([t.id]); renderHomeQueue(); playTrack(0); } }
+async function removeCache(id) { const u = trackBlobCache.get(id); if (u && u.startsWith('blob:')) { try { URL.revokeObjectURL(u); } catch (e) {} } trackBlobCache.delete(id); await cacheDelete(id); renderLibrary(); showToast('Removed'); }
+function openPlaylist(i) { const p = playlists[i]; if (!p || p.songs.length === 0) return showToast('Empty playlist'); currentPlaylist = p.songs.slice(); queueSeenIds = new Set(currentPlaylist.map(t => t.id)); renderHomeQueue(); saveQueueToStorage(); playTrack(0); closeModal('modalAddToPlaylist'); showToast(`▶ ${p.name}`); }
+function deletePlaylist(i) { if (!confirm('Delete?')) return; playlists.splice(i, 1); savePlaylists(); renderLibrary(); }
 function savePlaylists() { localStorage.setItem('vaultify_playlists', JSON.stringify(playlists)); }
-
 function toggleLikeCurrent() {
   if (currentPlaylist.length === 0) return showToast('No track');
   const t = currentPlaylist[currentTrackIndex];
   const idx = likedSongs.findIndex(s => s.id === t.id);
-  if (idx >= 0) { likedSongs.splice(idx, 1); showToast('Removed from Liked'); }
-  else { likedSongs.unshift(t); showToast('❤️ Added to Liked'); }
+  if (idx >= 0) { likedSongs.splice(idx, 1); showToast('Removed'); } else { likedSongs.unshift(t); showToast('❤️ Added'); }
   localStorage.setItem('vaultify_liked', JSON.stringify(likedSongs));
-  const hb = document.getElementById('fullHeartBtn');
-  const isL = likedSongs.some(s => s.id === t.id);
+  const hb = document.getElementById('fullHeartBtn'); const isL = likedSongs.some(s => s.id === t.id);
   hb.className = isL ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
   hb.style.color = isL ? 'var(--partner-pink)' : 'inherit';
   if (currentLibraryTab === 'liked') renderLibrary();
 }
-
 function unlikeSong(id) { likedSongs = likedSongs.filter(s => s.id !== id); localStorage.setItem('vaultify_liked', JSON.stringify(likedSongs)); renderLibrary(); }
-
 function openAddToPlaylistModal() {
   if (currentPlaylist.length === 0) return showToast('No track');
   const c = document.getElementById('playlistSelectList');
@@ -1851,77 +1587,40 @@ function openAddToPlaylistModal() {
   else c.innerHTML = playlists.map((p, i) => `<div class="song-tile" onclick="addToPlaylist(${i})"><div class="tile-left"><div style="width:38px;height:38px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;flex-shrink:0"><i class="fa-solid fa-list"></i></div><div class="tile-meta"><h4>${escapeHtml(p.name)}</h4><p>${p.songs.length} songs</p></div></div><i class="fa-solid fa-plus" style="color:var(--accent-neon)"></i></div>`).join('');
   openModal('modalAddToPlaylist');
 }
-
-function addToPlaylist(i) {
-  const t = currentPlaylist[currentTrackIndex];
-  if (!playlists[i].songs.some(s => s.id === t.id)) playlists[i].songs.push(t);
-  savePlaylists();
-  showToast(`Added to ${playlists[i].name}`);
-  closeModal('modalAddToPlaylist');
-  if (currentLibraryTab === 'playlists') renderLibrary();
-}
-
-function createPlaylistAndAdd() {
-  const n = document.getElementById('newPlaylistName').value.trim();
-  if (!n) return showToast('Enter name');
-  const t = currentPlaylist[currentTrackIndex];
-  playlists.push({ id: Date.now(), name: n, songs: t ? [t] : [], created: Date.now() });
-  savePlaylists();
-  document.getElementById('newPlaylistName').value = '';
-  showToast(`Created: ${n}`);
-  closeModal('modalAddToPlaylist');
-  if (currentLibraryTab === 'playlists') renderLibrary();
-}
+function addToPlaylist(i) { const t = currentPlaylist[currentTrackIndex]; if (!playlists[i].songs.some(s => s.id === t.id)) playlists[i].songs.push(t); savePlaylists(); showToast(`Added`); closeModal('modalAddToPlaylist'); if (currentLibraryTab === 'playlists') renderLibrary(); }
+function createPlaylistAndAdd() { const n = document.getElementById('newPlaylistName').value.trim(); if (!n) return showToast('Enter name'); const t = currentPlaylist[currentTrackIndex]; playlists.push({ id: Date.now(), name: n, songs: t ? [t] : [], created: Date.now() }); savePlaylists(); document.getElementById('newPlaylistName').value = ''; showToast(`Created: ${n}`); closeModal('modalAddToPlaylist'); if (currentLibraryTab === 'playlists') renderLibrary(); }
 
 /* ═══════════ NOTIFICATIONS ═══════════ */
 function getStoredNotifications() { return JSON.parse(localStorage.getItem('vaultify_notifications_list') || '[]'); }
-function pushNotification(n) {
-  const l = getStoredNotifications();
-  l.unshift({ ...n, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), unread: true });
-  if (l.length > 60) l.pop();
-  localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
-  renderNotificationCenter();
-}
+function pushNotification(n) { const l = getStoredNotifications(); l.unshift({ ...n, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), unread: true }); if (l.length > 60) l.pop(); localStorage.setItem('vaultify_notifications_list', JSON.stringify(l)); renderNotificationCenter(); }
 function renderNotificationCenter() {
-  const list = getStoredNotifications();
-  const container = document.getElementById('notificationListContainer');
-  const badge = document.getElementById('notifBadgeCount');
+  const list = getStoredNotifications(); const container = document.getElementById('notificationListContainer'); const badge = document.getElementById('notifBadgeCount');
   if (badge) { const u = list.filter(n => n.unread).length; if (u > 0) { badge.innerText = u; badge.style.display = 'flex'; } else badge.style.display = 'none'; }
   if (!container) return;
   if (list.length === 0) { container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--text-sub);"><i class="fa-solid fa-bell-slash" style="font-size:36px;margin-bottom:12px;opacity:0.5;"></i><p style="font-size:13px;font-weight:600;">No notifications yet</p></div>`; return; }
   container.innerHTML = list.map(n => `<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;margin-bottom:8px;background:${n.unread ? 'rgba(139,92,246,0.12)' : 'rgba(255,255,255,0.03)'};border:1px solid ${n.unread ? 'var(--accent-neon)' : 'var(--border)'};border-radius:14px;"><div style="width:38px;height:38px;border-radius:50%;background:${n.iconColor || 'var(--accent-neon)'}20;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="${n.icon || 'fa-solid fa-bell'}" style="color:${n.iconColor || 'var(--accent-neon)'};font-size:16px;"></i></div><div style="flex:1;min-width:0;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;"><span style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%;">${escapeHtml(n.title)}</span><span style="font-size:10px;color:var(--text-sub);flex-shrink:0;margin-left:8px;">${n.time}</span></div><div style="font-size:11.5px;color:var(--text-sub);line-height:1.4;word-break:break-word;">${escapeHtml(n.message)}</div></div>${n.unread ? '<div style="width:8px;height:8px;border-radius:50%;background:var(--accent-neon);flex-shrink:0;margin-top:6px;"></div>' : ''}</div>`).join('');
 }
-function openNotificationModal() {
-  const l = getStoredNotifications(); l.forEach(n => n.unread = false);
-  localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
-  renderNotificationCenter();
-  openModal('modalNotifications');
-}
+function openNotificationModal() { const l = getStoredNotifications(); l.forEach(n => n.unread = false); localStorage.setItem('vaultify_notifications_list', JSON.stringify(l)); renderNotificationCenter(); openModal('modalNotifications'); }
 function clearAllNotifications() { localStorage.removeItem('vaultify_notifications_list'); renderNotificationCenter(); showToast('Cleared!'); }
 
 /* ═══════════ PERMISSIONS ═══════════ */
 function checkPermissionsStatus() {
-  const banner = document.getElementById('permWarningBanner');
-  const text = document.getElementById('permWarningText');
-  const mic = document.getElementById('micPermStatus');
-  const notif = document.getElementById('notifPermStatus');
+  const banner = document.getElementById('permWarningBanner'); const text = document.getElementById('permWarningText');
+  const mic = document.getElementById('micPermStatus'); const notif = document.getElementById('notifPermStatus');
   if (!window.AndroidNativeBridge) { if (banner) banner.classList.remove('show'); return; }
   let missing = [];
   try {
-    const hasMic = window.AndroidNativeBridge.hasMicPermission();
-    const hasNotif = window.AndroidNativeBridge.hasNotificationPermission();
-    if (mic) { mic.innerText = hasMic ? 'Granted' : 'Denied'; mic.style.color = hasMic ? '#10b981' : '#ef4444'; }
-    if (notif) { notif.innerText = hasNotif ? 'Granted' : 'Denied'; notif.style.color = hasNotif ? '#10b981' : '#ef4444'; }
-    if (!hasMic) missing.push('Microphone');
-    if (!hasNotif) missing.push('Notifications');
+    const hm = window.AndroidNativeBridge.hasMicPermission(); const hn = window.AndroidNativeBridge.hasNotificationPermission();
+    if (mic) { mic.innerText = hm ? 'Granted' : 'Denied'; mic.style.color = hm ? '#10b981' : '#ef4444'; }
+    if (notif) { notif.innerText = hn ? 'Granted' : 'Denied'; notif.style.color = hn ? '#10b981' : '#ef4444'; }
+    if (!hm) missing.push('Microphone'); if (!hn) missing.push('Notifications');
   } catch (e) {}
-  if (missing.length > 0 && banner && text) { text.innerText = `${missing.join(' & ')} permission needed. Tap to enable.`; banner.classList.add('show'); }
-  else if (banner) banner.classList.remove('show');
+  if (missing.length > 0 && banner && text) { text.innerText = `${missing.join(' & ')} needed`; banner.classList.add('show'); } else if (banner) banner.classList.remove('show');
 }
 function handlePermissionBannerClick() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.requestPermissions) window.AndroidNativeBridge.requestPermissions(); else showToast('Open Profile > Permissions'); }
 function requestPermsFromNative() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.requestPermissions) window.AndroidNativeBridge.requestPermissions(); setTimeout(checkPermissionsStatus, 800); }
-function openAppSettingsNative() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openAppSettings) window.AndroidNativeBridge.openAppSettings(); else showToast('Settings not available'); }
-function openEqualizer() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openSystemEqualizer) { window.AndroidNativeBridge.openSystemEqualizer(); showToast('🎚️ System EQ'); } else showToast('System EQ not available'); }
+function openAppSettingsNative() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openAppSettings) window.AndroidNativeBridge.openAppSettings(); else showToast('Not available'); }
+function openEqualizer() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openSystemEqualizer) { window.AndroidNativeBridge.openSystemEqualizer(); showToast('🎚️ System EQ'); } else showToast('Not available'); }
 
 /* ═══════════ EMOJI ═══════════ */
 let emojiMode = localStorage.getItem('vaultify_emoji_mode') || 'flow';
@@ -1929,130 +1628,43 @@ let emojiList = JSON.parse(localStorage.getItem('vaultify_emoji_list') || '["�
 let activeEmoji = localStorage.getItem('vaultify_active_emoji') || '🐱';
 let currentEmojiIndex = 0;
 let mixRafId = null;
-
 function initEmojiRunner() {
-  const i = document.getElementById('notchRunnerIcon');
-  if (!i) return;
-  i.classList.remove('mode-flow', 'mode-mix');
-  i.style.left = ''; i.style.transform = ''; i.style.animation = ''; i.innerText = activeEmoji;
+  const i = document.getElementById('notchRunnerIcon'); if (!i) return;
+  i.classList.remove('mode-flow', 'mode-mix'); i.style.left = ''; i.style.transform = ''; i.style.animation = ''; i.innerText = activeEmoji;
   if (emojiMode === 'mix') { i.classList.add('mode-mix'); animateMixEmoji(); }
   else { i.classList.add('mode-flow'); if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; } }
   const fb = document.getElementById('modeFlowBtn'); const mb = document.getElementById('modeMixBtn');
-  if (fb && mb) {
-    if (emojiMode === 'flow') {
-      fb.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))'; fb.style.color = '#020005';
-      mb.style.background = 'rgba(255,255,255,.08)'; mb.style.color = 'var(--text-sub)';
-    } else {
-      mb.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))'; mb.style.color = '#020005';
-      fb.style.background = 'rgba(255,255,255,.08)'; fb.style.color = 'var(--text-sub)';
-    }
-  }
+  if (fb && mb) { if (emojiMode === 'flow') { fb.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))'; fb.style.color = '#020005'; mb.style.background = 'rgba(255,255,255,.08)'; mb.style.color = 'var(--text-sub)'; } else { mb.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))'; mb.style.color = '#020005'; fb.style.background = 'rgba(255,255,255,.08)'; fb.style.color = 'var(--text-sub)'; } }
 }
 function animateMixEmoji() {
   if (mixRafId) cancelAnimationFrame(mixRafId);
-  const i = document.getElementById('notchRunnerIcon');
-  const n = document.querySelector('.notch-island');
-  if (!i || !n) return;
-  let p = 0, d = 1;
-  i.style.animation = 'none'; i.style.left = '8px';
-  const step = () => {
-    if (emojiMode !== 'mix') { mixRafId = null; return; }
-    const mx = (n.clientWidth || 290) - 40;
-    p += d * 1.5;
-    if (p >= mx) { p = mx; d = -1; cycleEmoji(); }
-    else if (p <= 0) { p = 0; d = 1; cycleEmoji(); }
-    i.style.left = (8 + p) + 'px';
-    mixRafId = requestAnimationFrame(step);
-  };
+  const i = document.getElementById('notchRunnerIcon'); const n = document.querySelector('.notch-island'); if (!i || !n) return;
+  let p = 0, d = 1; i.style.animation = 'none'; i.style.left = '8px';
+  const step = () => { if (emojiMode !== 'mix') { mixRafId = null; return; } const mx = (n.clientWidth || 290) - 40; p += d * 1.5; if (p >= mx) { p = mx; d = -1; cycleEmoji(); } else if (p <= 0) { p = 0; d = 1; cycleEmoji(); } i.style.left = (8 + p) + 'px'; mixRafId = requestAnimationFrame(step); };
   mixRafId = requestAnimationFrame(step);
 }
-function cycleEmoji() {
-  const l = emojiList.length > 0 ? emojiList : ['🐱'];
-  currentEmojiIndex = (currentEmojiIndex + 1) % l.length;
-  const i = document.getElementById('notchRunnerIcon');
-  if (!i) return;
-  i.innerText = l[currentEmojiIndex];
-  i.style.filter = 'drop-shadow(0 0 10px var(--accent-neon))';
-  setTimeout(() => { i.style.filter = ''; }, 200);
-}
+function cycleEmoji() { const l = emojiList.length > 0 ? emojiList : ['🐱']; currentEmojiIndex = (currentEmojiIndex + 1) % l.length; const i = document.getElementById('notchRunnerIcon'); if (!i) return; i.innerText = l[currentEmojiIndex]; i.style.filter = 'drop-shadow(0 0 10px var(--accent-neon))'; setTimeout(() => { i.style.filter = ''; }, 200); }
 function initEmojiPicker() {
-  const r = document.getElementById('emojiPickerRow');
-  if (!r) return;
+  const r = document.getElementById('emojiPickerRow'); if (!r) return;
   r.innerHTML = emojiList.map(e => `<div class="emoji-chip ${e === activeEmoji ? 'active' : ''}" data-emoji="${e}">${e}</div>`).join('');
-  r.querySelectorAll('.emoji-chip').forEach(c => {
-    c.addEventListener('click', () => {
-      activeEmoji = c.dataset.emoji;
-      localStorage.setItem('vaultify_active_emoji', activeEmoji);
-      r.querySelectorAll('.emoji-chip').forEach(x => x.classList.remove('active'));
-      c.classList.add('active');
-      const icon = document.getElementById('notchRunnerIcon');
-      if (icon) icon.innerText = activeEmoji;
-      showToast(`Runner: ${activeEmoji}`);
-    });
-  });
+  r.querySelectorAll('.emoji-chip').forEach(c => { c.addEventListener('click', () => { activeEmoji = c.dataset.emoji; localStorage.setItem('vaultify_active_emoji', activeEmoji); r.querySelectorAll('.emoji-chip').forEach(x => x.classList.remove('active')); c.classList.add('active'); const icon = document.getElementById('notchRunnerIcon'); if (icon) icon.innerText = activeEmoji; showToast(`Runner: ${activeEmoji}`); }); });
 }
-function addCustomEmoji() {
-  const i = document.getElementById('customEmojiInput');
-  const v = i.value.trim();
-  if (!v) return showToast('Enter emoji');
-  if (emojiList.includes(v)) return showToast('Already added');
-  emojiList.push(v);
-  localStorage.setItem('vaultify_emoji_list', JSON.stringify(emojiList));
-  i.value = '';
-  initEmojiPicker();
-  showToast(`Added: ${v}`);
-}
-function setEmojiMode(mode) {
-  emojiMode = mode;
-  localStorage.setItem('vaultify_emoji_mode', mode);
-  if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; }
-  initEmojiRunner();
-  showToast(mode === 'flow' ? 'Flow mode' : 'Mix mode');
-}
-function toggleAmbientMotion() { const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); if (!e || !b) return; const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; showToast(`Motion ${o ? 'off' : 'on'}`); }
-function toggleRunnerVisibility() { const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); if (!i || !b) return; const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; showToast(`Runner ${h ? 'on' : 'off'}`); }
-
-function applyThemeScheme(c) {
-  document.body.className = '';
-  if (c !== 'theme-violet') document.body.classList.add(c);
-  localStorage.setItem('vaultify_theme', c);
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) {
-    if (c === 'theme-midnight-oled' || c === 'theme-black-white') meta.content = '#000000';
-    else if (c === 'theme-royal-gold') meta.content = '#d4af37';
-    else meta.content = '#8b5cf6';
-  }
-  showToast(`Theme changed!`);
-}
-(function restoreTheme() { const saved = localStorage.getItem('vaultify_theme'); if (saved && saved !== 'theme-violet') document.body.classList.add(saved); })();
+function addCustomEmoji() { const i = document.getElementById('customEmojiInput'); const v = i.value.trim(); if (!v) return showToast('Enter emoji'); if (emojiList.includes(v)) return showToast('Already added'); emojiList.push(v); localStorage.setItem('vaultify_emoji_list', JSON.stringify(emojiList)); i.value = ''; initEmojiPicker(); showToast(`Added: ${v}`); }
+function setEmojiMode(mode) { emojiMode = mode; localStorage.setItem('vaultify_emoji_mode', mode); if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; } initEmojiRunner(); }
+function toggleAmbientMotion() { const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); if (!e || !b) return; const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; }
+function toggleRunnerVisibility() { const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); if (!i || !b) return; const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; }
+function applyThemeScheme(c) { document.body.className = ''; if (c !== 'theme-violet') document.body.classList.add(c); localStorage.setItem('vaultify_theme', c); const m = document.querySelector('meta[name="theme-color"]'); if (m) { if (c === 'theme-midnight-oled' || c === 'theme-black-white') m.content = '#000000'; else if (c === 'theme-royal-gold') m.content = '#d4af37'; else m.content = '#8b5cf6'; } showToast('Theme changed!'); }
+(function restoreTheme() { const s = localStorage.getItem('vaultify_theme'); if (s && s !== 'theme-violet') document.body.classList.add(s); })();
 
 /* ═══════════ IP COUNTER ═══════════ */
-async function getPublicIP() {
-  try {
-    const ctrl = new AbortController();
-    const tm = setTimeout(() => ctrl.abort(), 5000);
-    const r = await fetch('https://api.ipify.org?format=json', { signal: ctrl.signal });
-    clearTimeout(tm);
-    if (!r.ok) return null;
-    const d = await r.json();
-    return d.ip;
-  } catch (e) { return null; }
-}
-function getDeviceId() {
-  let id = localStorage.getItem('vaultify_device_id');
-  if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 16) + '_' + Date.now(); localStorage.setItem('vaultify_device_id', id); }
-  return id;
-}
+async function getPublicIP() { try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 5000); const r = await fetch('https://api.ipify.org?format=json', { signal: c.signal }); clearTimeout(t); if (!r.ok) return null; const d = await r.json(); return d.ip; } catch (e) { return null; } }
+function getDeviceId() { let id = localStorage.getItem('vaultify_device_id'); if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 16) + '_' + Date.now(); localStorage.setItem('vaultify_device_id', id); } return id; }
 async function initIPCounter() {
   if (!isFirebaseReady()) return;
   try {
-    const ip = await getPublicIP();
-    if (!ip) return;
-    const deviceId = getDeviceId();
-    const ua = navigator.userAgent || 'unknown';
-    const now = Date.now();
-    const docRef = firestoreDB.collection('app_config').doc('user_ips');
-    const doc = await docRef.get();
+    const ip = await getPublicIP(); if (!ip) return;
+    const deviceId = getDeviceId(); const ua = navigator.userAgent || 'unknown'; const now = Date.now();
+    const docRef = firestoreDB.collection('app_config').doc('user_ips'); const doc = await docRef.get();
     let data = doc.exists ? doc.data() : { ips: {}, devices: {} };
     if (!data.ips) data.ips = {}; if (!data.devices) data.devices = {};
     if (!data.ips[ip]) data.ips[ip] = { firstSeen: now, lastSeen: now, deviceCount: 1, deviceIds: [deviceId] };
@@ -2064,43 +1676,25 @@ async function initIPCounter() {
     data.totalIPs = ipList.length; data.totalDevices = devList.length;
     data.activeDevices24h = devList.filter(k => data.devices[k].lastSeen >= dayAgo).length;
     data.lastUpdated = now;
-    await docRef.set(data);
-    renderIPStats(data);
+    await docRef.set(data); renderIPStats(data);
   } catch (e) {}
 }
-function listenIPStats(callback) {
-  if (!isFirebaseReady()) return;
-  try { firestoreDB.collection('app_config').doc('user_ips').onSnapshot(doc => { if (doc.exists && typeof callback === 'function') callback(doc.data()); }); } catch (e) {}
-}
+function listenIPStats(cb) { if (!isFirebaseReady()) return; try { firestoreDB.collection('app_config').doc('user_ips').onSnapshot(doc => { if (doc.exists && typeof cb === 'function') cb(doc.data()); }); } catch (e) {} }
 function renderIPStats(stats) {
   const el = document.getElementById('ipStatsDisplay');
-  if (el && stats) {
-    el.innerHTML = `<div style="font-size:11px;color:var(--text-sub);line-height:1.8">
-      <div>🌐 Total IPs: <b style="color:#fff">${stats.totalIPs || 0}</b></div>
-      <div>📱 Total devices: <b style="color:#fff">${stats.totalDevices || 0}</b></div>
-      <div>🟢 Active 24h: <b style="color:#10b981">${stats.activeDevices24h || 0}</b></div>
-    </div>`;
-  }
+  if (el && stats) el.innerHTML = `<div style="font-size:11px;color:var(--text-sub);line-height:1.8"><div>🌐 Total IPs: <b style="color:#fff">${stats.totalIPs || 0}</b></div><div>📱 Total devices: <b style="color:#fff">${stats.totalDevices || 0}</b></div><div>🟢 Active 24h: <b style="color:#10b981">${stats.activeDevices24h || 0}</b></div></div>`;
   const cnt = document.getElementById('certUserCount');
   if (cnt && stats) { const t = stats.activeDevices24h || stats.totalDevices || 1; cnt.innerText = `${t} User${t > 1 ? 's' : ''}`; }
 }
 
 /* ═══════════ PLAYBACK SAVE ═══════════ */
-async function savePlaybackState() {
-  try {
-    if (!currentPlaylist[currentTrackIndex] || !mainAudio) return;
-    const t = currentPlaylist[currentTrackIndex];
-    const pos = mainAudio.currentTime || 0;
-    localStorage.setItem('vaultify_playback_state', JSON.stringify({ wasPlaying: isPlayingAudio, lastTrackId: t.id, lastTrackTitle: t.title, lastTrackArtist: t.artist, lastTrackCover: t.cover, lastPosition: Math.floor(pos * 1000), lastIndex: currentTrackIndex, playlistJson: JSON.stringify(currentPlaylist.slice(0, 50)), timestamp: Date.now() }));
-  } catch (e) {}
-}
+async function savePlaybackState() { try { if (!currentPlaylist[currentTrackIndex] || !mainAudio) return; const t = currentPlaylist[currentTrackIndex]; const pos = mainAudio.currentTime || 0; localStorage.setItem('vaultify_playback_state', JSON.stringify({ wasPlaying: isPlayingAudio, lastTrackId: t.id, lastTrackTitle: t.title, lastTrackArtist: t.artist, lastTrackCover: t.cover, lastPosition: Math.floor(pos * 1000), lastIndex: currentTrackIndex, playlistJson: JSON.stringify(currentPlaylist.slice(0, 50)), timestamp: Date.now() })); } catch (e) {} }
 setInterval(() => { if (!isPlayingAudio) return; _lastSaveTick += 1000; if (_lastSaveTick >= 10000) { _lastSaveTick = 0; savePlaybackState(); } }, 1000);
 
 /* ═══════════ EQ ═══════════ */
 setTimeout(() => {
   ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach((id, i) => {
-    const el = document.getElementById(id);
-    if (el) {
+    const el = document.getElementById(id); if (el) {
       el.addEventListener('input', () => { if (eqNodes && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0; });
       el.addEventListener('change', saveEqToStorage);
     }
@@ -2111,21 +1705,12 @@ setTimeout(() => {
 /* ═══════════ CERT LIVE DATE + TIME ═══════════ */
 function updateCertLiveDateTime() {
   try {
-    const dateEl = document.getElementById('certLiveDate');
-    const timeEl = document.getElementById('certLiveTime');
-    if (!dateEl || !timeEl) return;
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, '0');
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const yyyy = now.getFullYear();
-    dateEl.textContent = dd + '/' + mm + '/' + yyyy;
-    let h = now.getHours();
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12; if (h === 0) h = 12;
-    const hh = String(h).padStart(2, '0');
-    const mi = String(now.getMinutes()).padStart(2, '0');
-    const ss = String(now.getSeconds()).padStart(2, '0');
-    timeEl.textContent = hh + ':' + mi + ':' + ss + ' ' + ampm;
+    const dateEl = document.getElementById('certLiveDate'); const timeEl = document.getElementById('certLiveTime'); if (!dateEl || !timeEl) return;
+    const now = new Date(); const dd = String(now.getDate()).padStart(2, '0'); const mm = String(now.getMonth() + 1).padStart(2, '0'); const yyyy = now.getFullYear();
+    dateEl.textContent = `${dd}/${mm}/${yyyy}`;
+    let h = now.getHours(); const ampm = h >= 12 ? 'PM' : 'AM'; h = h % 12; if (h === 0) h = 12;
+    const hh = String(h).padStart(2, '0'); const mi = String(now.getMinutes()).padStart(2, '0'); const ss = String(now.getSeconds()).padStart(2, '0');
+    timeEl.textContent = `${hh}:${mi}:${ss} ${ampm}`;
   } catch (e) {}
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', updateCertLiveDateTime);
@@ -2135,15 +1720,11 @@ setInterval(updateCertLiveDateTime, 1000);
 
 /* ═══════════ BOOT ═══════════ */
 window.addEventListener('DOMContentLoaded', () => {
-  mainAudio = document.getElementById('vaultifyAudio');
-  silentLoop = document.getElementById('silentAudioLoop');
+  mainAudio = document.getElementById('vaultifyAudio'); silentLoop = document.getElementById('silentAudioLoop');
 
   setTimeout(() => {
     const i = document.getElementById('appIntroScreen');
-    if (i) {
-      i.classList.add('fade-out'); i.style.opacity = '0'; i.style.transition = 'opacity 0.6s ease';
-      setTimeout(() => { i.style.display = 'none'; i.style.visibility = 'hidden'; i.style.pointerEvents = 'none'; i.style.zIndex = '-1'; }, 700);
-    }
+    if (i) { i.classList.add('fade-out'); i.style.opacity = '0'; i.style.transition = 'opacity 0.6s ease'; setTimeout(() => { i.style.display = 'none'; i.style.visibility = 'hidden'; i.style.pointerEvents = 'none'; i.style.zIndex = '-1'; }, 700); }
   }, 1500);
 
   initCacheDB();
@@ -2159,11 +1740,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // ═══ TELEGRAM AUTO-SYNC ═══
   autoSyncTgLibrary();
+
+  // ═══ AUTO REFRESH every 5 min ═══
   setInterval(() => {
-    if (navigator.onLine && document.visibilityState === 'visible') {
-      syncTgLibrary(false).catch(() => {});
-    }
-  }, 30 * 60 * 1000);
+    if (!navigator.onLine || document.visibilityState !== 'visible') return;
+    console.log('🔄 Auto-refresh cycle');
+    syncTgLibrary(false).catch(() => {});
+    renderRecommendedSection().catch(() => {});
+  }, 5 * 60 * 1000);
 
   setTimeout(initEqChain, 800);
   setTimeout(loadEqFromStorage, 1500);
@@ -2178,11 +1762,7 @@ window.addEventListener('DOMContentLoaded', () => {
     loadQueueFromStorage();
   }, 1500);
 
-  const start = () => {
-    initForegroundAudioBridge();
-    requestHardwareWakeLock();
-    if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
-  };
+  const start = () => { initForegroundAudioBridge(); requestHardwareWakeLock(); if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; } };
   document.body.addEventListener('touchstart', start, { once: true });
   document.body.addEventListener('click', start, { once: true });
 
@@ -2194,10 +1774,8 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('popstate', (e) => {
     e.preventDefault();
     if (!handleSystemBackPress()) {
-      try {
-        if (window.AndroidNativeBridge && window.AndroidNativeBridge.minimizeApp) window.AndroidNativeBridge.minimizeApp();
-        else history.pushState(null, '', location.href);
-      } catch (err) { history.pushState(null, '', location.href); }
+      try { if (window.AndroidNativeBridge && window.AndroidNativeBridge.minimizeApp) window.AndroidNativeBridge.minimizeApp(); else history.pushState(null, '', location.href); }
+      catch (err) { history.pushState(null, '', location.href); }
     }
     history.pushState(null, '', location.href);
   });
@@ -2214,7 +1792,7 @@ Object.assign(window, {
   handleSystemBackPress, isFirebaseReady, getDeviceId, getPublicIP,
   verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
   openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
-  saveProfileData, performAppLogout, generatePartnerCode, syncUserPartnerCode, changeAppLanguage,
+  saveProfileData, performAppLogout, generatePartnerCode, changeAppLanguage,
   detectLanguage, detectVibe, getLanguageQueries, getLanguageArtists, getVibeKeywords,
   searchAll, fetchTrendingSongs,
   executeLiveSearch, instantSearch, renderSearchResults, playSearchedTrackImmediately,
@@ -2232,8 +1810,8 @@ Object.assign(window, {
   openEqualizer, initEmojiRunner, initEmojiPicker,
   addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
-  prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
+  checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
   searchSaavn, searchSoundCloud, searchJamendo, searchInternetArchive, searchYouTube,
   saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
-  syncTgLibrary, manualSyncTg, autoSyncTgLibrary
+  syncTgLibrary, manualSyncTg, autoSyncTgLibrary, fetchVibeQueue
 });
