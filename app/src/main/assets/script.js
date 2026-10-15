@@ -1,13 +1,11 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — v8 FINAL                                             */
-/* ✅ Hourly auto-sync (fast via getUpdates)                       */
-/* ✅ Lyrics search (LRCLIB API)                                   */
-/* ✅ Optimized UI (better tiles, spacing, animations)             */
-/* ✅ Queue: random from Telegram only                             */
-/* ✅ No forward loop                                              */
+/* VAULTIFY — v9 FINAL                                             */
+/* ✅ Full TG sync (1-3000 messages scan)                          */
+/* ✅ Progress save — next sync fast                               */
+/* ✅ Baaki sab v8 jaisa                                           */
 /* ═══════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -29,13 +27,16 @@ const INVIDIOUS_APIS = [
 const TG_BOT_TOKEN = '8927248625:AAGBFepeiq3jutY4XQjn7qxZu43a_x41YNw';
 const TG_CHANNEL_ID = '-1004487475420';
 const TG_API = `https://api.telegram.org/bot${TG_BOT_TOKEN}`;
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v4';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v4';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v3';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v5';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v5';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v4';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v1';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v2';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v1';
 const TG_SYNC_INTERVAL = 60 * 60 * 1000; // 1 hour
+const TG_MAX_MSG_ID = 3000; // Yahan tak scan karega
+const TG_OWNER_CHAT_ID = '5969156236'; // Akshat ka Telegram ID
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
@@ -157,14 +158,14 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎵 TELEGRAM — AUTO-SYNC (hourly, fast)                          */
+/* 🎵 TELEGRAM — FULL SYNC (getUpdates + forward scan 1-3000)      */
 /* ═══════════════════════════════════════════════════════════════ */
 function loadTgLibrary() {
   try {
     const raw = localStorage.getItem(TG_LIBRARY_KEY);
     if (raw) {
       tgLibrary = JSON.parse(raw);
-      console.log(`📚 TG: ${tgLibrary.length} songs`);
+      console.log(`📚 TG: ${tgLibrary.length} songs loaded`);
       return true;
     }
   } catch (e) {}
@@ -192,122 +193,140 @@ async function fetchTgThumb(thumbFileId) {
   } catch (e) { return ''; }
 }
 
-/* 🚀 FAST SYNC — getUpdates based */
+/* Main sync function — getUpdates + forward scan */
 async function syncTgLibrary(forceFull = false) {
   if (!TG_BOT_TOKEN || !TG_CHANNEL_ID) return tgLibrary;
   const t0 = Date.now();
-  console.log('⚡ TG sync...');
+  console.log('⚡ TG sync started...');
 
-  let offset = 0;
-  let hasMore = true;
-  let added = 0;
-  let totalProcessed = 0;
-
-  while (hasMore) {
-    try {
-      const url = `${TG_API}/getUpdates?offset=${offset}&limit=100&allowed_updates=["channel_post"]&timeout=0`;
-      const r = await fetch(url);
-      const d = await r.json();
-      if (!d.ok || !d.result || d.result.length === 0) { hasMore = false; break; }
-
-      for (const update of d.result) {
-        offset = update.update_id + 1;
-        totalProcessed++;
-        const msg = update.channel_post;
-        if (!msg) continue;
-        const doc = msg.document || msg.audio;
-        if (!doc) continue;
-
-        let title = '', artist = '', thumb = '';
-        if (msg.audio) {
-          title = (doc.title || '').trim();
-          artist = (doc.performer || doc.artist || '').trim();
-          if (doc.thumb?.file_id) thumb = doc.thumb.file_id;
-          else if (doc.thumbnail?.file_id) thumb = doc.thumbnail.file_id;
-          if (!title) title = (doc.file_name || '').replace(/\.[^.]+$/, '') || 'Unknown';
-          if (!artist) artist = 'Unknown';
-        } else {
-          const fn = doc.file_name || '';
-          const name = fn.replace(/\.(mp3|m4a|aac|opus|ogg|flac)$/i, '');
-          const parts = name.split(' - ');
-          title = parts[0]?.trim() || name || 'Unknown';
-          artist = parts[1]?.trim() || 'Unknown';
-        }
-        if (!title || title === 'Unknown') continue;
-        if (tgLibrary.some(s => s.fileId === doc.file_id)) continue;
-
-        let thumbUrl = '';
-        if (thumb) thumbUrl = await fetchTgThumb(thumb);
-
-        tgLibrary.push({
-          title, artist, cover: thumbUrl,
-          fileId: doc.file_id,
-          duration: doc.duration || 0,
-          size: doc.file_size || 0,
-          msgId: msg.message_id,
-          addedAt: Date.now()
-        });
-        added++;
-      }
-
-      if (d.result.length < 100) hasMore = false;
-      await new Promise(r => setTimeout(r, 40));
-    } catch (e) { hasMore = false; }
-  }
-
-  if (totalProcessed === 0 && tgLibrary.length === 0) {
-    console.log('Fallback scan...');
-    await fallbackForwardScan();
-  }
+  const recentAdded = await syncViaGetUpdates();
+  const scanAdded = await syncViaForwardScan(forceFull);
 
   saveTgLibrary();
   localStorage.setItem(TG_LAST_SYNC_KEY, Date.now().toString());
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log(`⚡ Sync ${elapsed}s. +${added}, total ${tgLibrary.length}`);
-  if (added > 0 && typeof showToast === 'function') showToast(`🎵 +${added} songs`);
+  console.log(`⚡ Sync done in ${elapsed}s. +${recentAdded + scanAdded}, total ${tgLibrary.length}`);
+  if (recentAdded + scanAdded > 0) showToast(`🎵 +${recentAdded + scanAdded} songs (Total: ${tgLibrary.length})`);
   return tgLibrary;
 }
 
-async function fallbackForwardScan() {
-  const OWNER_CHAT_ID = '5969156236';
-  let added = 0;
-  for (let id = 1; id <= 100; id++) {
+/* getUpdates — recent messages fetch */
+async function syncViaGetUpdates() {
+  let added = 0, offset = 0, hasMore = true;
+  while (hasMore) {
+    try {
+      const url = `${TG_API}/getUpdates?offset=${offset}&limit=100&timeout=0&allowed_updates=${encodeURIComponent('["channel_post"]')}`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if (!d.ok || !d.result || d.result.length === 0) { hasMore = false; break; }
+      for (const update of d.result) {
+        offset = update.update_id + 1;
+        const msg = update.channel_post;
+        if (!msg) continue;
+        const ok = await processTgMessage(msg, msg.message_id);
+        if (ok) added++;
+      }
+      if (d.result.length < 100) hasMore = false;
+      await new Promise(r => setTimeout(r, 40));
+    } catch (e) { hasMore = false; }
+  }
+  console.log(`getUpdates: +${added}`);
+  return added;
+}
+
+/* Forward scan — full channel scan 1 to TG_MAX_MSG_ID */
+async function syncViaForwardScan(forceFull = false) {
+  let lastScanned = forceFull ? 0 : parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY) || '0');
+  let added = 0, consecutiveFails = 0;
+  const startId = lastScanned > 0 ? lastScanned + 1 : 1;
+
+  console.log(`Forward scan: starting from ${startId}, max ${TG_MAX_MSG_ID}`);
+
+  for (let id = startId; id <= TG_MAX_MSG_ID; id++) {
     try {
       const r = await fetch(`${TG_API}/forwardMessage`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: OWNER_CHAT_ID, from_chat_id: TG_CHANNEL_ID, message_id: id, disable_notification: true })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TG_OWNER_CHAT_ID,
+          from_chat_id: TG_CHANNEL_ID,
+          message_id: id,
+          disable_notification: true
+        })
       });
       const d = await r.json();
+
       if (d.ok && d.result) {
-        await fetch(`${TG_API}/deleteMessage`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: OWNER_CHAT_ID, message_id: d.result.message_id })
-        });
-        const doc = d.result.document || d.result.audio;
-        if (doc && !tgLibrary.some(s => s.fileId === doc.file_id)) {
-          let title = '', artist = '', thumb = '';
-          if (d.result.audio) {
-            title = (doc.title || '').trim();
-            artist = (doc.performer || doc.artist || '').trim();
-            if (doc.thumb?.file_id) thumb = doc.thumb.file_id;
-            if (!title) title = (doc.file_name || '').replace(/\.[^.]+$/, '') || 'Unknown';
-            if (!artist) artist = 'Unknown';
-          } else {
-            const name = (doc.file_name || '').replace(/\.[^.]+$/, '');
-            const parts = name.split(' - ');
-            title = parts[0]?.trim() || name;
-            artist = parts[1]?.trim() || 'Unknown';
-          }
-          let thumbUrl = '';
-          if (thumb) thumbUrl = await fetchTgThumb(thumb);
-          tgLibrary.push({ title, artist, cover: thumbUrl, fileId: doc.file_id, duration: doc.duration || 0, msgId: id, addedAt: Date.now() });
-          added++;
+        fetch(`${TG_API}/deleteMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, message_id: d.result.message_id })
+        }).catch(() => {});
+
+        const ok = await processTgMessage(d.result, id);
+        if (ok) added++;
+        consecutiveFails = 0;
+      } else {
+        consecutiveFails++;
+        if (consecutiveFails > 30 && id > startId + 30) {
+          console.log(`Reached end of channel at id ${id}`);
+          break;
         }
       }
-      await new Promise(r => setTimeout(r, 25));
-    } catch (e) {}
+
+      if (id % 25 === 0) {
+        localStorage.setItem(TG_LAST_SCANNED_KEY, String(id));
+      }
+
+      await new Promise(r => setTimeout(r, 35));
+    } catch (e) {
+      consecutiveFails++;
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
-  console.log(`Fallback: +${added}`);
+
+  localStorage.setItem(TG_LAST_SCANNED_KEY, String(TG_MAX_MSG_ID));
+  console.log(`Forward scan: +${added}`);
+  return added;
+}
+
+/* Process single Telegram message */
+async function processTgMessage(msg, msgId) {
+  const doc = msg.document || msg.audio;
+  if (!doc) return false;
+  if (tgLibrary.some(s => s.fileId === doc.file_id)) return false;
+
+  let title = '', artist = '', thumb = '';
+
+  if (msg.audio) {
+    title = (doc.title || '').trim();
+    artist = (doc.performer || doc.artist || '').trim();
+    if (doc.thumb?.file_id) thumb = doc.thumb.file_id;
+    else if (doc.thumbnail?.file_id) thumb = doc.thumbnail.file_id;
+  }
+
+  if (!title) {
+    const fn = doc.file_name || '';
+    const name = fn.replace(/\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i, '');
+    const parts = name.split(' - ');
+    title = parts[0]?.trim() || name || 'Unknown';
+    if (!artist) artist = parts[1]?.trim() || 'Unknown';
+  }
+  if (!title || title === 'Unknown') return false;
+  if (!artist) artist = 'Unknown';
+
+  let thumbUrl = '';
+  if (thumb) thumbUrl = await fetchTgThumb(thumb);
+
+  tgLibrary.push({
+    title, artist, cover: thumbUrl,
+    fileId: doc.file_id,
+    duration: doc.duration || 0,
+    size: doc.file_size || 0,
+    msgId: msgId || msg.message_id,
+    addedAt: Date.now()
+  });
+  return true;
 }
 
 /* ⏰ Hourly auto-sync */
@@ -319,14 +338,13 @@ function startHourlySync() {
     if (Date.now() - last < TG_SYNC_INTERVAL) return;
     console.log('⏰ Hourly sync triggered');
     await syncTgLibrary(false).catch(() => {});
-  }, 60 * 1000); // check every minute, sync if hour passed
+  }, 60 * 1000);
 }
 
 async function autoSyncTgLibrary() {
   loadTgLibrary();
   if (navigator.onLine) {
     const last = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
-    /* Sync immediately if >1 hour since last */
     if (Date.now() - last > TG_SYNC_INTERVAL || tgLibrary.length === 0) {
       setTimeout(() => syncTgLibrary(false).catch(() => {}), 3000);
     }
@@ -369,7 +387,6 @@ async function searchLyrics(query) {
     }));
 
     lyricsCache[key] = results;
-    /* Cache with size limit */
     if (Object.keys(lyricsCache).length > 50) lyricsCache = {};
     return results;
   } catch (e) { return []; }
@@ -464,14 +481,12 @@ async function searchYouTube(query, limit = 10) {
   return [];
 }
 
-/* 🎯 COMBINED SEARCH — Telegram + Saavn + Lyrics + SC + Jamendo */
 async function searchSaavnAndSC(query, limit = 30) {
   const results = [];
   const seen = new Set();
   const addUnique = (t) => { const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim(); if (seen.has(key)) return; seen.add(key); results.push(t); };
   const q = query.toLowerCase().trim();
 
-  /* 1. Telegram library */
   if (tgLibrary.length > 0) {
     tgLibrary.forEach(item => {
       const hay = (item.title + ' ' + item.artist).toLowerCase();
@@ -481,7 +496,6 @@ async function searchSaavnAndSC(query, limit = 30) {
     });
   }
 
-  /* 2. Parallel fetch: Saavn + Lyrics + SC + Jamendo */
   const [saavn, lyrics, sc, jam] = await Promise.all([
     searchSaavn(query, Math.floor(limit * 0.5)).catch(() => []),
     searchLyrics(query).catch(() => []),
@@ -491,7 +505,6 @@ async function searchSaavnAndSC(query, limit = 30) {
 
   saavn.forEach(addUnique);
 
-  /* 3. Lyrics results — try to find Saavn match */
   for (const lyricResult of lyrics) {
     if (results.length >= limit) break;
     try {
@@ -503,7 +516,6 @@ async function searchSaavnAndSC(query, limit = 30) {
   sc.forEach(addUnique);
   jam.forEach(addUnique);
 
-  /* 4. Multi-word retry for lyrics-ish queries */
   const words = q.split(/\s+/).filter(w => w.length > 2);
   if (words.length >= 3 && results.length < 10) {
     for (let i = 0; i < words.length - 2 && results.length < 20; i++) {
@@ -519,7 +531,6 @@ async function searchSaavnAndSC(query, limit = 30) {
 
 async function workerSearch(query, limit = 30) { return await searchSaavnAndSC(query, limit); }
 
-/* ═══════════ STREAM URL ═══════════ */
 async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) return await saavnStreamUrl(id.replace('saavn_', ''));
   if (id.startsWith('tg_')) {
@@ -1363,7 +1374,6 @@ window.addEventListener('DOMContentLoaded', () => {
   renderSearchHistoryTags();
   renderNotificationCenter();
 
-  /* TG sync + hourly auto-refresh */
   autoSyncTgLibrary();
   startHourlySync();
 
@@ -1388,7 +1398,6 @@ window.addEventListener('DOMContentLoaded', () => {
     if (document.hidden && isPlayingAudio && mainAudio && mainAudio.paused) { mainAudio.play().catch(() => {}); }
     if (!document.hidden && 'wakeLock' in navigator) requestHardwareWakeLock();
     if (!document.hidden) {
-      /* App came to foreground — check if hour passed for sync */
       const last = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
       if (Date.now() - last > TG_SYNC_INTERVAL && navigator.onLine) {
         syncTgLibrary(false).catch(() => {});
