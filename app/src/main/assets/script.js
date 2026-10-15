@@ -1,10 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — FULL FINAL                                           */
-/* Sources: Saavn + SoundCloud + Jamendo + Internet Archive + YT   */
-/* QUEUE: Same Artist + Same Language (Search history blocked)     */
+/* VAULTIFY — FULL FINAL v4                                        */
+/* Sources: Telegram (priority) + Saavn + SC + Jamendo + IA + YT   */
+/* Queue: Same Artist + Same Language (Search history blocked)     */
 /* ═══════════════════════════════════════════════════════════════ */
 
-const APP_VERSION = 3;
+const APP_VERSION = 4;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -23,8 +23,18 @@ const INVIDIOUS_APIS = [
   'https://invidious.privacyredirect.com'
 ];
 
+/* ═══════════ TELEGRAM CONFIG ═══════════ */
+const TG_BOT_TOKEN = '8927248625:AAGBFepeiq3jutY4XQjn7qxZu43a_x41YNw';
+const TG_CHANNEL_ID = '-1004487475420';
+const TG_API = `https://api.telegram.org/bot${TG_BOT_TOKEN}`;
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v1';
+const TG_LAST_MSG_KEY = 'vaultify_tg_last_msg_id';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v1';
+const TG_URL_CACHE_TTL = 50 * 60 * 1000;
+
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
+let tgLibrary = [];
 
 try {
   if (typeof firebase !== 'undefined') {
@@ -153,6 +163,118 @@ function handleSystemBackPress() {
 window.handleSystemBackPress = handleSystemBackPress;
 
 /* ═══════════════════════════════════════════════════════════════ */
+/* 🎵 TELEGRAM LIBRARY                                             */
+/* ═══════════════════════════════════════════════════════════════ */
+function loadTgLibrary() {
+  try {
+    const raw = localStorage.getItem(TG_LIBRARY_KEY);
+    if (raw) {
+      tgLibrary = JSON.parse(raw);
+      console.log(`📚 TG: ${tgLibrary.length} songs loaded`);
+      return true;
+    }
+  } catch (e) {}
+  tgLibrary = [];
+  return false;
+}
+
+function saveTgLibrary() {
+  try { localStorage.setItem(TG_LIBRARY_KEY, JSON.stringify(tgLibrary)); } catch (e) {}
+}
+
+function saveTgUrl(fileId, url) {
+  try {
+    const c = JSON.parse(localStorage.getItem(TG_URL_CACHE_KEY) || '{}');
+    c[fileId] = { url, timestamp: Date.now() };
+    localStorage.setItem(TG_URL_CACHE_KEY, JSON.stringify(c));
+  } catch (e) {}
+}
+
+function getTgUrl(fileId) {
+  try {
+    const c = JSON.parse(localStorage.getItem(TG_URL_CACHE_KEY) || '{}');
+    const e = c[fileId];
+    if (e && (Date.now() - e.timestamp) < TG_URL_CACHE_TTL) return e.url;
+  } catch (e) {}
+  return null;
+}
+
+async function syncTgLibrary(forceFull = false) {
+  if (!TG_BOT_TOKEN || !TG_CHANNEL_ID) return tgLibrary;
+  console.log('🔄 TG sync started...');
+
+  const lastId = parseInt(localStorage.getItem(TG_LAST_MSG_KEY) || '0');
+  let startId = forceFull ? 1 : Math.max(1, lastId - 5);
+  let endId = forceFull ? 1000 : lastId + 50;
+  let highestId = lastId;
+  let added = 0;
+
+  for (let id = startId; id <= endId; id++) {
+    try {
+      const r = await fetch(`${TG_API}/forwardMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: TG_CHANNEL_ID,
+          from_chat_id: TG_CHANNEL_ID,
+          message_id: id,
+          disable_notification: true
+        })
+      });
+      const d = await r.json();
+      if (d.ok && d.result && d.result.document) {
+        const doc = d.result.document;
+        const fileName = doc.file_name || '';
+        if (!/\.(mp3|m4a|aac|opus|ogg)$/i.test(fileName)) continue;
+
+        const name = fileName.replace(/\.(mp3|m4a|aac|opus|ogg)$/i, '');
+        const parts = name.split(' - ');
+        const title = parts[0]?.trim() || name;
+        const artist = parts[1]?.trim() || 'Unknown';
+
+        if (!tgLibrary.some(s => s.fileId === doc.file_id)) {
+          tgLibrary.push({
+            title, artist, cover: '',
+            fileId: doc.file_id,
+            duration: doc.duration || 0,
+            size: doc.file_size || 0,
+            msgId: id,
+            addedAt: Date.now()
+          });
+          added++;
+        }
+        if (id > highestId) highestId = id;
+      }
+      await new Promise(r => setTimeout(r, 40));
+    } catch (e) {}
+  }
+
+  if (highestId > lastId) localStorage.setItem(TG_LAST_MSG_KEY, highestId.toString());
+  saveTgLibrary();
+
+  if (added > 0) {
+    console.log(`✅ TG: +${added} songs. Total: ${tgLibrary.length}`);
+    if (typeof showToast === 'function') showToast(`🎵 ${added} new songs`);
+  } else {
+    console.log(`ℹ️ TG: ${tgLibrary.length} songs (no new)`);
+  }
+  return tgLibrary;
+}
+
+async function autoSyncTgLibrary() {
+  loadTgLibrary();
+  if (navigator.onLine) {
+    setTimeout(() => syncTgLibrary(false).catch(() => {}), 3000);
+  }
+}
+
+async function manualSyncTg() {
+  showToast('🔄 Syncing...');
+  await syncTgLibrary(true);
+  showToast(`✅ ${tgLibrary.length} songs`);
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
 /* 🔍 SEARCH SOURCES                                               */
 /* ═══════════════════════════════════════════════════════════════ */
 async function checkWorker() { workerReady = true; return true; }
@@ -213,8 +335,7 @@ async function searchJamendo(query, limit = 20) {
     const url = `https://api.jamendo.com/v3.0/tracks/?client_id=${JAMENDO_CLIENT_ID}&format=json&limit=${limit}&search=${encodeURIComponent(query)}&audioformat=mp32&include=musicinfo`;
     const r = await fetch(url);
     const data = await r.json();
-    const arr = data.results || [];
-    return arr.map(t => ({
+    return (data.results || []).map(t => ({
       id: 'jam_' + t.id,
       title: t.name || 'Unknown',
       artist: t.artist_name || 'Jamendo',
@@ -230,7 +351,7 @@ async function searchJamendo(query, limit = 20) {
 async function searchInternetArchive(query, limit = 15) {
   try {
     const q = `mediatype:(audio) AND (title:(${query}) OR creator:(${query})) AND format:(MP3)`;
-    const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&rows=${limit}&page=1&output=json`;
+    const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&rows=${limit}&page=1&output=json`;
     const r = await fetch(url);
     const data = await r.json();
     const docs = data.response?.docs || [];
@@ -306,7 +427,10 @@ async function searchYouTube(query, limit = 10) {
   return [];
 }
 
-async function searchSaavnAndSC(query, limit = 25) {
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎯 COMBINED SEARCH — Telegram (priority) + Saavn + SC + Jamendo */
+/* ═══════════════════════════════════════════════════════════════ */
+async function searchSaavnAndSC(query, limit = 30) {
   const results = [];
   const seen = new Set();
   const addUnique = (t) => {
@@ -316,25 +440,77 @@ async function searchSaavnAndSC(query, limit = 25) {
     results.push(t);
   };
 
-  const [saavn, sc, jam] = await Promise.all([
-    searchSaavn(query, Math.floor(limit * 0.6)).catch(() => []),
-    searchSoundCloud(query, Math.floor(limit * 0.2)).catch(() => []),
-    searchJamendo(query, Math.floor(limit * 0.2)).catch(() => [])
-  ]);
+  const q = query.toLowerCase().trim();
 
-  saavn.forEach(addUnique);
-  sc.forEach(addUnique);
-  jam.forEach(addUnique);
+  // ═══ 1. TELEGRAM LIBRARY (priority — instant, offline) ═══
+  if (tgLibrary.length > 0) {
+    tgLibrary.forEach(item => {
+      const hay = (item.title + ' ' + item.artist).toLowerCase();
+      if (hay.includes(q)) {
+        addUnique({
+          id: 'tg_' + item.fileId,
+          title: item.title,
+          artist: item.artist,
+          cover: item.cover || '',
+          duration: item.duration || 0,
+          source: 'telegram',
+          _fileId: item.fileId
+        });
+      }
+    });
+  }
 
-  return results;
+  // ═══ 2. SAAVN ═══
+  try {
+    const saavn = await searchSaavn(query, Math.floor(limit * 0.6));
+    saavn.forEach(addUnique);
+  } catch (e) {}
+
+  // ═══ 3. SOUNDCLOUD ═══
+  try {
+    const sc = await searchSoundCloud(query, Math.floor(limit * 0.15));
+    sc.forEach(addUnique);
+  } catch (e) {}
+
+  // ═══ 4. JAMENDO ═══
+  try {
+    const jam = await searchJamendo(query, Math.floor(limit * 0.25));
+    jam.forEach(addUnique);
+  } catch (e) {}
+
+  return results.slice(0, limit);
 }
 
-async function workerSearch(query, limit = 25) {
+async function workerSearch(query, limit = 30) {
   return await searchSaavnAndSC(query, limit);
 }
 
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎯 STREAM URL RESOLVER                                          */
+/* ═══════════════════════════════════════════════════════════════ */
 async function workerStreamUrl(id) {
-  if (id.startsWith('saavn_')) return await saavnStreamUrl(id.replace('saavn_', ''));
+  // ═══ SAAVN ═══
+  if (id.startsWith('saavn_')) {
+    return await saavnStreamUrl(id.replace('saavn_', ''));
+  }
+
+  // ═══ TELEGRAM ═══
+  if (id.startsWith('tg_')) {
+    const fileId = id.replace('tg_', '');
+    const cached = getTgUrl(fileId);
+    if (cached) return cached;
+    try {
+      const r = await fetch(`${TG_API}/getFile?file_id=${encodeURIComponent(fileId)}`);
+      if (!r.ok) return null;
+      const data = await r.json();
+      if (!data.ok || !data.result?.file_path) return null;
+      const streamUrl = `https://api.telegram.org/file/bot${TG_BOT_TOKEN}/${data.result.file_path}`;
+      saveTgUrl(fileId, streamUrl);
+      return streamUrl;
+    } catch (e) { return null; }
+  }
+
+  // ═══ YOUTUBE (Piped → Cobalt) ═══
   if (id.startsWith('yt_')) {
     const ytId = id.replace('yt_', '');
     for (const api of PIPED_APIS) {
@@ -345,16 +521,17 @@ async function workerStreamUrl(id) {
         clearTimeout(tm);
         if (!r.ok) continue;
         const data = await r.json();
-        const audioStreams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
-        if (!audioStreams.length) continue;
-        audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        const chosen = audioStreams[0];
+        const streams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
+        if (!streams.length) continue;
+        streams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        const chosen = streams[0];
         return chosen.proxyUrl || chosen.url;
       } catch (e) { continue; }
     }
     const cobaltUrl = await fetchCobaltAudio(ytId);
     if (cobaltUrl) return cobaltUrl;
   }
+
   return null;
 }
 
@@ -647,25 +824,10 @@ function getLanguageQueries(lang) {
 }
 
 function getLanguageArtists(lang) {
-  if (lang === 'punjabi') return [
-    'diljit dosanjh', 'ap dhillon', 'karan aujla', 'sidhu moose wala',
-    'guru randhawa', 'jass manak', 'ammy virk', 'b praak', 'shubh',
-    'divine', 'badshah', 'harrdy sandhu'
-  ];
-  if (lang === 'urdu') return [
-    'atif aslam', 'rahat fateh ali khan', 'nusrat fateh ali khan',
-    'coke studio', 'momina mustehsan', 'ali zafar', 'farhan saeed'
-  ];
-  if (lang === 'english') return [
-    'taylor swift', 'ed sheeran', 'the weeknd', 'drake', 'post malone',
-    'ariana grande', 'billie eilish', 'justin bieber', 'bruno mars',
-    'coldplay', 'imagine dragons', 'dua lipa'
-  ];
-  return [
-    'arijit singh', 'atif aslam', 'shreya ghoshal', 'sonu nigam',
-    'neha kakkar', 'jubin nautiyal', 'darshan raval', 'armaan malik',
-    'sunidhi chauhan', 'kishore kumar', 'lata mangeshkar', 'udit narayan'
-  ];
+  if (lang === 'punjabi') return ['diljit dosanjh', 'ap dhillon', 'karan aujla', 'sidhu moose wala', 'guru randhawa', 'jass manak', 'ammy virk', 'b praak', 'shubh', 'divine', 'badshah', 'harrdy sandhu'];
+  if (lang === 'urdu') return ['atif aslam', 'rahat fateh ali khan', 'nusrat fateh ali khan', 'coke studio', 'momina mustehsan', 'ali zafar', 'farhan saeed'];
+  if (lang === 'english') return ['taylor swift', 'ed sheeran', 'the weeknd', 'drake', 'post malone', 'ariana grande', 'billie eilish', 'justin bieber', 'bruno mars', 'coldplay', 'imagine dragons', 'dua lipa'];
+  return ['arijit singh', 'atif aslam', 'shreya ghoshal', 'sonu nigam', 'neha kakkar', 'jubin nautiyal', 'darshan raval', 'armaan malik', 'sunidhi chauhan', 'kishore kumar', 'lata mangeshkar', 'udit narayan'];
 }
 
 function getVibeKeywords(vibe) {
@@ -683,7 +845,7 @@ function getVibeKeywords(vibe) {
   return map[vibe] || [];
 }
 
-/* ═══════════ CACHE ═══════════ */
+/* ═══════════ CACHE (IndexedDB) ═══════════ */
 function initCacheDB() {
   return new Promise(resolve => {
     try {
@@ -802,10 +964,7 @@ function initEqChain() {
     const freqs = [60, 230, 910, 4000, 14000];
     const filters = freqs.map(f => {
       const b = audioContextNode.createBiquadFilter();
-      b.type = 'peaking';
-      b.frequency.value = f;
-      b.Q.value = 1;
-      b.gain.value = 0;
+      b.type = 'peaking'; b.frequency.value = f; b.Q.value = 1; b.gain.value = 0;
       return b;
     });
     for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
@@ -875,13 +1034,11 @@ function setupMediaSession() {
       navigator.mediaSession.setActionHandler('seekto', d => { if (d.seekTime !== undefined) seekAudioTo(d.seekTime); });
     } catch (e) {}
   }
-
   mainAudio.addEventListener('error', () => {
     showToast('⚠️ Audio error');
     setVisualState(false);
     if (currentPlaylist.length > 1) setTimeout(() => playNext(), 800);
   });
-
   mainAudio.addEventListener('timeupdate', () => {
     if (!mainAudio.duration || isDraggingTimeline) return;
     const pos = mainAudio.currentTime, dur = mainAudio.duration;
@@ -897,12 +1054,10 @@ function setupMediaSession() {
       try { window.AndroidNativeBridge.updateProgress(Math.floor(pos * 1000), Math.floor(dur * 1000)); } catch (e) {}
     }
   });
-
   mainAudio.addEventListener('loadedmetadata', () => {
     const d = document.getElementById('labelTotalDuration');
     if (d) d.innerText = formatClock(mainAudio.duration);
   });
-
   mainAudio.addEventListener('ended', () => {
     setVisualState(false);
     if (currentPlaylist.length > 1) playNext();
@@ -930,9 +1085,7 @@ function updateMediaSessionMetadata(track) {
     try {
       const cover = track.cover || 'vaultify.png';
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.title || 'Unknown',
-        artist: track.artist || 'Unknown',
-        album: 'Vaultify',
+        title: track.title || 'Unknown', artist: track.artist || 'Unknown', album: 'Vaultify',
         artwork: [{ src: cover, sizes: '96x96', type: 'image/jpeg' }, { src: cover, sizes: '256x256', type: 'image/jpeg' }, { src: cover, sizes: '512x512', type: 'image/jpeg' }]
       });
       navigator.mediaSession.playbackState = isPlayingAudio ? 'playing' : 'paused';
@@ -953,10 +1106,7 @@ function setupTimelineDraggableEngine() {
     const c = document.getElementById('labelCurrentTime');
     if (c) c.innerText = formatClock(p * getDur());
   };
-  const getPct = x => {
-    const r = bar.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (x - r.left) / r.width));
-  };
+  const getPct = x => { const r = bar.getBoundingClientRect(); return Math.max(0, Math.min(1, (x - r.left) / r.width)); };
   const doSeek = p => { const d = getDur(); if (d > 0) mainAudio.currentTime = p * d; };
   bar.addEventListener('pointerdown', e => { isDraggingTimeline = true; try { bar.setPointerCapture(e.pointerId); } catch (err) {} updUI(getPct(e.clientX)); });
   bar.addEventListener('pointermove', e => { if (isDraggingTimeline) updUI(getPct(e.clientX)); });
@@ -994,7 +1144,7 @@ function loadQueueFromStorage() {
 }
 
 /* ═══════════ SEARCH ═══════════ */
-async function searchAll(q) { return await workerSearch(q, 25); }
+async function searchAll(q) { return await workerSearch(q, 30); }
 
 async function fetchTrendingSongs(limit = 10) {
   const trending = await workerSearch('arijit singh', limit);
@@ -1030,7 +1180,6 @@ async function playTrack(index, broadcast = true) {
   setTimeout(() => requestHardwareWakeLock(), 0);
   if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; }
 
-  // Aggressive queue fill — 3 triggers
   setTimeout(() => autoExtendQueue(track), 1500);
   setTimeout(() => autoExtendQueue(track), 5000);
   setTimeout(() => autoExtendQueue(track), 12000);
@@ -1080,7 +1229,6 @@ async function playTrack(index, broadcast = true) {
 async function autoplayNext() {
   if (isRepeat) { playTrack(currentTrackIndex); return; }
   if (currentPlaylist.length === 0) return;
-
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if (remaining < QUEUE_TARGET_MIN) {
     const ct = currentPlaylist[currentTrackIndex];
@@ -1091,7 +1239,6 @@ async function autoplayNext() {
       } catch (e) {}
     }
   }
-
   if (isShuffle) currentTrackIndex = Math.floor(Math.random() * currentPlaylist.length);
   else currentTrackIndex = (currentTrackIndex + 1) % currentPlaylist.length;
   playTrack(currentTrackIndex);
@@ -1102,7 +1249,6 @@ async function autoExtendQueue(track) {
   const remaining = currentPlaylist.length - currentTrackIndex - 1;
   if (remaining >= QUEUE_TARGET_MIN) return;
   if (currentPlaylist.length >= QUEUE_MAX_TOTAL) return;
-
   autoMixFetching = true;
   try {
     const related = await fetchRelatedSongs(track);
@@ -1116,7 +1262,6 @@ function addToQueueSilently(tracks) {
   let added = 0;
   const existingIds = new Set(currentPlaylist.map(t => t.id));
   const existingKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
-
   for (const t of tracks) {
     if (currentPlaylist.length >= QUEUE_MAX_TOTAL) break;
     if (existingIds.has(t.id)) continue;
@@ -1129,15 +1274,11 @@ function addToQueueSilently(tracks) {
     existingKeys.add(key);
     added++;
   }
-
-  if (added > 0) {
-    renderHomeQueue();
-    saveQueueToStorage();
-  }
+  if (added > 0) { renderHomeQueue(); saveQueueToStorage(); }
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎯 RELATED — SAME ARTIST + SAME LANGUAGE (Search history blocked) */
+/* 🎯 RELATED — SAME ARTIST + SAME LANGUAGE (Search history block) */
 /* ═══════════════════════════════════════════════════════════════ */
 async function fetchRelatedSongs(seedTrack) {
   if (!seedTrack) return [];
@@ -1148,61 +1289,44 @@ async function fetchRelatedSongs(seedTrack) {
   const seedLang = detectLanguage((seedTrack.title || '') + ' ' + (seedTrack.artist || '') + ' ' + (seedTrack._lang || ''));
   currentLanguage = seedLang;
 
-  // ═══ Existing blockers ═══
   const allExisting = new Set([...currentPlaylist.map(t => t.id), ...queueSeenIds]);
   playbackHistoryList.forEach(t => allExisting.add(t.id));
   allExisting.add(seedTrack.id);
 
   const allKeys = new Set(currentPlaylist.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
 
-  // ═══ SEARCH HISTORY BLOCKER ═══
-  // Ye titles/phrases queue me kabhi nahi aayenge
   const searchHistoryTitles = new Set();
-  searchHistoryList.forEach(q => {
-    if (!q) return;
-    const t = q.toLowerCase().trim();
-    if (t.length > 0) searchHistoryTitles.add(t);
-  });
+  searchHistoryList.forEach(q => { if (q) searchHistoryTitles.add(q.toLowerCase().trim()); });
 
   const results = [];
   const push = (arr) => {
     if (!arr) return;
     for (const t of arr) {
       if (results.length >= QUEUE_EXTEND_BATCH * 2) return;
-
       const titleLower = (t.title || '').toLowerCase().trim();
       const key = titleLower + '|' + (t.artist || '').toLowerCase().trim();
-
-      // Dedupe
       if (allExisting.has(t.id) || allKeys.has(key)) continue;
-
-      // ✅ STRICT LANGUAGE MATCH — only same language
       if (t._lang && t._lang !== seedLang) continue;
-
-      // ═══ SEARCH HISTORY BLOCK ═══
       let blockBySearch = false;
       for (const hist of searchHistoryTitles) {
-        // If seed song title contains search term OR search term contains title
         if (titleLower === hist) { blockBySearch = true; break; }
         if (titleLower.startsWith(hist + ' ')) { blockBySearch = true; break; }
         if (hist.startsWith(titleLower + ' ') && titleLower.length > 5) { blockBySearch = true; break; }
       }
       if (blockBySearch) continue;
-
       allExisting.add(t.id);
       allKeys.add(key);
       results.push(t);
     }
   };
 
-  // ═══ 1. SAAVN SUGGESTIONS (same vibe) ═══
+  // 1. SAAVN SUGGESTIONS
   if (seedTrack.id.startsWith('saavn_') && seedTrack._saavnId) {
     try {
       const r = await fetch(`${SAAVN_DELTA}/api/songs/${seedTrack._saavnId}/suggestions?limit=30`);
       if (r.ok) {
         const data = await r.json();
-        const arr = data.data || [];
-        const mapped = arr.map(s => {
+        const mapped = (data.data || []).map(s => {
           const cover = s.image?.[2]?.url || s.image?.[1]?.url || s.image?.[0]?.url || '';
           const artist = s.artists?.primary?.map(a => a.name).join(', ') || s.primaryArtists || s.singers || 'Unknown';
           return {
@@ -1219,13 +1343,12 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // ═══ 2. SAME ARTIST (primary) ═══
+  // 2. SAME ARTIST
   const cleanArtist = (seedTrack.artist || '')
     .replace(/vevo|official|records|channel|music|topic|entertainment|productions|studios|label/gi, '')
     .replace(/- Topic$/i, '')
     .split(/[&,]/)[0]
-    .replace(/[-_,]/g, ' ')
-    .trim();
+    .replace(/[-_,]/g, ' ').trim();
 
   if (cleanArtist && cleanArtist.length > 2) {
     try {
@@ -1234,7 +1357,7 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // ═══ 3. SAME LANGUAGE POPULAR ═══
+  // 3. SAME LANGUAGE POPULAR
   const langQuery = seedLang === 'punjabi' ? 'punjabi hits' :
                     seedLang === 'urdu' ? 'urdu hits' :
                     seedLang === 'english' ? 'top english hits' : 'hindi hits';
@@ -1245,7 +1368,7 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // ═══ 4. SAME LANGUAGE CURATED ARTISTS ═══
+  // 4. CURATED ARTISTS
   const artists = getLanguageArtists(seedLang);
   const shuffled = artists.slice().sort(() => Math.random() - 0.5);
   for (const a of shuffled.slice(0, 3)) {
@@ -1256,7 +1379,7 @@ async function fetchRelatedSongs(seedTrack) {
     } catch (e) {}
   }
 
-  // ═══ 5. FALLBACK: Same language trending ═══
+  // 5. TRENDING FALLBACK
   if (results.length < QUEUE_EXTEND_BATCH) {
     try {
       const trending = await searchSaavn(langQuery + ' 2026', 20);
@@ -1449,6 +1572,7 @@ function playSingleTrackObject(idEnc, title, artist, cover) {
   const id = decodeURIComponent(idEnc);
   const t = { id, title: decodeURIComponent(title), artist: decodeURIComponent(artist), cover: decodeURIComponent(cover) };
   if (id.startsWith('saavn_')) t._saavnId = id.replace('saavn_', '');
+  if (id.startsWith('tg_')) t._fileId = id.replace('tg_', '');
   currentPlaylist = [t];
   currentTrackIndex = 0;
   queueSeenIds = new Set([t.id]);
@@ -1503,30 +1627,15 @@ async function executeLiveSearch(isAuto = false) {
   l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:24px;margin-bottom:8px"></i><div>Searching...</div>';
   rc.innerHTML = '';
 
-  const saavnResults = await searchSaavnAndSC(q, 25);
+  const found = await workerSearch(q, 30);
   l.style.display = 'none';
 
-  if (saavnResults.length > 0) {
-    renderSearchResults(saavnResults);
-    if (!isAuto) showToast(`✅ ${saavnResults.length} results`);
+  if (found.length > 0) {
+    renderSearchResults(found);
+    if (!isAuto) showToast(`✅ ${found.length} results`);
   } else {
     rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
   }
-
-  setTimeout(async () => {
-    try {
-      const ytResults = await searchYouTube(q, 8);
-      if (ytResults.length > 0) {
-        const combined = [...saavnResults];
-        const seen = new Set(saavnResults.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
-        ytResults.forEach(t => {
-          const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-          if (!seen.has(key)) { seen.add(key); combined.push(t); }
-        });
-        if (combined.length > saavnResults.length) renderSearchResults(combined);
-      }
-    } catch (e) {}
-  }, 500);
 }
 
 function renderSearchResults(tracks) {
@@ -1539,7 +1648,8 @@ function renderSearchResults(tracks) {
     const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
     const sDur = t.duration || 0;
     let srcBadge = '';
-    if (t.source === 'soundcloud') srcBadge = '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>';
+    if (t.source === 'telegram') srcBadge = '<i class="fa-brands fa-telegram" style="color:#229ED9;font-size:12px;margin-left:6px"></i>';
+    else if (t.source === 'soundcloud') srcBadge = '<i class="fa-brands fa-soundcloud" style="color:#ff5500;font-size:11px;margin-left:6px"></i>';
     else if (t.source === 'youtube') srcBadge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
     else if (t.source === 'jamendo') srcBadge = '<span style="font-size:9px;background:#00b8a9;color:#fff;padding:1px 4px;border-radius:3px;margin-left:6px">JAM</span>';
     else if (t.source === 'archive') srcBadge = '<span style="font-size:9px;background:#8b6f47;color:#fff;padding:1px 4px;border-radius:3px;margin-left:6px">IA</span>';
@@ -1553,6 +1663,7 @@ function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, du
   const id = decodeURIComponent(idEnc);
   const t = { id, title: decodeURIComponent(title), artist: decodeURIComponent(artist), cover: decodeURIComponent(cover), duration: duration || 0 };
   if (id.startsWith('saavn_')) t._saavnId = id.replace('saavn_', '');
+  if (id.startsWith('tg_')) t._fileId = id.replace('tg_', '');
   const rD = directEnc ? decodeURIComponent(directEnc) : '';
   if (rD) t._directStream = rD;
 
@@ -1602,27 +1713,11 @@ async function instantSearch(q) {
   const l = document.getElementById('searchLoadingIndicator');
   const rc = document.getElementById('searchResultsContainer');
   if (l) { l.style.display = 'block'; l.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:20px;margin-bottom:6px"></i><div style="font-size:12px">Searching...</div>'; }
-
-  const saavnResults = await searchSaavnAndSC(q, 25);
+  const found = await workerSearch(q, 25);
   if (myId !== liveSearchRequestId) return;
   if (l) l.style.display = 'none';
-  if (saavnResults.length > 0) renderSearchResults(saavnResults);
+  if (found.length > 0) renderSearchResults(found);
   else if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">Kuch nahi mila...</p>';
-
-  setTimeout(async () => {
-    try {
-      const ytResults = await searchYouTube(q, 8);
-      if (ytResults.length > 0 && myId === liveSearchRequestId) {
-        const combined = [...saavnResults];
-        const seen = new Set(saavnResults.map(t => ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim()));
-        ytResults.forEach(t => {
-          const key = ((t.title || '') + '|' + (t.artist || '')).toLowerCase().trim();
-          if (!seen.has(key)) { seen.add(key); combined.push(t); }
-        });
-        if (combined.length > saavnResults.length) renderSearchResults(combined);
-      }
-    } catch (e) {}
-  }, 500);
 }
 
 function renderSearchHistoryTags() {
@@ -1636,18 +1731,14 @@ function renderSearchHistoryTags() {
 
 function clearSearchHistory() { searchHistoryList = []; localStorage.removeItem('vaultify_search_history'); renderSearchHistoryTags(); renderRecommendedSection(); }
 
-/* ═══════════ RECOMMENDED — ONLY Static Trending ═══════════ */
+/* ═══════════ RECOMMENDED (Trending only) ═══════════ */
 async function renderRecommendedSection() {
   const c = document.getElementById('recommendedContainer');
   if (!c) return;
   const found = await fetchTrendingSongs(8);
   const h = document.querySelector('.recommended-header span');
   if (h) h.innerText = 'Trending Now';
-
-  if (found.length === 0) {
-    c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`;
-    return;
-  }
+  if (found.length === 0) { c.innerHTML = `<p style="font-size:11.5px;color:var(--text-sub);text-align:center;padding:10px 0">No suggestions.</p>`; return; }
   c.innerHTML = found.map(t => {
     const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || '');
     const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || '');
@@ -1663,7 +1754,7 @@ async function renderLibrary() {
   if (!c) return;
   if (currentLibraryTab === 'history') {
     if (playbackHistoryList.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No history yet.</p>`; return; }
-    let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><span style="font-size:11px;color:#ef4444;cursor:pointer;padding:4px 8px" onclick="clearRecentlyPlayed()">Clear History</span></div>`;
+    let html = `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-size:11px;color:var(--accent-neon);cursor:pointer;padding:4px 8px" onclick="manualSyncTg()"><i class="fa-solid fa-rotate"></i> Sync TG</span><span style="font-size:11px;color:#ef4444;cursor:pointer;padding:4px 8px" onclick="clearRecentlyPlayed()">Clear History</span></div>`;
     html += playbackHistoryList.map(t => { const sI = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''); const sA = encodeURIComponent(t.artist || ''), sC = encodeURIComponent(t.cover || ''); return `<div class="song-tile" onclick="playSingleTrackObject('${sI}','${sT}','${sA}','${sC}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`; }).join('');
     c.innerHTML = html;
   } else if (currentLibraryTab === 'liked') {
@@ -1688,8 +1779,7 @@ async function playCached(id) {
   const c = await cacheGet(id);
   if (c && c.url) {
     const t = { id, title: c.title, artist: c.artist, cover: c.cover, _directStream: c.url };
-    currentPlaylist = [t];
-    currentTrackIndex = 0;
+    currentPlaylist = [t]; currentTrackIndex = 0;
     queueSeenIds = new Set([t.id]);
     renderHomeQueue();
     playTrack(0);
@@ -1775,7 +1865,6 @@ function pushNotification(n) {
   localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
   renderNotificationCenter();
 }
-
 function renderNotificationCenter() {
   const list = getStoredNotifications();
   const container = document.getElementById('notificationListContainer');
@@ -1785,14 +1874,12 @@ function renderNotificationCenter() {
   if (list.length === 0) { container.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--text-sub);"><i class="fa-solid fa-bell-slash" style="font-size:36px;margin-bottom:12px;opacity:0.5;"></i><p style="font-size:13px;font-weight:600;">No notifications yet</p></div>`; return; }
   container.innerHTML = list.map(n => `<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;margin-bottom:8px;background:${n.unread ? 'rgba(139,92,246,0.12)' : 'rgba(255,255,255,0.03)'};border:1px solid ${n.unread ? 'var(--accent-neon)' : 'var(--border)'};border-radius:14px;"><div style="width:38px;height:38px;border-radius:50%;background:${n.iconColor || 'var(--accent-neon)'}20;display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i class="${n.icon || 'fa-solid fa-bell'}" style="color:${n.iconColor || 'var(--accent-neon)'};font-size:16px;"></i></div><div style="flex:1;min-width:0;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;"><span style="font-size:13px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%;">${escapeHtml(n.title)}</span><span style="font-size:10px;color:var(--text-sub);flex-shrink:0;margin-left:8px;">${n.time}</span></div><div style="font-size:11.5px;color:var(--text-sub);line-height:1.4;word-break:break-word;">${escapeHtml(n.message)}</div></div>${n.unread ? '<div style="width:8px;height:8px;border-radius:50%;background:var(--accent-neon);flex-shrink:0;margin-top:6px;"></div>' : ''}</div>`).join('');
 }
-
 function openNotificationModal() {
   const l = getStoredNotifications(); l.forEach(n => n.unread = false);
   localStorage.setItem('vaultify_notifications_list', JSON.stringify(l));
   renderNotificationCenter();
   openModal('modalNotifications');
 }
-
 function clearAllNotifications() { localStorage.removeItem('vaultify_notifications_list'); renderNotificationCenter(); showToast('Cleared!'); }
 
 /* ═══════════ PERMISSIONS ═══════════ */
@@ -1814,7 +1901,6 @@ function checkPermissionsStatus() {
   if (missing.length > 0 && banner && text) { text.innerText = `${missing.join(' & ')} permission needed. Tap to enable.`; banner.classList.add('show'); }
   else if (banner) banner.classList.remove('show');
 }
-
 function handlePermissionBannerClick() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.requestPermissions) window.AndroidNativeBridge.requestPermissions(); else showToast('Open Profile > Permissions'); }
 function requestPermsFromNative() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.requestPermissions) window.AndroidNativeBridge.requestPermissions(); setTimeout(checkPermissionsStatus, 800); }
 function openAppSettingsNative() { if (window.AndroidNativeBridge && window.AndroidNativeBridge.openAppSettings) window.AndroidNativeBridge.openAppSettings(); else showToast('Settings not available'); }
@@ -1831,44 +1917,27 @@ function initEmojiRunner() {
   const i = document.getElementById('notchRunnerIcon');
   if (!i) return;
   i.classList.remove('mode-flow', 'mode-mix');
-  i.style.left = '';
-  i.style.transform = '';
-  i.style.animation = '';
-  i.innerText = activeEmoji;
-
-  if (emojiMode === 'mix') {
-    i.classList.add('mode-mix');
-    animateMixEmoji();
-  } else {
-    i.classList.add('mode-flow');
-    if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; }
-  }
-
-  const flowBtn = document.getElementById('modeFlowBtn');
-  const mixBtn = document.getElementById('modeMixBtn');
-  if (flowBtn && mixBtn) {
+  i.style.left = ''; i.style.transform = ''; i.style.animation = ''; i.innerText = activeEmoji;
+  if (emojiMode === 'mix') { i.classList.add('mode-mix'); animateMixEmoji(); }
+  else { i.classList.add('mode-flow'); if (mixRafId) { cancelAnimationFrame(mixRafId); mixRafId = null; } }
+  const fb = document.getElementById('modeFlowBtn'); const mb = document.getElementById('modeMixBtn');
+  if (fb && mb) {
     if (emojiMode === 'flow') {
-      flowBtn.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))';
-      flowBtn.style.color = '#020005';
-      mixBtn.style.background = 'rgba(255,255,255,.08)';
-      mixBtn.style.color = 'var(--text-sub)';
+      fb.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))'; fb.style.color = '#020005';
+      mb.style.background = 'rgba(255,255,255,.08)'; mb.style.color = 'var(--text-sub)';
     } else {
-      mixBtn.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))';
-      mixBtn.style.color = '#020005';
-      flowBtn.style.background = 'rgba(255,255,255,.08)';
-      flowBtn.style.color = 'var(--text-sub)';
+      mb.style.background = 'linear-gradient(135deg,var(--accent-neon),var(--accent))'; mb.style.color = '#020005';
+      fb.style.background = 'rgba(255,255,255,.08)'; fb.style.color = 'var(--text-sub)';
     }
   }
 }
-
 function animateMixEmoji() {
   if (mixRafId) cancelAnimationFrame(mixRafId);
   const i = document.getElementById('notchRunnerIcon');
   const n = document.querySelector('.notch-island');
   if (!i || !n) return;
   let p = 0, d = 1;
-  i.style.animation = 'none';
-  i.style.left = '8px';
+  i.style.animation = 'none'; i.style.left = '8px';
   const step = () => {
     if (emojiMode !== 'mix') { mixRafId = null; return; }
     const mx = (n.clientWidth || 290) - 40;
@@ -1880,7 +1949,6 @@ function animateMixEmoji() {
   };
   mixRafId = requestAnimationFrame(step);
 }
-
 function cycleEmoji() {
   const l = emojiList.length > 0 ? emojiList : ['🐱'];
   currentEmojiIndex = (currentEmojiIndex + 1) % l.length;
@@ -1890,7 +1958,6 @@ function cycleEmoji() {
   i.style.filter = 'drop-shadow(0 0 10px var(--accent-neon))';
   setTimeout(() => { i.style.filter = ''; }, 200);
 }
-
 function initEmojiPicker() {
   const r = document.getElementById('emojiPickerRow');
   if (!r) return;
@@ -1907,7 +1974,6 @@ function initEmojiPicker() {
     });
   });
 }
-
 function addCustomEmoji() {
   const i = document.getElementById('customEmojiInput');
   const v = i.value.trim();
@@ -1919,7 +1985,6 @@ function addCustomEmoji() {
   initEmojiPicker();
   showToast(`Added: ${v}`);
 }
-
 function setEmojiMode(mode) {
   emojiMode = mode;
   localStorage.setItem('vaultify_emoji_mode', mode);
@@ -1927,7 +1992,6 @@ function setEmojiMode(mode) {
   initEmojiRunner();
   showToast(mode === 'flow' ? 'Flow mode' : 'Mix mode');
 }
-
 function toggleAmbientMotion() { const e = document.getElementById('gradientFlowBg'); const b = document.getElementById('gradientToggleBtn'); if (!e || !b) return; const o = e.classList.toggle('disabled'); b.innerText = o ? 'Disabled' : 'Enabled'; showToast(`Motion ${o ? 'off' : 'on'}`); }
 function toggleRunnerVisibility() { const i = document.getElementById('notchRunnerIcon'); const b = document.getElementById('runnerToggleBtn'); if (!i || !b) return; const h = i.style.display === 'none'; i.style.display = h ? '' : 'none'; b.innerText = h ? 'Enabled' : 'Disabled'; showToast(`Runner ${h ? 'on' : 'off'}`); }
 
@@ -1943,7 +2007,6 @@ function applyThemeScheme(c) {
   }
   showToast(`Theme changed!`);
 }
-
 (function restoreTheme() { const saved = localStorage.getItem('vaultify_theme'); if (saved && saved !== 'theme-violet') document.body.classList.add(saved); })();
 
 /* ═══════════ IP COUNTER ═══════════ */
@@ -1958,13 +2021,11 @@ async function getPublicIP() {
     return d.ip;
   } catch (e) { return null; }
 }
-
 function getDeviceId() {
   let id = localStorage.getItem('vaultify_device_id');
   if (!id) { id = 'dev_' + Math.random().toString(36).substr(2, 16) + '_' + Date.now(); localStorage.setItem('vaultify_device_id', id); }
   return id;
 }
-
 async function initIPCounter() {
   if (!isFirebaseReady()) return;
   try {
@@ -1990,12 +2051,10 @@ async function initIPCounter() {
     renderIPStats(data);
   } catch (e) {}
 }
-
 function listenIPStats(callback) {
   if (!isFirebaseReady()) return;
   try { firestoreDB.collection('app_config').doc('user_ips').onSnapshot(doc => { if (doc.exists && typeof callback === 'function') callback(doc.data()); }); } catch (e) {}
 }
-
 function renderIPStats(stats) {
   const el = document.getElementById('ipStatsDisplay');
   if (el && stats) {
@@ -2006,10 +2065,7 @@ function renderIPStats(stats) {
     </div>`;
   }
   const cnt = document.getElementById('certUserCount');
-  if (cnt && stats) {
-    const total = stats.activeDevices24h || stats.totalDevices || 1;
-    cnt.innerText = `${total} User${total > 1 ? 's' : ''}`;
-  }
+  if (cnt && stats) { const t = stats.activeDevices24h || stats.totalDevices || 1; cnt.innerText = `${t} User${t > 1 ? 's' : ''}`; }
 }
 
 /* ═══════════ PLAYBACK SAVE ═══════════ */
@@ -2021,7 +2077,6 @@ async function savePlaybackState() {
     localStorage.setItem('vaultify_playback_state', JSON.stringify({ wasPlaying: isPlayingAudio, lastTrackId: t.id, lastTrackTitle: t.title, lastTrackArtist: t.artist, lastTrackCover: t.cover, lastPosition: Math.floor(pos * 1000), lastIndex: currentTrackIndex, playlistJson: JSON.stringify(currentPlaylist.slice(0, 50)), timestamp: Date.now() }));
   } catch (e) {}
 }
-
 setInterval(() => { if (!isPlayingAudio) return; _lastSaveTick += 1000; if (_lastSaveTick >= 10000) { _lastSaveTick = 0; savePlaybackState(); } }, 1000);
 
 /* ═══════════ EQ ═══════════ */
@@ -2029,9 +2084,7 @@ setTimeout(() => {
   ['eq60', 'eq230', 'eq910', 'eq4k', 'eq14k'].forEach((id, i) => {
     const el = document.getElementById(id);
     if (el) {
-      el.addEventListener('input', () => {
-        if (eqNodes && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0;
-      });
+      el.addEventListener('input', () => { if (eqNodes && eqNodes.filters[i]) eqNodes.filters[i].gain.value = parseFloat(el.value) || 0; });
       el.addEventListener('change', saveEqToStorage);
     }
   });
@@ -2058,15 +2111,9 @@ function updateCertLiveDateTime() {
     timeEl.textContent = hh + ':' + mi + ':' + ss + ' ' + ampm;
   } catch (e) {}
 }
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', updateCertLiveDateTime);
-} else {
-  updateCertLiveDateTime();
-}
-setTimeout(updateCertLiveDateTime, 100);
-setTimeout(updateCertLiveDateTime, 500);
-setTimeout(updateCertLiveDateTime, 1500);
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', updateCertLiveDateTime);
+else updateCertLiveDateTime();
+setTimeout(updateCertLiveDateTime, 100); setTimeout(updateCertLiveDateTime, 500); setTimeout(updateCertLiveDateTime, 1500);
 setInterval(updateCertLiveDateTime, 1000);
 
 /* ═══════════ BOOT ═══════════ */
@@ -2077,15 +2124,8 @@ window.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     const i = document.getElementById('appIntroScreen');
     if (i) {
-      i.classList.add('fade-out');
-      i.style.opacity = '0';
-      i.style.transition = 'opacity 0.6s ease';
-      setTimeout(() => {
-        i.style.display = 'none';
-        i.style.visibility = 'hidden';
-        i.style.pointerEvents = 'none';
-        i.style.zIndex = '-1';
-      }, 700);
+      i.classList.add('fade-out'); i.style.opacity = '0'; i.style.transition = 'opacity 0.6s ease';
+      setTimeout(() => { i.style.display = 'none'; i.style.visibility = 'hidden'; i.style.pointerEvents = 'none'; i.style.zIndex = '-1'; }, 700);
     }
   }, 1500);
 
@@ -2100,14 +2140,20 @@ window.addEventListener('DOMContentLoaded', () => {
   renderSearchHistoryTags();
   renderNotificationCenter();
 
+  // ═══ TELEGRAM AUTO-SYNC ═══
+  autoSyncTgLibrary();
+  // Periodic sync every 30 min
+  setInterval(() => {
+    if (navigator.onLine && document.visibilityState === 'visible') {
+      syncTgLibrary(false).catch(() => {});
+    }
+  }, 30 * 60 * 1000);
+
   setTimeout(initEqChain, 800);
   setTimeout(loadEqFromStorage, 1500);
-
   setTimeout(() => { initEmojiRunner(); initEmojiPicker(); setEmojiMode(emojiMode); }, 500);
-
   setTimeout(checkPermissionsStatus, 800);
   setInterval(checkPermissionsStatus, 5000);
-
   setTimeout(() => { if (isFirebaseReady()) { initIPCounter(); listenIPStats(renderIPStats); } }, 3000);
 
   setTimeout(async () => {
@@ -2139,7 +2185,6 @@ window.addEventListener('DOMContentLoaded', () => {
     }
     history.pushState(null, '', location.href);
   });
-
   history.pushState(null, '', location.href);
 });
 
@@ -2173,5 +2218,6 @@ Object.assign(window, {
   applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
   prefetchStream, checkWorker, workerSearch, workerStreamUrl, fetchCobaltAudio,
   searchSaavn, searchSoundCloud, searchJamendo, searchInternetArchive, searchYouTube,
-  saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime
+  saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
+  syncTgLibrary, manualSyncTg, autoSyncTgLibrary
 });
