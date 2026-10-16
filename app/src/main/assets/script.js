@@ -1,7 +1,8 @@
-/* VAULTIFY v19 FINAL */
+/* VAULTIFY v20 FINAL — Auto-fallback forward */
 
-/* ✅ TG group for forwarding (not user DM) */
-const TG_OWNER_CHAT_ID = '-5482194820';
+const TG_OWNER_CHAT_ID = '-5482194820';       // Group
+const TG_OWNER_DM_ID = '5969156236';           // ✅ DM fallback
+let TG_ACTIVE_FORWARD_CHAT = null;
 
 const TG_BOTS = [
   '8927248625:AAGBFepeiq3jutY4XQjn7qxZu43a_x41YNw',
@@ -18,13 +19,13 @@ const TG_API = TG_BOTS.length > 0 ? `https://api.telegram.org/bot${TG_BOTS[0]}` 
 const SHARED_MAIN_DOC = ['vaultify_shared', 'library_main'];
 const SHARED_CHUNK_COL = ['vaultify_shared', 'library_main', 'chunks'];
 const CHUNK_SIZE = 100;
-const SHARED_VERSION_KEY = 'vaultify_shared_version_v2';
+const SHARED_VERSION_KEY = 'vaultify_shared_version_v3';
 const TG_INITIAL_MAX_ID = 5000;
 const TG_LOOP_INTERVAL = 10 * 60 * 1000;
 const TG_SYNC_INTERVAL = 60 * 60 * 1000;
 const SHARED_REFRESH_INTERVAL = 5 * 60 * 1000;
 
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -34,13 +35,13 @@ const JAMENDO_CLIENT_ID = '7d7152ad';
 const PIPED_APIS = ['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.reallyaweso.me','https://piped-api.lunar.icu','https://api.piped.projectsegfau.lt'];
 const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be','https://invidious.privacyredirect.com','https://iv.melmac.space'];
 
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v15';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v15';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v14';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v16';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v16';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v15';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v12';
-const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v11';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v13';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v12';
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let tgLibrary = [], tgSyncTimer = null, lyricsCache = {};
@@ -259,13 +260,11 @@ function startBackgroundScan(forceFull=false){
   if(!forceFull && lastScanned>=TG_INITIAL_MAX_ID) return;
   const startId = lastScanned + 1;
   if(startId > TG_INITIAL_MAX_ID) return;
-  console.log(`🚀 Scan from ${startId} to ${TG_INITIAL_MAX_ID}`);
   showToast(`🚀 Scanning ${startId} → ${TG_INITIAL_MAX_ID}`);
   backgroundScanTimer = setInterval(async()=>{
     const last = parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0');
     if(last >= TG_INITIAL_MAX_ID){
       clearInterval(backgroundScanTimer); backgroundScanTimer=null;
-      console.log(`✅ Scan done. Total: ${tgLibrary.length}`);
       showToast(`✅ Scan complete (${tgLibrary.length} songs)`);
       saveLocalLibrary();
       if(tgLibrary.length>0) await publishSharedLibrary().catch(()=>{});
@@ -303,28 +302,41 @@ async function scanRound(startId, endId){
   return { added };
 }
 
-/* ✅ forwardMessage — FULL message returns */
+/* ✅ AUTO-FALLBACK: group → DM */
 async function processIdWithBot(token, id){
   const api = `https://api.telegram.org/bot${token}`;
-  try{
-    const r = await fetch(`${api}/forwardMessage`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, from_chat_id: TG_CHANNEL_ID, message_id: id, disable_notification: true })
-    });
-    const d = await r.json();
-    if(d.error_code === 429){
-      const retry = (d.parameters?.retry_after || 3) + 1;
-      await new Promise(res => setTimeout(res, retry*1000));
-      return { ok:false, added:false };
-    }
-    if(d.ok && d.result){
-      fetch(`${api}/deleteMessage`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, message_id: d.result.message_id }) }).catch(()=>{});
-      const songAdded = await processTgMessage(d.result, id);
-      return { ok:true, added:songAdded };
-    }
-    return { ok:false, added:false };
-  }catch(e){ return { ok:false, added:false }; }
+  const tryOrder = TG_ACTIVE_FORWARD_CHAT
+    ? [TG_ACTIVE_FORWARD_CHAT, TG_OWNER_CHAT_ID, TG_OWNER_DM_ID]
+    : [TG_OWNER_CHAT_ID, TG_OWNER_DM_ID];
+
+  for(const targetChat of tryOrder){
+    try{
+      const r = await fetch(`${api}/forwardMessage`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ chat_id: targetChat, from_chat_id: TG_CHANNEL_ID, message_id: id, disable_notification: true })
+      });
+      const d = await r.json();
+
+      if(d.error_code === 429){
+        const retry = (d.parameters?.retry_after || 3) + 1;
+        await new Promise(res => setTimeout(res, retry*1000));
+        return { ok:false, added:false };
+      }
+
+      if(d.ok && d.result){
+        if(!TG_ACTIVE_FORWARD_CHAT){
+          TG_ACTIVE_FORWARD_CHAT = targetChat;
+          console.log(`✅ Forward target locked: ${targetChat}`);
+        }
+        fetch(`${api}/deleteMessage`, { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ chat_id: targetChat, message_id: d.result.message_id }) }).catch(()=>{});
+        const songAdded = await processTgMessage(d.result, id);
+        return { ok:true, added:songAdded };
+      }
+      console.log(`❌ Forward ${targetChat}: ${d.description||d.error_code}`);
+    }catch(e){ console.log(`⚠️ ${e.message}`); }
+  }
+  return { ok:false, added:false };
 }
 
 async function processTgMessage(msg, msgId){
@@ -596,7 +608,6 @@ async function importYouTubePlaylist(url){
   const yt=matched.filter(t=>t.source==='youtube').length;
   showToast(`✅ ${tg} TG + ${sa} Saavn + ${yt} YT`);
 
-  /* ✅ AUTO-SAVE playlist */
   playlists.push({ id: Date.now(), name: playlist.name, songs: matched.slice(), created: Date.now(), cover: playlist.thumbnail || (matched[0]?.cover || '') });
   savePlaylists();
   renderLibrary();
@@ -1436,7 +1447,7 @@ else updateCertLiveDateTime();
 setInterval(updateCertLiveDateTime,1000);
 
 async function adminForcePublish(){ if(!isAdminDevice()) return showToast('❌ Admin only'); if(tgLibrary.length===0) return showToast('❌ Empty'); showToast('☁️ Publishing...'); const ok=await publishSharedLibrary(); showToast(ok?`✅ Published ${tgLibrary.length}`:'❌ Failed'); }
-function adminShowStats(){ const stats={isAdmin:isAdminDevice(),songs:tgLibrary.length,bots:TG_BOTS.length,lastScanned:parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0'),version:localStorage.getItem(SHARED_VERSION_KEY)||'0'}; console.log('📊 Stats:',stats); return stats; }
+function adminShowStats(){ const stats={isAdmin:isAdminDevice(),songs:tgLibrary.length,bots:TG_BOTS.length,lastScanned:parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0'),version:localStorage.getItem(SHARED_VERSION_KEY)||'0',activeChat:TG_ACTIVE_FORWARD_CHAT}; console.log('📊 Stats:',stats); return stats; }
 async function adminResetShared(){ if(!isAdminDevice()) return; if(!confirm('Reset shared library?')) return; try{ const oldSnap=await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get(); const batch=firestoreDB.batch(); oldSnap.forEach(d=>batch.delete(d.ref)); batch.delete(firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1])); await batch.commit(); localStorage.removeItem(SHARED_VERSION_KEY); showToast('✅ Reset'); }catch(e){ showToast('❌ Failed'); } }
 
 window.addEventListener('DOMContentLoaded',()=>{
