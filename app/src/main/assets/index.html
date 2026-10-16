@@ -7,12 +7,23 @@
 <meta name="theme-color" content="#8b5cf6" />
 <title>Vaultify</title>
 
-<!-- 🐛 ERUDA — Mobile Console -->
+<!-- 🐛 ERUDA MOBILE CONSOLE -->
 <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
 <script>
   eruda.init();
   setTimeout(() => { try { eruda.show(); } catch(e){} }, 2000);
 </script>
+<style>
+  .eruda-entry-btn {
+    bottom: 200px !important;
+    right: 12px !important;
+    z-index: 999999 !important;
+    transform: scale(1.5) !important;
+    background: linear-gradient(135deg, #7c3aed, #a855f7) !important;
+    box-shadow: 0 4px 24px rgba(139,92,246,.9), 0 0 40px rgba(168,85,247,.6) !important;
+    border-radius: 50% !important;
+  }
+</style>
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
 <link rel="stylesheet" href="./style.css" />
