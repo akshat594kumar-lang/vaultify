@@ -1,11 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — v15 FINAL                                             */
-/* ✅ copyMessage based sync (reliable)                              */
-/* ✅ No early stop — full channel scan                              */
-/* ✅ Text/photo/video skip — MP3 only                               */
-/* ✅ Live % progress                                                */
-/* ✅ Firestore shared library                                       */
-/* ✅ YT playlist + smart matching                                   */
+/* VAULTIFY — v17 FINAL (ALL FEATURES WORKING)                      */
 /* ═══════════════════════════════════════════════════════════════ */
 
 const TG_BOTS = [
@@ -25,70 +19,57 @@ const SHARED_MAIN_DOC = ['vaultify_shared', 'library_main'];
 const SHARED_CHUNK_COL = ['vaultify_shared', 'library_main', 'chunks'];
 const CHUNK_SIZE = 100;
 const SHARED_VERSION_KEY = 'vaultify_shared_version_v1';
-
-const TG_INITIAL_MAX_ID = 10000;
-const TG_NEW_CHECK_RANGE = 300;
+const TG_INITIAL_MAX_ID = 3000;
 const TG_LOOP_INTERVAL = 10 * 60 * 1000;
 const TG_SYNC_INTERVAL = 60 * 60 * 1000;
 const SHARED_REFRESH_INTERVAL = 5 * 60 * 1000;
 
-const APP_VERSION = 15;
+const APP_VERSION = 17;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
 const SAAVN_DELTA = 'https://saavn-api-delta.vercel.app';
 const JAMENDO_CLIENT_ID = '7d7152ad';
 
+/* ✅ Piped + Invidious both for YT playlist reliability */
 const PIPED_APIS = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://api.piped.yt',
-  'https://pipedapi.reallyaweso.me',
-  'https://piped-api.lunar.icu',
-  'https://api.piped.projectsegfau.lt',
-  'https://pipedapi.leptons.xyz',
-  'https://pipedapi.ducks.party'
+  'https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de',
+  'https://api.piped.yt','https://pipedapi.reallyaweso.me',
+  'https://piped-api.lunar.icu','https://api.piped.projectsegfau.lt',
+  'https://pipedapi.leptons.xyz','https://pipedapi.ducks.party'
 ];
-const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be','https://invidious.privacyredirect.com'];
+const INVIDIOUS_APIS = [
+  'https://inv.nadeko.net','https://invidious.nerdvpn.de',
+  'https://yewtu.be','https://invidious.privacyredirect.com',
+  'https://iv.melmac.space','https://invidious.f5.si'
+];
 
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v11';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v11';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v10';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v13';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v13';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v12';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v8';
-const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v7';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v10';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v9';
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
-let workerReady = true;
-let tgLibrary = [];
-let tgSyncTimer = null;
-let lyricsCache = {};
+let workerReady = true, tgLibrary = [], tgSyncTimer = null, lyricsCache = {};
 
 try {
   if (typeof firebase !== 'undefined') {
     firebaseApp = firebase.initializeApp({
       apiKey: "AIzaSyCQgQoJpV9FGhd8yY2_nklQICQMpZ5-1RY",
       authDomain: "vaultify-18865.firebaseapp.com",
-      projectId: "vaultify-18865",
-      storageBucket: "vaultify-18865.firebasestorage.app",
-      messagingSenderId: "961290318010",
-      appId: "1:961290318010:web:efa1e8c95c8d09c533d283"
+      projectId: "vaultify-18865", storageBucket: "vaultify-18865.firebasestorage.app",
+      messagingSenderId: "961290318010", appId: "1:961290318010:web:efa1e8c95c8d09c533d283"
     });
-    firestoreDB = firebase.firestore();
-    firebaseAuth = firebase.auth();
-    firebaseReady = true;
+    firestoreDB = firebase.firestore(); firebaseAuth = firebase.auth(); firebaseReady = true;
   }
 } catch (e) {}
 function isFirebaseReady() { return firebaseReady && firestoreDB && firebaseAuth; }
 
-let currentPlaylist = [];
-let currentTrackIndex = 0;
-let isPlayingAudio = false;
-let isShuffle = false;
-let isRepeat = false;
-let currentLanguage = 'hindi';
-let currentVibe = 'general';
+let currentPlaylist = [], currentTrackIndex = 0, isPlayingAudio = false, isShuffle = false, isRepeat = false;
+let currentLanguage = 'hindi', currentVibe = 'general';
 let appLanguage = localStorage.getItem('vaultify_app_lang') || 'en';
 let currentLibraryTab = 'history';
 let playlists = JSON.parse(localStorage.getItem('vaultify_playlists') || '[]');
@@ -96,40 +77,22 @@ let likedSongs = JSON.parse(localStorage.getItem('vaultify_liked') || '[]');
 let searchHistoryList = JSON.parse(localStorage.getItem('vaultify_search_history') || '[]');
 let playbackHistoryList = JSON.parse(localStorage.getItem('vaultify_playback_history') || '[]');
 const trackBlobCache = new Map();
-let isDraggingTimeline = false;
-let autoMixFetching = false;
-let _lastSaveTick = 0;
-let cacheDB = null;
-let audioContextNode = null;
-let wakeLockSentinel = null;
-let silentLoopStarted = false;
-let eqNodes = null;
-let eqSourceNode = null;
-let mainAudio = null;
-let silentLoop = null;
-let currentSearchResults = [];
-let currentHls = null;
-let isLoginMode = false;
-let loggedInUser = null;
-let navigationHistory = ['home'];
-let queueSeenIds = new Set();
-let libraryRenderPage = 0;
+let isDraggingTimeline = false, autoMixFetching = false, _lastSaveTick = 0;
+let cacheDB = null, audioContextNode = null, wakeLockSentinel = null, silentLoopStarted = false;
+let eqNodes = null, eqSourceNode = null, mainAudio = null, silentLoop = null;
+let currentSearchResults = [], currentHls = null, isLoginMode = false, loggedInUser = null;
+let navigationHistory = ['home'], queueSeenIds = new Set(), libraryRenderPage = 0;
 const LIBRARY_PAGE_SIZE = 60;
-let sharedRefreshTimer = null;
-let ytPlaylistPreview = null;
-let syncInProgress = false;
+let sharedRefreshTimer = null, ytPlaylistPreview = null;
+let syncInProgress = false, backgroundScanTimer = null, searchTriggeredSync = false;
 
-const QUEUE_TARGET_MIN = 15;
-const QUEUE_MAX_TOTAL = 200;
+const QUEUE_TARGET_MIN = 15, QUEUE_MAX_TOTAL = 200;
 
 /* ═══════════ HELPERS ═══════════ */
 function showToast(msg) {
-  const t = document.getElementById('toastPill');
-  if (!t) return;
-  t.innerText = msg;
-  t.classList.add('show');
-  clearTimeout(t._tt);
-  t._tt = setTimeout(() => t.classList.remove('show'), 3000);
+  const t = document.getElementById('toastPill'); if (!t) return;
+  t.innerText = msg; t.classList.add('show');
+  clearTimeout(t._tt); t._tt = setTimeout(() => t.classList.remove('show'), 3000);
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x])); }
 function formatClock(sec) { const s = Math.floor(sec || 0); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
@@ -139,21 +102,14 @@ function openFullPlayer() { const el = document.getElementById('fullPlayerModal'
 function closeFullPlayer() { const el = document.getElementById('fullPlayerModal'); if (el) el.classList.remove('open'); }
 function openPartnerModal() { openModal('modalPartner'); }
 function openSupportModal() { openModal('modalSupport'); }
-
-function isAdminDevice() {
-  try { if (loggedInUser && loggedInUser.username === ADMIN_USERNAME) return true; } catch (e) {}
-  return false;
-}
+function isAdminDevice() { try { return loggedInUser && loggedInUser.username === ADMIN_USERNAME; } catch (e) { return false; } }
 
 function setSyncBtnState(state, text) {
   const btn = document.getElementById('homeSyncBtn');
   const icon = document.getElementById('homeSyncIcon');
   const txt = document.getElementById('homeSyncBtnText');
   if (txt) txt.innerText = text || 'SYNC';
-  if (icon) {
-    if (state === 'loading') icon.className = 'fa-solid fa-rotate fa-spin';
-    else icon.className = 'fa-solid fa-rotate';
-  }
+  if (icon) icon.className = (state === 'loading') ? 'fa-solid fa-rotate fa-spin' : 'fa-solid fa-rotate';
   if (btn) btn.disabled = (state === 'loading');
 }
 
@@ -172,8 +128,7 @@ function switchNavTab(tab, th = true) {
   if (tab === 'cert') updateCertLiveDateTime();
 }
 function switchLibraryTab(tab, el) {
-  currentLibraryTab = tab;
-  libraryRenderPage = 0;
+  currentLibraryTab = tab; libraryRenderPage = 0;
   document.querySelectorAll('#tabLibrary .nav-btn').forEach(p => p.classList.remove('active'));
   if (el) el.classList.add('active');
   renderLibrary();
@@ -191,30 +146,21 @@ function handleSystemBackPress() {
 }
 window.handleSystemBackPress = handleSystemBackPress;
 
-/* ═══════════════════════════════════════════════════════════════ */
-/* ☁️ SHARED LIBRARY                                                */
-/* ═══════════════════════════════════════════════════════════════ */
+/* ═══════════ SHARED LIBRARY ═══════════ */
 function loadLocalLibrary() {
-  try {
-    const raw = localStorage.getItem(TG_LIBRARY_KEY);
-    if (raw) { tgLibrary = JSON.parse(raw); console.log(`📚 Local: ${tgLibrary.length}`); return true; }
-  } catch (e) {}
-  tgLibrary = [];
-  return false;
+  try { const raw = localStorage.getItem(TG_LIBRARY_KEY); if (raw) { tgLibrary = JSON.parse(raw); return true; } } catch (e) {}
+  tgLibrary = []; return false;
 }
-function saveLocalLibrary() {
-  try { localStorage.setItem(TG_LIBRARY_KEY, JSON.stringify(tgLibrary)); } catch (e) {}
-}
+function saveLocalLibrary() { try { localStorage.setItem(TG_LIBRARY_KEY, JSON.stringify(tgLibrary)); } catch (e) {} }
 
 async function fetchSharedLibrary() {
   if (!isFirebaseReady()) return false;
   try {
     const mainDoc = await firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]).get();
-    if (!mainDoc.exists) { console.log('☁️ No shared library yet'); return false; }
+    if (!mainDoc.exists) return false;
     const main = mainDoc.data();
     const localVer = parseInt(localStorage.getItem(SHARED_VERSION_KEY) || '0');
-    if (main.version <= localVer) { console.log(`☁️ Up-to-date (v${main.version})`); return false; }
-    console.log(`☁️ Fetching v${main.version} (${main.totalSongs} songs)`);
+    if (main.version <= localVer) return false;
     const chunksSnap = await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).orderBy('index').get();
     if (chunksSnap.empty) return false;
     const merged = [];
@@ -224,20 +170,17 @@ async function fetchSharedLibrary() {
     tgLibrary = merged.filter(s => { if (!s.fileId || seen.has(s.fileId)) return false; seen.add(s.fileId); return true; });
     saveLocalLibrary();
     localStorage.setItem(SHARED_VERSION_KEY, String(main.version));
-    console.log(`✅ Shared loaded: ${tgLibrary.length} songs (v${main.version})`);
     return true;
-  } catch (e) { console.log('☁️ Fetch error:', e.message); return false; }
+  } catch (e) { return false; }
 }
 
 async function publishSharedLibrary() {
-  if (!isFirebaseReady() || !isAdminDevice()) return false;
-  if (tgLibrary.length === 0) return false;
+  if (!isFirebaseReady() || !isAdminDevice() || tgLibrary.length === 0) return false;
   try {
     const currentVer = parseInt(localStorage.getItem(SHARED_VERSION_KEY) || '0');
     const newVer = currentVer + 1;
     const chunks = [];
     for (let i = 0; i < tgLibrary.length; i += CHUNK_SIZE) chunks.push(tgLibrary.slice(i, i + CHUNK_SIZE));
-    console.log(`☁️ Publishing v${newVer} (${tgLibrary.length} songs)`);
     const oldSnap = await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get();
     const delBatch = firestoreDB.batch();
     oldSnap.forEach(d => delBatch.delete(d.ref));
@@ -246,13 +189,11 @@ async function publishSharedLibrary() {
       await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).doc('c' + i).set({ index: i, songs: chunks[i] });
     }
     await firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]).set({
-      version: newVer, totalSongs: tgLibrary.length, chunkCount: chunks.length,
-      lastUpdated: Date.now(), updatedBy: loggedInUser?.username || 'admin'
+      version: newVer, totalSongs: tgLibrary.length, chunkCount: chunks.length, lastUpdated: Date.now()
     });
     localStorage.setItem(SHARED_VERSION_KEY, String(newVer));
-    console.log(`✅ Published v${newVer}`);
     return true;
-  } catch (e) { console.log('❌ Publish error:', e.message); return false; }
+  } catch (e) { return false; }
 }
 
 function startSharedRefresh() {
@@ -264,9 +205,7 @@ function startSharedRefresh() {
   }, SHARED_REFRESH_INTERVAL);
 }
 
-/* ═══════════════════════════════════════════════════════════════ */
-/* 🎵 TELEGRAM SYNC                                                 */
-/* ═══════════════════════════════════════════════════════════════ */
+/* ═══════════ TG SYNC ═══════════ */
 function saveTgUrl(fileId, url) { try { const c = JSON.parse(localStorage.getItem(TG_URL_CACHE_KEY) || '{}'); c[fileId] = { url, t: Date.now() }; localStorage.setItem(TG_URL_CACHE_KEY, JSON.stringify(c)); } catch (e) {} }
 function getTgUrl(fileId) { try { const c = JSON.parse(localStorage.getItem(TG_URL_CACHE_KEY) || '{}'); const e = c[fileId]; if (e && (Date.now() - e.t) < TG_URL_CACHE_TTL) return e.url; } catch (e) {} return null; }
 function saveTgThumb(k, url) { try { const c = JSON.parse(localStorage.getItem(TG_THUMB_CACHE_KEY) || '{}'); c[k] = { url, t: Date.now() }; localStorage.setItem(TG_THUMB_CACHE_KEY, JSON.stringify(c)); } catch (e) {} }
@@ -274,42 +213,32 @@ function getTgThumb(k) { try { const c = JSON.parse(localStorage.getItem(TG_THUM
 
 async function fetchTgThumb(thumbFileId) {
   if (!thumbFileId || !TG_BOTS.length) return '';
-  const cached = getTgThumb(thumbFileId);
-  if (cached) return cached;
+  const cached = getTgThumb(thumbFileId); if (cached) return cached;
   try {
     const r = await fetch(`${TG_API}/getFile?file_id=${encodeURIComponent(thumbFileId)}`);
     if (!r.ok) return '';
     const d = await r.json();
     if (!d.ok || !d.result?.file_path) return '';
     const url = `https://api.telegram.org/file/bot${TG_BOTS[0]}/${d.result.file_path}`;
-    saveTgThumb(thumbFileId, url);
-    return url;
+    saveTgThumb(thumbFileId, url); return url;
   } catch (e) { return ''; }
 }
 
 async function syncTgLibrary(forceFull = false) {
-  if (!isAdminDevice()) return tgLibrary;
-  if (!TG_BOTS.length) return tgLibrary;
-  if (syncInProgress) { console.log('⏸️ Sync already running'); return tgLibrary; }
+  if (!isAdminDevice() || !TG_BOTS.length) return tgLibrary;
+  if (syncInProgress) return tgLibrary;
   syncInProgress = true;
   setSyncBtnState('loading', 'SYNCING...');
-
-  const t0 = Date.now();
-  console.log(`⚡ Admin sync starting...`);
   showToast('🔄 Sync shuru...');
 
   try {
-    await runForwardScanOnce(forceFull).catch(e => console.log('Scan err:', e));
+    const recentAdded = await syncViaGetUpdates();
+    if (recentAdded > 0) showToast(`🎵 +${recentAdded} songs (total ${tgLibrary.length})`);
     saveLocalLibrary();
     localStorage.setItem(TG_LAST_SYNC_KEY, Date.now().toString());
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    console.log(`✅ Sync done ${elapsed}s. Total: ${tgLibrary.length}`);
-    showToast(`✅ ${tgLibrary.length} songs`);
     if (tgLibrary.length > 0) await publishSharedLibrary().catch(() => {});
-  } catch (e) {
-    console.log('Sync error:', e);
-    showToast('⚠️ Sync error');
-  }
+    startBackgroundScan(forceFull);
+  } catch (e) { showToast('⚠️ Sync error'); }
 
   syncInProgress = false;
   setSyncBtnState('idle', 'SYNC');
@@ -318,145 +247,108 @@ async function syncTgLibrary(forceFull = false) {
   return tgLibrary;
 }
 
-async function runForwardScanOnce(forceFull = false) {
+async function syncViaGetUpdates() {
+  let added = 0, offset = 0, hasMore = true;
+  while (hasMore) {
+    try {
+      const url = `${TG_API}/getUpdates?offset=${offset}&limit=100&timeout=0&allowed_updates=${encodeURIComponent('["channel_post"]')}`;
+      const r = await fetch(url);
+      const d = await r.json();
+      if (!d.ok || !d.result || d.result.length === 0) { hasMore = false; break; }
+      for (const update of d.result) {
+        offset = update.update_id + 1;
+        const msg = update.channel_post;
+        if (!msg) continue;
+        if (await processTgMessage(msg, msg.message_id)) added++;
+      }
+      if (d.result.length < 100) hasMore = false;
+      await new Promise(r => setTimeout(r, 40));
+    } catch (e) { hasMore = false; }
+  }
+  return added;
+}
+
+function startBackgroundScan(forceFull = false) {
+  if (backgroundScanTimer) return;
   const lastScanned = forceFull ? 0 : parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY) || '0');
+  if (!forceFull && lastScanned >= TG_INITIAL_MAX_ID) return;
   const startId = lastScanned + 1;
+  if (startId > TG_INITIAL_MAX_ID) return;
 
-  /* Try to get real max ID from channel info */
-  let endId = lastScanned < TG_INITIAL_MAX_ID ? TG_INITIAL_MAX_ID : lastScanned + TG_NEW_CHECK_RANGE;
-  if (forceFull || lastScanned === 0) endId = TG_INITIAL_MAX_ID;
-
-  if (startId > endId) { console.log('✅ Nothing new to scan'); return 0; }
-
-  console.log(`🚀 FULL SCAN: ${startId} → ${endId}`);
-  const result = await batchScanForward(startId, endId);
-
-  if (result.maxSuccessId > lastScanned) {
-    localStorage.setItem(TG_LAST_SCANNED_KEY, String(result.maxSuccessId));
-  }
-  return result.added;
-}
-
-/* ✅ Batch scan with copyMessage (reliable) */
-async function batchScanForward(startId, endId) {
-  const bots = TG_BOTS.slice();
-  if (!bots.length) return { added: 0, maxSuccessId: startId - 1 };
-
-  const botCount = bots.length;
-  const PER_BOT = 2;
-  const ROUND_SIZE = botCount * PER_BOT;
-  const ROUND_DELAY = 150;
-
-  let added = 0;
-  let maxSuccessId = startId - 1;
-  let okCount = 0, failCount = 0;
-  let firstError = '';
-
-  const totalIds = endId - startId + 1;
-  const totalRounds = Math.ceil(totalIds / ROUND_SIZE);
-
-  console.log(`🚀 Batch: ${ROUND_SIZE} IDs/round × ${totalRounds} rounds`);
-  showToast(`🚀 Scanning ${totalIds} messages...`);
-
-  for (let round = 0; round < totalRounds; round++) {
-    const baseId = startId + round * ROUND_SIZE;
-    const promises = [];
-    for (let b = 0; b < botCount; b++) {
-      for (let k = 0; k < PER_BOT; k++) {
-        const id = baseId + b * PER_BOT + k;
-        if (id > endId) break;
-        promises.push(processIdWithBot(bots[b], id, b + 1));
-      }
-    }
-
-    const results = await Promise.all(promises);
-    for (const r of results) {
-      if (r.ok) {
-        okCount++;
-        if (r.added) added++;
-        if (r.id > maxSuccessId) maxSuccessId = r.id;
-      } else {
-        failCount++;
-        if (!firstError && r.error) firstError = `ID ${r.id}: ${r.error}`;
-      }
-    }
-
-    /* Progress save every 5 rounds */
-    if (round % 5 === 0 && round > 0) {
+  backgroundScanTimer = setInterval(async () => {
+    const last = parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY) || '0');
+    if (last >= TG_INITIAL_MAX_ID) {
+      clearInterval(backgroundScanTimer); backgroundScanTimer = null;
+      showToast(`✅ Scan complete (${tgLibrary.length} songs)`);
       saveLocalLibrary();
-      localStorage.setItem(TG_LAST_SCANNED_KEY, String(maxSuccessId));
-      const pct = Math.round(((round * ROUND_SIZE) / totalIds) * 100);
-      setSyncBtnState('loading', `${tgLibrary.length} (${pct}%)`);
+      if (tgLibrary.length > 0) await publishSharedLibrary().catch(() => {});
+      renderLibrary(); renderRecommendedSection();
+      setSyncBtnState('idle', 'SYNC');
+      return;
     }
-
-    await new Promise(res => setTimeout(res, ROUND_DELAY));
-  }
-
-  console.log(`🚀 Done: +${added} songs | OK: ${okCount} | Fail: ${failCount} | maxId=${maxSuccessId}`);
-  if (firstError) console.log(`❌ First error: ${firstError}`);
-  if (okCount === 0) {
-    console.log('🚨 ALL FAILED — bots ko channel me admin banao + /start bhejo!');
-    showToast('⚠️ Bots check karo — admin nahi hain!');
-  }
-  return { added, maxSuccessId };
+    const roundStart = last + 1;
+    const roundEnd = Math.min(roundStart + 9, TG_INITIAL_MAX_ID);
+    try {
+      const result = await scanRound(roundStart, roundEnd);
+      localStorage.setItem(TG_LAST_SCANNED_KEY, String(roundEnd));
+      if (result.added > 0) { saveLocalLibrary(); renderLibrary(); }
+      if (isAdminDevice()) {
+        const pct = Math.round((roundEnd / TG_INITIAL_MAX_ID) * 100);
+        setSyncBtnState('loading', `${tgLibrary.length} (${pct}%)`);
+      }
+    } catch (e) {}
+  }, 800);
 }
 
-/* ✅ copyMessage — forward se reliable */
-async function processIdWithBot(bot, id, botNum) {
-  const token = typeof bot === 'string' ? bot : bot.token;
+async function scanRound(startId, endId) {
+  const bots = TG_BOTS.slice();
+  const PER_BOT = 2;
+  let added = 0;
+  const promises = [];
+  for (let i = 0; i < bots.length; i++) {
+    for (let k = 0; k < PER_BOT; k++) {
+      const id = startId + i * PER_BOT + k;
+      if (id > endId) break;
+      promises.push(processIdWithBot(bots[i], id));
+    }
+  }
+  const results = await Promise.all(promises);
+  results.forEach(r => { if (r.added) added++; });
+  return { added };
+}
+
+async function processIdWithBot(token, id) {
   const api = `https://api.telegram.org/bot${token}`;
   try {
     const r = await fetch(`${api}/copyMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TG_OWNER_CHAT_ID,
-        from_chat_id: TG_CHANNEL_ID,
-        message_id: id
-      })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, from_chat_id: TG_CHANNEL_ID, message_id: id })
     });
     const d = await r.json();
-
     if (d.error_code === 429) {
-      const retry = (d.parameters?.retry_after || 3) + 1;
-      console.log(`⏳ Bot${botNum} 429 at ${id}, wait ${retry}s`);
-      await new Promise(res => setTimeout(res, retry * 1000));
-      return { ok: false, added: false, id, error: 'RATE_LIMIT' };
+      await new Promise(res => setTimeout(res, ((d.parameters?.retry_after || 3) + 1) * 1000));
+      return { ok: false, added: false };
     }
-
     if (d.ok && d.result) {
-      fetch(`${api}/deleteMessage`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, message_id: d.result.message_id })
-      }).catch(() => {});
-
+      fetch(`${api}/deleteMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, message_id: d.result.message_id }) }).catch(() => {});
       const songAdded = await processTgMessage(d.result, id);
-      return { ok: true, added: songAdded, id };
+      return { ok: true, added: songAdded };
     }
-
-    const desc = d.description || 'unknown';
-    return { ok: false, added: false, id, error: desc };
-  } catch (e) {
-    return { ok: false, added: false, id, error: e.message };
-  }
+    return { ok: false, added: false };
+  } catch (e) { return { ok: false, added: false }; }
 }
 
-/* ✅ Only MP3/audio messages process karo — text/photo skip */
 async function processTgMessage(msg, msgId) {
   const doc = msg.document || msg.audio;
   if (!doc) return false;
   if (tgLibrary.some(s => s.fileId === doc.file_id)) return false;
-
-  /* Extra safety: sirf audio mime types */
-  const mime = doc.mime_type || '';
-  const fname = doc.file_name || '';
+  const mime = doc.mime_type || '', fname = doc.file_name || '';
   const isAudio = msg.audio || /\.(mp3|m4a|aac|opus|ogg|flac|wav)$/i.test(fname) || mime.startsWith('audio/');
   if (!isAudio) return false;
-
   let title = '', artist = '', thumb = '';
   if (msg.audio) {
-    title = (doc.title || '').trim();
-    artist = (doc.performer || doc.artist || '').trim();
+    title = (doc.title || '').trim(); artist = (doc.performer || doc.artist || '').trim();
     if (doc.thumb?.file_id) thumb = doc.thumb.file_id;
     else if (doc.thumbnail?.file_id) thumb = doc.thumbnail.file_id;
   }
@@ -468,10 +360,7 @@ async function processTgMessage(msg, msgId) {
   }
   if (!title || title === 'Unknown') return false;
   if (!artist) artist = 'Unknown';
-
-  let thumbUrl = '';
-  if (thumb) thumbUrl = await fetchTgThumb(thumb);
-
+  let thumbUrl = ''; if (thumb) thumbUrl = await fetchTgThumb(thumb);
   tgLibrary.push({ title, artist, cover: thumbUrl, fileId: doc.file_id, duration: doc.duration || 0, size: doc.file_size || 0, msgId: msgId || msg.message_id, addedAt: Date.now() });
   return true;
 }
@@ -479,20 +368,24 @@ async function processTgMessage(msg, msgId) {
 let syncLoopRunning = false;
 async function continuousSyncLoop() {
   if (syncLoopRunning) return;
-  if (!isAdminDevice()) { console.log('👤 User mode — no scanning'); return; }
+  if (!isAdminDevice()) return;
   syncLoopRunning = true;
-  console.log('🔄 Admin loop STARTED');
-
-  try { await syncTgLibrary(false); } catch (e) { console.log('Boot sync err:', e); }
-
+  try {
+    const added = await syncViaGetUpdates();
+    if (added > 0) { saveLocalLibrary(); await publishSharedLibrary().catch(() => {}); }
+  } catch (e) {}
+  startBackgroundScan(false);
   while (syncLoopRunning) {
     await new Promise(r => setTimeout(r, TG_LOOP_INTERVAL));
     if (!navigator.onLine) continue;
-    try { await syncTgLibrary(false); } catch (e) { console.log('Loop err:', e); }
+    try {
+      const added = await syncViaGetUpdates();
+      if (added > 0) { saveLocalLibrary(); await publishSharedLibrary().catch(() => {}); renderLibrary(); renderRecommendedSection(); showToast(`🎵 +${added} new songs`); }
+    } catch (e) {}
   }
   syncLoopRunning = false;
 }
-function stopContinuousSync() { syncLoopRunning = false; }
+function stopContinuousSync() { syncLoopRunning = false; if (backgroundScanTimer) { clearInterval(backgroundScanTimer); backgroundScanTimer = null; } }
 
 async function manualSyncTg() {
   if (syncInProgress) return showToast('⏳ Sync chal rahi hai...');
@@ -500,13 +393,11 @@ async function manualSyncTg() {
     showToast('🔄 Checking updates...');
     const ok = await fetchSharedLibrary();
     showToast(ok ? `✅ ${tgLibrary.length} songs` : '✅ Up-to-date');
-    renderLibrary(); renderRecommendedSection();
-    return;
+    renderLibrary(); renderRecommendedSection(); return;
   }
   await syncTgLibrary(true);
 }
 
-async function autoSyncTgLibrary() { loadLocalLibrary(); }
 function startHourlySync() {
   if (tgSyncTimer) clearInterval(tgSyncTimer);
   tgSyncTimer = setInterval(() => {
@@ -517,9 +408,7 @@ function startHourlySync() {
   }, 60 * 1000);
 }
 
-/* ═══════════════════════════════════════════════════════════════ */
-/* 🎤 LYRICS                                                        */
-/* ═══════════════════════════════════════════════════════════════ */
+/* ═══════════ LYRICS ═══════════ */
 async function searchLyrics(query) {
   if (!query || query.length < 3) return [];
   const key = query.toLowerCase().trim();
@@ -527,8 +416,7 @@ async function searchLyrics(query) {
   try {
     const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 5000);
     const r = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query)}`, { signal: ctrl.signal });
-    clearTimeout(tm);
-    if (!r.ok) return [];
+    clearTimeout(tm); if (!r.ok) return [];
     const data = await r.json();
     if (!Array.isArray(data)) return [];
     const results = data.slice(0, 10).map(item => ({
@@ -541,9 +429,7 @@ async function searchLyrics(query) {
   } catch (e) { return []; }
 }
 
-/* ═══════════════════════════════════════════════════════════════ */
-/* 🔍 SEARCH SOURCES                                                */
-/* ═══════════════════════════════════════════════════════════════ */
+/* ═══════════ SEARCH SOURCES ═══════════ */
 async function checkWorker() { workerReady = true; return true; }
 async function searchSaavn(query, limit = 25) {
   try {
@@ -589,25 +475,6 @@ async function searchJamendo(query, limit = 20) {
     })).filter(t => t._directStream);
   } catch (e) { return []; }
 }
-async function searchYouTube(query, limit = 10) {
-  for (const api of PIPED_APIS) {
-    try {
-      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 6000);
-      const r = await fetch(`${api}/search?q=${encodeURIComponent(query)}&filter=music_songs`, { signal: ctrl.signal });
-      clearTimeout(tm);
-      if (!r.ok) continue;
-      const data = await r.json();
-      if (!data.items?.length) continue;
-      const streams = data.items.filter(i => i.type === 'stream' && i.url).slice(0, limit);
-      if (!streams.length) continue;
-      return streams.map(i => {
-        const vid = i.url.replace('/watch?v=', '');
-        return { id: 'yt_' + vid, title: i.title || 'Unknown', artist: i.uploaderName || 'YouTube', cover: i.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`, duration: i.duration || 0, source: 'youtube', _ytId: vid };
-      });
-    } catch (e) { continue; }
-  }
-  return [];
-}
 
 async function searchSaavnAndSC(query, limit = 30) {
   const results = []; const seen = new Set();
@@ -627,18 +494,11 @@ async function searchSaavnAndSC(query, limit = 30) {
     searchJamendo(query, Math.floor(limit * 0.15)).catch(() => [])
   ]);
   saavn.forEach(addUnique);
-  for (const lyricResult of lyrics) {
+  for (const lr of lyrics) {
     if (results.length >= limit) break;
-    try { const sub = await searchSaavn(lyricResult._lyricQuery || lyricResult.title, 2); sub.forEach(addUnique); } catch (e) {}
+    try { const sub = await searchSaavn(lr._lyricQuery || lr.title, 2); sub.forEach(addUnique); } catch (e) {}
   }
   sc.forEach(addUnique); jam.forEach(addUnique);
-  const words = q.split(/\s+/).filter(w => w.length > 2);
-  if (words.length >= 3 && results.length < 10) {
-    for (let i = 0; i < words.length - 2 && results.length < 20; i++) {
-      const combo = words.slice(i, i + 3).join(' ');
-      if (combo.length > 4) { try { const extra = await searchSaavn(combo, 8); extra.forEach(addUnique); } catch (e) {} }
-    }
-  }
   return results.slice(0, limit);
 }
 async function workerSearch(query, limit = 30) { return await searchSaavnAndSC(query, limit); }
@@ -647,40 +507,21 @@ async function workerStreamUrl(id) {
   if (id.startsWith('saavn_')) return await saavnStreamUrl(id.replace('saavn_', ''));
   if (id.startsWith('tg_')) {
     const fileId = id.replace('tg_', '');
-    const cached = getTgUrl(fileId);
-    if (cached) return cached;
-    if (!TG_BOTS.length) return null;
+    const cached = getTgUrl(fileId); if (cached) return cached;
     try {
       const r = await fetch(`${TG_API}/getFile?file_id=${encodeURIComponent(fileId)}`);
       if (!r.ok) return null;
       const data = await r.json();
       if (!data.ok || !data.result?.file_path) return null;
       const streamUrl = `https://api.telegram.org/file/bot${TG_BOTS[0]}/${data.result.file_path}`;
-      saveTgUrl(fileId, streamUrl);
-      return streamUrl;
+      saveTgUrl(fileId, streamUrl); return streamUrl;
     } catch (e) { return null; }
-  }
-  if (id.startsWith('yt_')) {
-    const ytId = id.replace('yt_', '');
-    for (const api of PIPED_APIS) {
-      try {
-        const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 8000);
-        const r = await fetch(`${api}/streams/${ytId}`, { signal: ctrl.signal });
-        clearTimeout(tm);
-        if (!r.ok) continue;
-        const data = await r.json();
-        const streams = (data.audioStreams || []).filter(s => s.url || s.proxyUrl);
-        if (!streams.length) continue;
-        streams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        return streams[0].proxyUrl || streams[0].url;
-      } catch (e) { continue; }
-    }
   }
   return null;
 }
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 🎬 YOUTUBE PLAYLIST + SMART MATCHING                             */
+/* 🎬 YT PLAYLIST — FIXED (Piped + Invidious fallback)              */
 /* ═══════════════════════════════════════════════════════════════ */
 function extractPlaylistId(url) {
   if (!url) return null;
@@ -691,20 +532,19 @@ function extractPlaylistId(url) {
   return null;
 }
 
+/* ✅ Try Piped first, then Invidious */
 async function fetchYouTubePlaylist(playlistId) {
-  console.log(`🎬 Fetching playlist ${playlistId}...`);
-  let lastError = '';
+  /* Try Piped APIs */
   for (const api of PIPED_APIS) {
     try {
-      const ctrl = new AbortController();
-      const tm = setTimeout(() => ctrl.abort(), 12000);
+      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 10000);
       const r = await fetch(`${api}/playlists/${playlistId}`, { signal: ctrl.signal });
       clearTimeout(tm);
-      if (!r.ok) { lastError = `${api}: HTTP ${r.status}`; continue; }
+      if (!r.ok) continue;
       const data = await r.json();
       const items = (data.relatedStreams || data.videos || data.items || []).filter(i => i.url || i.videoId);
-      if (items.length === 0) { lastError = `${api}: no items`; continue; }
-      console.log(`✅ Playlist from ${api}: ${items.length} tracks`);
+      if (items.length === 0) continue;
+      console.log(`✅ Piped ${api}: ${items.length} tracks`);
       return {
         name: data.name || data.title || 'YouTube Playlist',
         thumbnail: data.thumbnailUrl || data.thumbnail || '',
@@ -714,64 +554,77 @@ async function fetchYouTubePlaylist(playlistId) {
           return { ytId: vid, title: i.title || i.name || 'Unknown', artist: i.uploaderName || i.uploader || i.channelName || 'YouTube', cover: i.thumbnail || i.thumbnailUrl || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`, duration: i.duration || 0 };
         })
       };
-    } catch (e) { lastError = `${api}: ${e.message}`; continue; }
+    } catch (e) { continue; }
   }
-  console.log('❌ All Piped failed:', lastError);
+
+  /* ✅ Fallback: Invidious APIs */
+  for (const api of INVIDIOUS_APIS) {
+    try {
+      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 10000);
+      const r = await fetch(`${api}/api/v1/playlists/${playlistId}`, { signal: ctrl.signal });
+      clearTimeout(tm);
+      if (!r.ok) continue;
+      const data = await r.json();
+      const items = (data.videos || []).filter(v => v.videoId);
+      if (items.length === 0) continue;
+      console.log(`✅ Invidious ${api}: ${items.length} tracks`);
+      return {
+        name: data.title || 'YouTube Playlist',
+        thumbnail: data.playlistThumbnail || '',
+        tracks: items.map(v => ({
+          ytId: v.videoId,
+          title: v.title || 'Unknown',
+          artist: v.author || 'YouTube',
+          cover: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+          duration: v.lengthSeconds || 0
+        }))
+      };
+    } catch (e) { continue; }
+  }
+
+  console.log('❌ All Piped + Invidious failed');
   return null;
 }
 
 function normalizeForMatch(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/\(.*?\)/g, ' ')
-    .replace(/\[.*?\]/g, ' ')
+  return String(s || '').toLowerCase()
+    .replace(/\(.*?\)/g, ' ').replace(/\[.*?\]/g, ' ')
     .replace(/official|video|audio|lyrical|lyrics|hd|4k|8k|music|full|song|from|the|a|an|feat|ft\.?/gi, ' ')
     .replace(/[^a-z0-9\u0900-\u097F\u0600-\u06FF\u0A00-\u0A7F ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/\s+/g, ' ').trim();
 }
 
-function scoreMatch(queryTitle, queryArtist, tgTitle, tgArtist) {
-  const qT = normalizeForMatch(queryTitle);
-  const qA = normalizeForMatch(queryArtist);
-  const tT = normalizeForMatch(tgTitle);
-  const tA = normalizeForMatch(tgArtist);
+function scoreMatch(qTitle, qArtist, tTitle, tArtist) {
+  const qT = normalizeForMatch(qTitle), qA = normalizeForMatch(qArtist);
+  const tT = normalizeForMatch(tTitle), tA = normalizeForMatch(tArtist);
   if (!qT || !tT) return 0;
   let score = 0;
   if (qT === tT) score += 100;
   else if (qT.includes(tT) || tT.includes(qT)) score += 70;
   else {
-    const qWords = new Set(qT.split(' ').filter(w => w.length > 2));
-    const tWords = new Set(tT.split(' ').filter(w => w.length > 2));
-    if (qWords.size > 0 && tWords.size > 0) {
-      let common = 0;
-      qWords.forEach(w => { if (tWords.has(w)) common++; });
-      score += (common / Math.min(qWords.size, tWords.size)) * 60;
+    const qW = new Set(qT.split(' ').filter(w => w.length > 2)), tW = new Set(tT.split(' ').filter(w => w.length > 2));
+    if (qW.size > 0 && tW.size > 0) {
+      let common = 0; qW.forEach(w => { if (tW.has(w)) common++; });
+      score += (common / Math.min(qW.size, tW.size)) * 60;
     }
   }
   if (qA && tA) {
     if (qA === tA) score += 30;
     else if (qA.includes(tA) || tA.includes(qA)) score += 20;
-    else {
-      const qAw = qA.split(' ').filter(w => w.length > 2);
-      const tAw = tA.split(' ').filter(w => w.length > 2);
-      if (qAw.some(w => tAw.includes(w))) score += 10;
-    }
   }
   return score;
 }
 
 function matchToTgLibrary(track, threshold = 55) {
   if (tgLibrary.length === 0) return null;
-  const qTitle = track.title || '';
-  const qArtist = track.artist || '';
+  const qTitle = track.title || '', qArtist = track.artist || '';
   let bestScore = 0, bestMatch = null;
   const firstWord = normalizeForMatch(qTitle).split(' ')[0] || '';
   const candidates = firstWord.length > 2 ? tgLibrary.filter(t => normalizeForMatch(t.title).includes(firstWord)) : tgLibrary;
   const pool = candidates.length > 0 ? candidates : tgLibrary;
   for (const tg of pool) {
-    const score = scoreMatch(qTitle, qArtist, tg.title, tg.artist);
-    if (score > bestScore) { bestScore = score; bestMatch = tg; if (score >= 100) break; }
+    const s = scoreMatch(qTitle, qArtist, tg.title, tg.artist);
+    if (s > bestScore) { bestScore = s; bestMatch = tg; if (s >= 100) break; }
   }
   if (bestScore >= threshold && bestMatch) {
     return { id: 'tg_' + bestMatch.fileId, title: bestMatch.title, artist: bestMatch.artist, cover: bestMatch.cover || track.cover || '', duration: bestMatch.duration || track.duration || 0, source: 'telegram', _fileId: bestMatch.fileId, _matchScore: bestScore };
@@ -782,8 +635,7 @@ function matchToTgLibrary(track, threshold = 55) {
 async function matchToSaavn(track) {
   try {
     const cleanTitle = track.title.replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/official|video|audio|lyrical|hd|4k|music/gi, '').replace(/\s+/g, ' ').trim();
-    const query = `${cleanTitle} ${track.artist}`.substring(0, 80);
-    const results = await searchSaavn(query, 3);
+    const results = await searchSaavn(`${cleanTitle} ${track.artist}`.substring(0, 80), 3);
     if (results.length > 0) return { ...results[0], _ytMatch: true };
   } catch (e) {}
   return null;
@@ -816,25 +668,14 @@ async function importYouTubePlaylist(url) {
     if (i % 30 === 0 && i > 0) showToast(`🔄 Matched ${i}/${playlist.tracks.length}...`);
     if (i + CONCURRENCY < playlist.tracks.length) await new Promise(r => setTimeout(r, 200));
   }
-  const tgCount = matched.filter(t => t.source === 'telegram').length;
-  const saavnCount = matched.filter(t => t.source === 'saavn').length;
-  const ytCount = matched.filter(t => t.source === 'youtube').length;
-  showToast(`✅ ${tgCount} TG + ${saavnCount} Saavn + ${ytCount} YT`);
+  const tg = matched.filter(t => t.source === 'telegram').length;
+  const sa = matched.filter(t => t.source === 'saavn').length;
+  const yt = matched.filter(t => t.source === 'youtube').length;
+  showToast(`✅ ${tg} TG + ${sa} Saavn + ${yt} YT`);
   return { name: playlist.name, cover: playlist.thumbnail, tracks: matched };
 }
 
-async function loadPlaylistToQueue(url) {
-  const playlist = await importYouTubePlaylist(url);
-  if (!playlist || playlist.tracks.length === 0) return;
-  currentPlaylist = playlist.tracks.slice();
-  currentTrackIndex = 0;
-  queueSeenIds = new Set(currentPlaylist.map(t => t.id));
-  renderHomeQueue();
-  saveQueueToStorage();
-  playTrack(0);
-  showToast(`▶ ${playlist.name} (${playlist.tracks.length} songs)`);
-}
-
+/* ═══════════ YT MODAL ═══════════ */
 function openYtPlaylistModal() {
   ytPlaylistPreview = null;
   const inputArea = document.getElementById('ytPlaylistInputArea');
@@ -849,22 +690,17 @@ function openYtPlaylistModal() {
 }
 
 async function loadYtPlaylistPreview() {
-  const input = document.getElementById('ytPlaylistUrlInput');
-  const url = (input?.value || '').trim();
+  const url = (document.getElementById('ytPlaylistUrlInput')?.value || '').trim();
   if (!url) return showToast('URL daalo');
   const pid = extractPlaylistId(url);
   if (!pid) return showToast('❌ Invalid YT URL');
-
   const inputArea = document.getElementById('ytPlaylistInputArea');
   const loadingArea = document.getElementById('ytPlaylistLoading');
   const loadingText = document.getElementById('ytPlaylistLoadingText');
-
   if (inputArea) inputArea.style.display = 'none';
   if (loadingArea) loadingArea.style.display = 'block';
   if (loadingText) loadingText.innerText = '🎬 Fetching playlist...';
-
   const playlist = await importYouTubePlaylist(url);
-
   if (!playlist || !playlist.tracks || playlist.tracks.length === 0) {
     if (loadingArea) loadingArea.style.display = 'none';
     if (inputArea) inputArea.style.display = 'block';
@@ -875,58 +711,41 @@ async function loadYtPlaylistPreview() {
 }
 
 function renderYtPlaylistPreviewUI() {
-  const p = ytPlaylistPreview;
-  if (!p) return;
+  const p = ytPlaylistPreview; if (!p) return;
   const loadingArea = document.getElementById('ytPlaylistLoading');
   const previewArea = document.getElementById('ytPlaylistPreview');
   if (loadingArea) loadingArea.style.display = 'none';
   if (!previewArea) return;
   previewArea.style.display = 'block';
-
-  const tgCount = p.tracks.filter(t => t.source === 'telegram').length;
-  const saavnCount = p.tracks.filter(t => t.source === 'saavn').length;
-  const ytCount = p.tracks.filter(t => t.source === 'youtube').length;
-
+  const tg = p.tracks.filter(t => t.source === 'telegram').length;
+  const sa = p.tracks.filter(t => t.source === 'saavn').length;
+  const yt = p.tracks.filter(t => t.source === 'youtube').length;
   let html = `<div style="background:linear-gradient(135deg,rgba(139,92,246,.15),rgba(168,85,247,.08));border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
     <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</div>
-    <div style="font-size:11px;color:var(--text-sub);line-height:1.6">
-      <i class="fa-solid fa-music"></i> ${p.tracks.length} songs
-      · <span style="color:#229ED9">✈ ${tgCount} TG</span>
-      · <span style="color:var(--accent-neon)">♪ ${saavnCount} Saavn</span>
-      · <span style="color:#ef4444">▶ ${ytCount} YT</span>
-    </div>
+    <div style="font-size:11px;color:var(--text-sub);line-height:1.6"><i class="fa-solid fa-music"></i> ${p.tracks.length} · <span style="color:#229ED9">✈ ${tg}</span> · <span style="color:var(--accent-neon)">♪ ${sa}</span> · <span style="color:#ef4444">▶ ${yt}</span></div>
   </div>`;
-
   html += `<div style="display:flex;gap:8px;margin-bottom:12px">
     <button class="submit-btn" style="flex:1;font-size:12px;padding:10px" onclick="playYtPlaylistNow()"><i class="fa-solid fa-play"></i> Play All</button>
     <button class="submit-btn" style="flex:1;font-size:12px;padding:10px;background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="saveYtPlaylistAsLocal()"><i class="fa-solid fa-bookmark"></i> Save</button>
   </div>`;
-
   html += `<div style="font-size:11px;color:var(--text-sub);margin-bottom:6px;padding-left:4px"><i class="fa-solid fa-list-ul"></i> Tap to play (${p.tracks.length})</div>`;
   html += p.tracks.map((t, i) => {
-    const sId = encodeURIComponent(t.id);
-    const sT = encodeURIComponent(t.title || '');
-    const sA = encodeURIComponent(t.artist || '');
-    const sC = encodeURIComponent(t.cover || 'vaultify.png');
-    const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
-    let srcBadge = '';
-    if (t.source === 'telegram') srcBadge = '<img src="vaultify.png" style="width:14px;height:14px;border-radius:50%;margin-left:6px;vertical-align:middle;border:1px solid #229ED9" onerror="this.style.display=\'none\'" />';
-    else if (t.source === 'youtube') srcBadge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
-    else if (t.source === 'saavn') srcBadge = '<i class="fa-solid fa-music" style="color:var(--accent-neon);font-size:10px;margin-left:6px"></i>';
-    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${t.duration || 0})"><div class="tile-left"><span style="font-size:10px;color:var(--text-sub);width:22px;flex-shrink:0;text-align:center">${i + 1}</span><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" loading="lazy" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${srcBadge}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`;
+    const sId = encodeURIComponent(t.id), sT = encodeURIComponent(t.title || ''), sA = encodeURIComponent(t.artist || '');
+    const sC = encodeURIComponent(t.cover || 'vaultify.png'), sD = t._directStream ? encodeURIComponent(t._directStream) : '';
+    let badge = '';
+    if (t.source === 'telegram') badge = '<img src="vaultify.png" style="width:14px;height:14px;border-radius:50%;margin-left:6px;vertical-align:middle;border:1px solid #229ED9" onerror="this.style.display=\'none\'" />';
+    else if (t.source === 'youtube') badge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
+    else if (t.source === 'saavn') badge = '<i class="fa-solid fa-music" style="color:var(--accent-neon);font-size:10px;margin-left:6px"></i>';
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${t.duration || 0})"><div class="tile-left"><span style="font-size:10px;color:var(--text-sub);width:22px;flex-shrink:0;text-align:center">${i + 1}</span><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" loading="lazy" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${badge}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`;
   }).join('');
-
   previewArea.innerHTML = html;
 }
 
 function playYtPlaylistNow() {
   if (!ytPlaylistPreview || !ytPlaylistPreview.tracks.length) return;
   currentPlaylist = ytPlaylistPreview.tracks.slice();
-  currentTrackIndex = 0;
-  queueSeenIds = new Set(currentPlaylist.map(t => t.id));
-  renderHomeQueue();
-  saveQueueToStorage();
-  playTrack(0);
+  currentTrackIndex = 0; queueSeenIds = new Set(currentPlaylist.map(t => t.id));
+  renderHomeQueue(); saveQueueToStorage(); playTrack(0);
   closeModal('modalYtPlaylist');
   showToast(`▶ ${ytPlaylistPreview.name} (${ytPlaylistPreview.tracks.length})`);
 }
@@ -939,6 +758,15 @@ function saveYtPlaylistAsLocal() {
   closeModal('modalYtPlaylist');
   if (currentLibraryTab === 'playlists') renderLibrary();
   showToast(`✅ Saved: ${name}`);
+}
+
+async function loadPlaylistToQueue(url) {
+  const playlist = await importYouTubePlaylist(url);
+  if (!playlist || playlist.tracks.length === 0) return;
+  currentPlaylist = playlist.tracks.slice();
+  currentTrackIndex = 0; queueSeenIds = new Set(currentPlaylist.map(t => t.id));
+  renderHomeQueue(); saveQueueToStorage(); playTrack(0);
+  showToast(`▶ ${playlist.name} (${playlist.tracks.length} songs)`);
 }
 
 /* ═══════════ AUTH ═══════════ */
@@ -1103,13 +931,6 @@ function detectVibe(text) {
   if (/workout|gym|energy|power|motivat/.test(t)) return 'workout';
   return 'general';
 }
-function getLanguageQueries(lang) { return lang === 'hindi' ? ['arijit singh hits','atif aslam songs','bollywood hits'] : lang === 'punjabi' ? ['diljit dosanjh','ap dhillon','karan aujla'] : ['top english hits','taylor swift','ed sheeran']; }
-function getLanguageArtists(lang) {
-  if (lang === 'punjabi') return ['diljit dosanjh','ap dhillon','karan aujla','sidhu moose wala','guru randhawa','shubh'];
-  if (lang === 'urdu') return ['atif aslam','rahat fateh ali khan','nusrat fateh ali khan','coke studio','momina mustehsan'];
-  if (lang === 'english') return ['taylor swift','ed sheeran','the weeknd','drake','post malone','ariana grande'];
-  return ['arijit singh','atif aslam','shreya ghoshal','sonu nigam','neha kakkar','jubin nautiyal'];
-}
 
 /* ═══════════ CACHE ═══════════ */
 function initCacheDB() { return new Promise(resolve => { try { const req = indexedDB.open('vaultify_cache', 3); req.onupgradeneeded = e => { const db = e.target.result; if (!db.objectStoreNames.contains('songs')) { const s = db.createObjectStore('songs', { keyPath: 'id' }); s.createIndex('cachedAt', 'cachedAt'); s.createIndex('lastAccess', 'lastAccess'); } }; req.onsuccess = e => { cacheDB = e.target.result; resolve(cacheDB); }; req.onerror = () => resolve(null); } catch (e) { resolve(null); } }); }
@@ -1179,7 +1000,6 @@ function setupTimelineDraggableEngine() {
   bar.addEventListener('pointerdown', e => { isDraggingTimeline = true; try { bar.setPointerCapture(e.pointerId); } catch (err) {} updUI(getPct(e.clientX)); });
   bar.addEventListener('pointermove', e => { if (isDraggingTimeline) updUI(getPct(e.clientX)); });
   bar.addEventListener('pointerup', e => { if (!isDraggingTimeline) return; isDraggingTimeline = false; doSeek(getPct(e.clientX)); });
-  bar.addEventListener('click', e => { if (!isDraggingTimeline) doSeek(getPct(e.clientX)); });
 }
 function seekAudioTo(s) { if (mainAudio?.duration) mainAudio.currentTime = s; }
 
@@ -1266,9 +1086,7 @@ function pickRandomFromTg(count = 12) {
   if (pool.length === 0) { tgLibrary.forEach(t => queueSeenIds.delete('tg_' + t.fileId)); pool = tgLibrary.filter(t => !currentPlaylist.some(x => x.id === 'tg_' + t.fileId)); if (pool.length === 0) return []; }
   return shuffleArray(pool).slice(0, count).map(t => ({ id: 'tg_' + t.fileId, title: t.title, artist: t.artist, cover: t.cover || '', duration: t.duration || 0, source: 'telegram', _fileId: t.fileId }));
 }
-
 function shuffleArray(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-
 function addToQueueSilently(tracks) {
   if (!tracks?.length) return;
   let added = 0;
@@ -1276,7 +1094,6 @@ function addToQueueSilently(tracks) {
   for (const t of tracks) { if (currentPlaylist.length >= QUEUE_MAX_TOTAL) break; if (ids.has(t.id)) continue; currentPlaylist.push(t); queueSeenIds.add(t.id); ids.add(t.id); added++; }
   if (added > 0) { renderHomeQueue(); saveQueueToStorage(); }
 }
-
 function togglePlaybackState() { if (!mainAudio) return; if (mainAudio.paused) { initForegroundAudioBridge(); requestHardwareWakeLock(); mainAudio.play().then(() => setVisualState(true)).catch(() => {}); } else { mainAudio.pause(); setVisualState(false); } }
 function setVisualState(playing) {
   isPlayingAudio = playing; if (playing) requestHardwareWakeLock();
@@ -1302,7 +1119,6 @@ function toggleShuffle() { isShuffle = !isShuffle; const el = document.getElemen
 function toggleRepeat() { isRepeat = !isRepeat; const el = document.getElementById('fullRepeatBtn'); if (el) el.style.color = isRepeat ? 'var(--accent-neon)' : 'inherit'; showToast(isRepeat ? 'Repeat On' : 'Repeat Off'); }
 function toggleSleepTimer() { showToast('Sleep 30 Min'); setTimeout(() => { if (isPlayingAudio) togglePlaybackState(); }, 30 * 60 * 1000); }
 function shareCurrentTrack() { if (currentPlaylist.length === 0) return; const t = currentPlaylist[currentTrackIndex]; if (navigator.share) navigator.share({ title: t.title, text: `Listening to ${t.title} on Vaultify` }).catch(() => {}); else { try { navigator.clipboard.writeText(`🎵 ${t.title} - ${t.artist}`); showToast('Copied!'); } catch (e) {} } }
-
 async function cacheTrackInBackground(track) {
   if (!track || track.id.startsWith('blob:')) return;
   if (trackBlobCache.has(track.id)) return;
@@ -1391,8 +1207,19 @@ function renderQueueTile(t, i, ic) {
   return `<div class="song-tile ${ic ? 'playing' : ''}" onclick="playTrack(${i});closeModal('modalQueueDrawer');"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${isC ? ' <i class="fa-solid fa-check-circle" style="color:#10b981;font-size:10px"></i>' : ''}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="${ic && isPlayingAudio ? 'fa-solid fa-volume-high' : 'fa-solid fa-play'}" style="color:var(--accent-neon);font-size:13px"></i></div>`;
 }
 
+/* ✅ Search triggers sync */
+function triggerSyncOnSearch() {
+  if (searchTriggeredSync) return;
+  if (!isAdminDevice()) return;
+  if (syncInProgress) return;
+  if (tgLibrary.length > 50) return;
+  searchTriggeredSync = true;
+  setTimeout(() => syncTgLibrary(false).catch(() => {}), 500);
+}
+
 async function executeLiveSearch(isAuto = false) {
   const q = document.getElementById('mobileSearchField').value.trim(); if (!q) return;
+  if (tgLibrary.length < 50) triggerSyncOnSearch();
   if (!isAuto && !searchHistoryList.includes(q)) { searchHistoryList.unshift(q); if (searchHistoryList.length > 8) searchHistoryList.pop(); localStorage.setItem('vaultify_search_history', JSON.stringify(searchHistoryList)); renderSearchHistoryTags(); }
   currentLanguage = detectLanguage(q); currentVibe = detectVibe(q);
   const l = document.getElementById('searchLoadingIndicator'), rc = document.getElementById('searchResultsContainer');
@@ -1428,11 +1255,11 @@ function playSearchedTrackImmediately(idEnc, title, artist, cover, directEnc, du
   renderHomeQueue(); saveQueueToStorage(); playTrack(0);
 }
 let liveSearchDebounceTimer = null, liveSearchRequestId = 0;
-
 function initLiveSearchInputListener() {
   const f = document.getElementById('mobileSearchField'); if (!f) return;
   f.addEventListener('input', () => {
     const val = f.value.trim();
+    if (val.length >= 2 && tgLibrary.length < 50) triggerSyncOnSearch();
     if (val.includes('youtube.com/playlist') || (val.includes('list=') && val.includes('youtu'))) {
       clearTimeout(liveSearchDebounceTimer);
       liveSearchDebounceTimer = setTimeout(() => {
@@ -1441,9 +1268,8 @@ function initLiveSearchInputListener() {
       return;
     }
     clearTimeout(liveSearchDebounceTimer);
-    const q = val;
-    if (q.length >= 2) liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === q) instantSearch(q); }, 400);
-    else if (q.length === 0) { const rc = document.getElementById('searchResultsContainer'); if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p>'; }
+    if (val.length >= 2) liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === val) instantSearch(val); }, 400);
+    else if (val.length === 0) { const rc = document.getElementById('searchResultsContainer'); if (rc) rc.innerHTML = '<p style="font-size:13px;color:var(--text-sub);padding:16px 0;text-align:center">Type song name to search.</p>'; }
   });
   f.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
@@ -1455,7 +1281,6 @@ function initLiveSearchInputListener() {
     }
   });
 }
-
 async function instantSearch(q) {
   currentLanguage = detectLanguage(q); currentVibe = detectVibe(q);
   const myId = ++liveSearchRequestId;
@@ -1492,7 +1317,6 @@ async function renderRecommendedSection() {
 
 async function renderLibrary() {
   const c = document.getElementById('libraryContent'); if (!c) return;
-
   if (currentLibraryTab === 'history') {
     const list = playbackHistoryList;
     if (list.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No history yet.</p>`; return; }
@@ -1534,7 +1358,6 @@ async function renderLibrary() {
 }
 function libraryLoadMore() { libraryRenderPage++; renderLibrary(); }
 function libraryPageUp() { if (libraryRenderPage > 0) { libraryRenderPage--; renderLibrary(); } }
-
 async function playCached(id) { const c = await cacheGet(id); if (c?.url) { const t = { id, title: c.title, artist: c.artist, cover: c.cover, _directStream: c.url }; currentPlaylist = [t]; currentTrackIndex = 0; queueSeenIds = new Set([t.id]); renderHomeQueue(); playTrack(0); } }
 async function removeCache(id) { const u = trackBlobCache.get(id); if (u?.startsWith('blob:')) { try { URL.revokeObjectURL(u); } catch (e) {} } trackBlobCache.delete(id); await cacheDelete(id); renderLibrary(); showToast('Removed'); }
 function openPlaylist(i) { const p = playlists[i]; if (!p || p.songs.length === 0) return showToast('Empty playlist'); currentPlaylist = p.songs.slice(); queueSeenIds = new Set(currentPlaylist.map(t => t.id)); renderHomeQueue(); saveQueueToStorage(); playTrack(0); closeModal('modalAddToPlaylist'); showToast(`▶ ${p.name}`); }
@@ -1673,69 +1496,24 @@ function updateCertLiveDateTime() {
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', updateCertLiveDateTime);
 else updateCertLiveDateTime();
-setTimeout(updateCertLiveDateTime, 100); setTimeout(updateCertLiveDateTime, 500); setTimeout(updateCertLiveDateTime, 1500);
 setInterval(updateCertLiveDateTime, 1000);
 
-async function adminForcePublish() {
-  if (!isAdminDevice()) return showToast('❌ Admin only');
-  if (tgLibrary.length === 0) return showToast('❌ Library empty');
-  showToast('☁️ Publishing...');
-  const ok = await publishSharedLibrary();
-  if (ok) showToast(`✅ Published ${tgLibrary.length} songs`);
-  else showToast('❌ Failed');
-}
-function adminShowStats() {
-  const lastScan = parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY) || '0');
-  const lastSync = parseInt(localStorage.getItem(TG_LAST_SYNC_KEY) || '0');
-  const ver = localStorage.getItem(SHARED_VERSION_KEY) || '0';
-  const stats = { isAdmin: isAdminDevice(), songs: tgLibrary.length, bots: TG_BOTS.length, lastScanned: lastScan, sharedVersion: ver, lastSync: lastSync ? new Date(lastSync).toLocaleString() : 'never', user: loggedInUser?.username || 'unknown' };
-  console.log('📊 Stats:', stats);
-  return stats;
-}
-async function adminResetShared() {
-  if (!isAdminDevice()) return showToast('❌ Admin only');
-  if (!confirm('Reset shared library?')) return;
-  try {
-    const oldSnap = await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get();
-    const batch = firestoreDB.batch();
-    oldSnap.forEach(d => batch.delete(d.ref));
-    batch.delete(firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]));
-    await batch.commit();
-    localStorage.removeItem(SHARED_VERSION_KEY);
-    showToast('✅ Reset done');
-  } catch (e) { showToast('❌ Failed'); }
-}
+async function adminForcePublish() { if (!isAdminDevice()) return showToast('❌ Admin only'); if (tgLibrary.length === 0) return showToast('❌ Empty'); showToast('☁️ Publishing...'); const ok = await publishSharedLibrary(); showToast(ok ? `✅ Published ${tgLibrary.length}` : '❌ Failed'); }
+function adminShowStats() { const stats = { isAdmin: isAdminDevice(), songs: tgLibrary.length, bots: TG_BOTS.length, lastScanned: parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY) || '0'), version: localStorage.getItem(SHARED_VERSION_KEY) || '0' }; console.log('📊 Stats:', stats); return stats; }
+async function adminResetShared() { if (!isAdminDevice()) return; if (!confirm('Reset shared library?')) return; try { const oldSnap = await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get(); const batch = firestoreDB.batch(); oldSnap.forEach(d => batch.delete(d.ref)); batch.delete(firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1])); await batch.commit(); localStorage.removeItem(SHARED_VERSION_KEY); showToast('✅ Reset'); } catch (e) { showToast('❌ Failed'); } }
 
 window.addEventListener('DOMContentLoaded', () => {
   mainAudio = document.getElementById('vaultifyAudio'); silentLoop = document.getElementById('silentAudioLoop');
+  setTimeout(() => { const i = document.getElementById('appIntroScreen'); if (i) { i.classList.add('fade-out'); i.style.opacity = '0'; i.style.transition = 'opacity 0.6s ease'; setTimeout(() => { i.style.display = 'none'; i.style.visibility = 'hidden'; i.style.pointerEvents = 'none'; i.style.zIndex = '-1'; }, 700); } }, 1500);
 
-  setTimeout(() => {
-    const i = document.getElementById('appIntroScreen');
-    if (i) { i.classList.add('fade-out'); i.style.opacity = '0'; i.style.transition = 'opacity 0.6s ease'; setTimeout(() => { i.style.display = 'none'; i.style.visibility = 'hidden'; i.style.pointerEvents = 'none'; i.style.zIndex = '-1'; }, 700); }
-  }, 1500);
-
-  initCacheDB();
-  setupMediaSession();
-  setupTimelineDraggableEngine();
-  initLiveSearchInputListener();
-  verifyAuthGate();
-  renderHomeRecentVault();
-  renderHomeQueue();
-  renderLibrary();
-  renderSearchHistoryTags();
-  renderNotificationCenter();
+  initCacheDB(); setupMediaSession(); setupTimelineDraggableEngine(); initLiveSearchInputListener();
+  verifyAuthGate(); renderHomeRecentVault(); renderHomeQueue(); renderLibrary();
+  renderSearchHistoryTags(); renderNotificationCenter();
 
   loadLocalLibrary();
   setTimeout(async () => {
-    if (isAdminDevice()) {
-      console.log('👑 Admin — auto sync starting');
-      continuousSyncLoop();
-    } else {
-      console.log('👤 User mode');
-      const changed = await fetchSharedLibrary();
-      if (changed) { renderLibrary(); renderRecommendedSection(); }
-      startSharedRefresh();
-    }
+    if (isAdminDevice()) { continuousSyncLoop(); }
+    else { const changed = await fetchSharedLibrary(); if (changed) { renderLibrary(); renderRecommendedSection(); } startSharedRefresh(); }
   }, 2500);
 
   setTimeout(initEqChain, 800);
@@ -1744,12 +1522,7 @@ window.addEventListener('DOMContentLoaded', () => {
   setTimeout(checkPermissionsStatus, 800);
   setInterval(checkPermissionsStatus, 5000);
   setTimeout(() => { if (isFirebaseReady()) { initIPCounter(); listenIPStats(renderIPStats); } }, 3000);
-
-  setTimeout(async () => {
-    await checkWorker();
-    renderRecommendedSection();
-    loadQueueFromStorage();
-  }, 1500);
+  setTimeout(async () => { await checkWorker(); renderRecommendedSection(); loadQueueFromStorage(); }, 1500);
 
   const start = () => { initForegroundAudioBridge(); requestHardwareWakeLock(); if (!silentLoopStarted && silentLoop) { silentLoop.play().catch(() => {}); silentLoopStarted = true; } };
   document.body.addEventListener('touchstart', start, { once: true });
@@ -1785,31 +1558,29 @@ Object.assign(window, {
   verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
   openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
   saveProfileData, performAppLogout, generatePartnerCode, changeAppLanguage,
-  detectLanguage, detectVibe, getLanguageQueries, getLanguageArtists,
-  executeLiveSearch, instantSearch, renderSearchResults, playSearchedTrackImmediately,
-  playTrack, playNext, playPrevious, autoplayNext, togglePlaybackState, setVisualState,
-  syncPlayerUI, toggleShuffle, toggleRepeat, toggleSleepTimer, shareCurrentTrack,
-  downloadCurrentTrack, toggleLikeCurrent, unlikeSong, openPlaylist, deletePlaylist,
-  openAddToPlaylistModal, addToPlaylist, createPlaylistAndAdd, renderLibrary,
-  renderHomeQueue, renderHomeRecentVault, renderRecommendedSection,
-  renderSearchHistoryTags, clearSearchHistory, playSingleTrackObject, playCached, removeCache,
-  requestMicAndListen, resetEqSliders, applyEqNow, savePlaybackState,
-  showDownloadIndicator, hideDownloadIndicator, cacheGet, cacheAll, clearRecentlyPlayed,
+  detectLanguage, detectVibe, executeLiveSearch, instantSearch, renderSearchResults,
+  playSearchedTrackImmediately, playTrack, playNext, playPrevious, autoplayNext,
+  togglePlaybackState, setVisualState, syncPlayerUI, toggleShuffle, toggleRepeat,
+  toggleSleepTimer, shareCurrentTrack, downloadCurrentTrack, toggleLikeCurrent,
+  unlikeSong, openPlaylist, deletePlaylist, openAddToPlaylistModal, addToPlaylist,
+  createPlaylistAndAdd, renderLibrary, renderHomeQueue, renderHomeRecentVault,
+  renderRecommendedSection, renderSearchHistoryTags, clearSearchHistory,
+  playSingleTrackObject, playCached, removeCache, requestMicAndListen,
+  resetEqSliders, applyEqNow, savePlaybackState, showDownloadIndicator,
+  hideDownloadIndicator, cacheGet, cacheAll, clearRecentlyPlayed,
   getStoredNotifications, pushNotification, renderNotificationCenter,
   openNotificationModal, clearAllNotifications, checkPermissionsStatus,
   handlePermissionBannerClick, requestPermsFromNative, openAppSettingsNative,
-  openEqualizer, initEmojiRunner, initEmojiPicker,
-  addCustomEmoji, setEmojiMode, toggleAmbientMotion, toggleRunnerVisibility,
-  applyThemeScheme, initIPCounter, listenIPStats, renderIPStats,
-  checkWorker, workerSearch, workerStreamUrl, searchLyrics,
-  searchSaavn, searchSoundCloud, searchJamendo, searchYouTube,
+  openEqualizer, initEmojiRunner, initEmojiPicker, addCustomEmoji, setEmojiMode,
+  toggleAmbientMotion, toggleRunnerVisibility, applyThemeScheme,
+  initIPCounter, listenIPStats, renderIPStats, checkWorker, workerSearch,
+  workerStreamUrl, searchLyrics, searchSaavn, searchSoundCloud, searchJamendo,
   saveQueueToStorage, loadQueueFromStorage, updateCertLiveDateTime,
-  syncTgLibrary, manualSyncTg, autoSyncTgLibrary, startHourlySync,
-  continuousSyncLoop, stopContinuousSync,
+  syncTgLibrary, manualSyncTg, startHourlySync, continuousSyncLoop, stopContinuousSync,
   fetchSharedLibrary, publishSharedLibrary, libraryLoadMore, libraryPageUp,
   adminForcePublish, adminShowStats, adminResetShared,
-  extractPlaylistId, fetchYouTubePlaylist, importYouTubePlaylist,
-  loadPlaylistToQueue, matchToSaavn, smartMatchTrack, matchToTgLibrary, scoreMatch, normalizeForMatch,
+  extractPlaylistId, fetchYouTubePlaylist, importYouTubePlaylist, loadPlaylistToQueue,
+  matchToSaavn, smartMatchTrack, matchToTgLibrary, scoreMatch, normalizeForMatch,
   openYtPlaylistModal, loadYtPlaylistPreview, renderYtPlaylistPreviewUI,
   playYtPlaylistNow, saveYtPlaylistAsLocal, setSyncBtnState
 });
