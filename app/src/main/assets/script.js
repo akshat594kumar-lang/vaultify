@@ -1,4 +1,4 @@
-/* VAULTIFY v22 FINAL */
+/* VAULTIFY v23 FINAL */
 
 const TG_OWNER_CHAT_ID = '-5482194820';
 const TG_OWNER_DM_ID = '5969156236';
@@ -19,13 +19,10 @@ const TG_API = TG_BOTS.length > 0 ? `https://api.telegram.org/bot${TG_BOTS[0]}` 
 const SHARED_MAIN_DOC = ['vaultify_shared', 'library_main'];
 const SHARED_CHUNK_COL = ['vaultify_shared', 'library_main', 'chunks'];
 const CHUNK_SIZE = 100;
-const SHARED_VERSION_KEY = 'vaultify_shared_version_v5';
-const TG_INITIAL_MAX_ID = 5000;
+const SHARED_VERSION_KEY = 'vaultify_shared_version_v6';
 const TG_LOOP_INTERVAL = 10 * 60 * 1000;
-const TG_SYNC_INTERVAL = 60 * 60 * 1000;
 const SHARED_REFRESH_INTERVAL = 5 * 60 * 1000;
 
-const APP_VERSION = 22;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -35,13 +32,13 @@ const JAMENDO_CLIENT_ID = '7d7152ad';
 const PIPED_APIS = ['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.reallyaweso.me'];
 const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be'];
 
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v18';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v18';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v17';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v19';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v19';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v18';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v15';
-const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v14';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v16';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v15';
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let tgLibrary = [], tgSyncTimer = null, lyricsCache = {};
@@ -71,6 +68,7 @@ const LIBRARY_PAGE_SIZE = 60;
 let sharedRefreshTimer = null, ytPlaylistPreview = null;
 let syncInProgress = false, backgroundScanTimer = null, searchTriggeredSync = false;
 let viewingPlaylistIndex = -1;
+let prefetchQueue = new Set();
 
 const QUEUE_TARGET_MIN = 15, QUEUE_MAX_TOTAL = 200;
 
@@ -154,39 +152,30 @@ window.handleSystemBackPress=handleSystemBackPress;
 function loadLocalLibrary(){ try{ const r=localStorage.getItem(TG_LIBRARY_KEY); if(r){ tgLibrary=JSON.parse(r); return true; } }catch(e){} tgLibrary=[]; return false; }
 function saveLocalLibrary(){ try{ localStorage.setItem(TG_LIBRARY_KEY,JSON.stringify(tgLibrary)); }catch(e){} }
 
-/* ✅ PARALLEL CHUNKS FETCH */
 async function fetchSharedLibrary(){
   if(!isFirebaseReady()) return false;
   try{
-    console.log('☁️ Fetching shared...');
     const mainDoc=await firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]).get();
-    if(!mainDoc.exists){ console.log('☁️ No shared data'); return false; }
+    if(!mainDoc.exists) return false;
     const main=mainDoc.data();
     const localVer=parseInt(localStorage.getItem(SHARED_VERSION_KEY)||'0');
-    if(main.version<=localVer){ console.log(`☁️ Up-to-date v${main.version}`); return false; }
-    
-    console.log(`☁️ Fetching v${main.version} (${main.totalSongs} songs)`);
+    if(main.version<=localVer) return false;
     const chunkCount = main.chunkCount || 5;
     const chunkPromises = [];
     for(let i = 0; i < chunkCount; i++){
-      chunkPromises.push(
-        firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).doc('c'+i).get()
-      );
+      chunkPromises.push(firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).doc('c'+i).get());
     }
     const chunkDocs = await Promise.all(chunkPromises);
     const merged = [];
-    chunkDocs.forEach(doc => {
-      if(doc.exists){ const d = doc.data(); if(Array.isArray(d.songs)) merged.push(...d.songs); }
-    });
-    if(merged.length === 0){ console.log('❌ No songs'); return false; }
+    chunkDocs.forEach(doc => { if(doc.exists){ const d = doc.data(); if(Array.isArray(d.songs)) merged.push(...d.songs); } });
+    if(merged.length === 0) return false;
     const seen = new Set();
     tgLibrary = merged.filter(s => { if(!s.fileId || seen.has(s.fileId)) return false; seen.add(s.fileId); return true; });
     saveLocalLibrary();
     localStorage.setItem(SHARED_VERSION_KEY, String(main.version));
-    console.log(`✅ Loaded ${tgLibrary.length} songs from cloud`);
     showToast(`🎵 ${tgLibrary.length} songs loaded`);
     return true;
-  }catch(e){ console.log('❌ Cloud error:', e.message); return false; }
+  }catch(e){ return false; }
 }
 
 async function publishSharedLibrary(){
@@ -196,7 +185,6 @@ async function publishSharedLibrary(){
     const newVer=currentVer+1;
     const chunks=[];
     for(let i=0;i<tgLibrary.length;i+=CHUNK_SIZE) chunks.push(tgLibrary.slice(i,i+CHUNK_SIZE));
-    console.log(`☁️ Publishing v${newVer} (${tgLibrary.length} songs, ${chunks.length} chunks)`);
     const oldSnap=await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get();
     const delBatch=firestoreDB.batch();
     oldSnap.forEach(d=>delBatch.delete(d.ref));
@@ -206,9 +194,8 @@ async function publishSharedLibrary(){
     }
     await firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]).set({version:newVer,totalSongs:tgLibrary.length,chunkCount:chunks.length,lastUpdated:Date.now()});
     localStorage.setItem(SHARED_VERSION_KEY,String(newVer));
-    console.log(`✅ Published v${newVer}`);
     return true;
-  }catch(e){ console.log('❌ Publish err:', e.message); return false; }
+  }catch(e){ return false; }
 }
 
 function startSharedRefresh(){
@@ -229,21 +216,18 @@ function getTgThumb(k){ try{ const c=JSON.parse(localStorage.getItem(TG_THUMB_CA
 async function fetchTgThumb(id){
   if(!id||!TG_BOTS.length) return '';
   const c=getTgThumb(id); if(c) return c;
-  for(let idx = 0; idx < TG_BOTS.length; idx++){
-    try{
-      const r=await fetch(`https://api.telegram.org/bot${TG_BOTS[idx]}/getFile?file_id=${encodeURIComponent(id)}`);
-      if(!r.ok) continue;
-      const d=await r.json();
-      if(!d.ok||!d.result?.file_path) continue;
-      const url=`https://api.telegram.org/file/bot${TG_BOTS[idx]}/${d.result.file_path}`;
-      saveTgThumb(id,url); return url;
-    }catch(e){ continue; }
-  }
-  return '';
+  /* Parallel — 5 bots race */
+  const promises = TG_BOTS.map(async (bot) => {
+    const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(id)}`);
+    if(!r.ok) throw new Error('http');
+    const d = await r.json();
+    if(!d.ok||!d.result?.file_path) throw new Error('tg');
+    return `https://api.telegram.org/file/bot${bot}/${d.result.file_path}`;
+  });
+  try{ const url = await Promise.any(promises); saveTgThumb(id,url); return url; }catch(e){ return ''; }
 }
 
 async function syncTgLibrary(forceFull=false){
-  console.log('=== SYNC ===');
   forceAdminMode();
   if(!isAdminDevice()) return tgLibrary;
   if(syncInProgress) return tgLibrary;
@@ -251,8 +235,7 @@ async function syncTgLibrary(forceFull=false){
   try{
     const added=await syncViaGetUpdates();
     if(added>0) showToast(`🎵 +${added} songs`);
-    saveLocalLibrary(); 
-    localStorage.setItem(TG_LAST_SYNC_KEY,Date.now().toString());
+    saveLocalLibrary(); localStorage.setItem(TG_LAST_SYNC_KEY,Date.now().toString());
     startBackgroundScan(forceFull);
   }catch(e){ showToast('⚠️ Sync error'); }
   syncInProgress=false; setSyncBtnState('idle','SYNC');
@@ -279,47 +262,31 @@ async function syncViaGetUpdates(){
   return added;
 }
 
-/* ✅ SMART SCAN — sirf channel end tak */
 function startBackgroundScan(forceFull=false){
-  if(backgroundScanTimer){ console.log('⏸️ Already running'); return; }
-  
+  if(backgroundScanTimer) return;
   getChannelRealMaxId().then(realMax => {
-    console.log(`📌 Channel real max ID: ${realMax}`);
     const lastScanned = forceFull ? 0 : parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0');
     const startId = lastScanned + 1;
-    
     if(!forceFull && lastScanned >= realMax && realMax > 0){
-      console.log('✅ Already scanned to end');
       if(tgLibrary.length > 0) publishSharedLibrary().catch(()=>{});
       return;
     }
-    
     const endId = realMax > 0 ? realMax + 20 : 2000;
-    if(startId > endId){ console.log('✅ Nothing new'); return; }
-    
-    console.log(`🚀 Smart scan ${startId} → ${endId}`);
+    if(startId > endId) return;
     showToast(`🚀 Scanning ${startId} → ${endId}`);
-    
     let consecutiveMisses = 0;
     const MAX_MISSES = 100;
-    
     backgroundScanTimer = setInterval(async()=>{
       const last = parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0');
-      
       if(last >= endId || consecutiveMisses >= MAX_MISSES){
         clearInterval(backgroundScanTimer); backgroundScanTimer=null;
-        console.log(`🏁 Scan complete! Total: ${tgLibrary.length}`);
         showToast(`✅ Scan done (${tgLibrary.length} songs)`);
         saveLocalLibrary();
-        if(tgLibrary.length>0){
-          const ok = await publishSharedLibrary().catch(()=>false);
-          console.log(ok ? '✅ Published to cloud!' : '❌ Publish failed');
-        }
+        if(tgLibrary.length>0) await publishSharedLibrary().catch(()=>{});
         renderLibrary(); renderRecommendedSection();
         setSyncBtnState('idle','SYNC');
         return;
       }
-      
       const rs = last+1, re = Math.min(rs+9, endId);
       try{
         const res = await scanRound(rs, re);
@@ -341,10 +308,7 @@ async function getChannelRealMaxId(){
     const d = await r.json();
     if(d.ok && d.result?.pinned_message?.message_id){
       const pinId = d.result.pinned_message.message_id;
-      if(pinId > 20){
-        localStorage.setItem('vaultify_channel_end_id', String(pinId));
-        return pinId;
-      }
+      if(pinId > 20){ localStorage.setItem('vaultify_channel_end_id', String(pinId)); return pinId; }
     }
   }catch(e){}
   const cached = parseInt(localStorage.getItem('vaultify_channel_end_id')||'0');
@@ -369,7 +333,6 @@ async function scanRound(startId, endId){
   return { added };
 }
 
-/* ✅ BOT IDX STORE */
 async function processIdWithBot(token, id){
   const botIdx = TG_BOTS.indexOf(token);
   const api = `https://api.telegram.org/bot${token}`;
@@ -466,7 +429,7 @@ function startHourlySync(){
   tgSyncTimer=setInterval(()=>{
     if(!isAdminDevice()||!navigator.onLine||document.visibilityState!=='visible') return;
     const last=parseInt(localStorage.getItem(TG_LAST_SYNC_KEY)||'0');
-    if(Date.now()-last<TG_SYNC_INTERVAL) return;
+    if(Date.now()-last<60*60*1000) return;
     syncTgLibrary(false).catch(()=>{});
   },60000);
 }
@@ -552,7 +515,7 @@ async function searchSaavnAndSC(query,limit=30){
 }
 async function workerSearch(query,limit=30){ return await searchSaavnAndSC(query,limit); }
 
-/* ✅ BOT IDX PLAYBACK */
+/* ✅ PARALLEL BOT FETCH — Fastest wins */
 async function workerStreamUrl(id){
   if(id.startsWith('saavn_')) return await saavnStreamUrl(id.replace('saavn_',''));
   if(id.startsWith('tg_')){
@@ -562,25 +525,38 @@ async function workerStreamUrl(id){
     
     const songMeta = tgLibrary.find(s => s.fileId === fileId);
     const storedBotIdx = songMeta?.botIdx ?? -1;
-    const order = storedBotIdx >= 0 
-      ? [storedBotIdx, ...TG_BOTS.map((_, i) => i).filter(i => i !== storedBotIdx)]
-      : TG_BOTS.map((_, i) => i);
     
-    for(const idx of order){
+    /* Stored bot first (fastest) */
+    if(storedBotIdx >= 0){
       try{
-        const api = `https://api.telegram.org/bot${TG_BOTS[idx]}`;
-        const r = await fetch(`${api}/getFile?file_id=${encodeURIComponent(fileId)}`);
-        if(!r.ok) continue;
-        const data = await r.json();
-        if(!data.ok || !data.result?.file_path) continue;
-        const streamUrl = `https://api.telegram.org/file/bot${TG_BOTS[idx]}/${data.result.file_path}`;
-        saveTgUrl(fileId, streamUrl);
-        console.log(`✅ URL from Bot${idx + 1}`);
-        return streamUrl;
-      }catch(e){ continue; }
+        const bot = TG_BOTS[storedBotIdx];
+        const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(fileId)}`);
+        if(r.ok){
+          const d = await r.json();
+          if(d.ok && d.result?.file_path){
+            const url = `https://api.telegram.org/file/bot${bot}/${d.result.file_path}`;
+            saveTgUrl(fileId, url);
+            return url;
+          }
+        }
+      }catch(e){}
     }
-    console.log(`❌ No bot could fetch`);
-    return null;
+    
+    /* ✅ Parallel fallback — saare 5 bots */
+    const promises = TG_BOTS.map(async (bot, idx) => {
+      if(idx === storedBotIdx) throw new Error('skip');
+      const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(fileId)}`);
+      if(!r.ok) throw new Error('http');
+      const d = await r.json();
+      if(!d.ok || !d.result?.file_path) throw new Error('tg');
+      return `https://api.telegram.org/file/bot${bot}/${d.result.file_path}`;
+    });
+    
+    try{
+      const url = await Promise.any(promises);
+      saveTgUrl(fileId, url);
+      return url;
+    }catch(e){ return null; }
   }
   return null;
 }
@@ -1066,6 +1042,25 @@ async function fetchDirectAudioStreamUrl(input,track){
   return await workerStreamUrl(input);
 }
 
+/* ✅ PREFETCH — instant next */
+async function prefetchUpcomingTracks(){
+  if(currentPlaylist.length === 0) return;
+  const toPrefetch = [];
+  for(let i = 1; i <= 3; i++){
+    const idx = currentTrackIndex + i;
+    if(idx >= currentPlaylist.length) break;
+    toPrefetch.push(currentPlaylist[idx]);
+  }
+  for(const t of toPrefetch){
+    if(!t || t.id.startsWith('blob:')) continue;
+    if(t._fileId && getTgUrl(t._fileId)) continue;
+    if(prefetchQueue.has(t.id)) continue;
+    prefetchQueue.add(t.id);
+    try{ await workerStreamUrl(t.id); }catch(e){}
+    setTimeout(() => prefetchQueue.delete(t.id), 30000);
+  }
+}
+
 async function playTrack(index){
   if(index<0||index>=currentPlaylist.length) return;
   currentTrackIndex=index;
@@ -1085,16 +1080,23 @@ async function playTrack(index){
     mainAudio.src=url; mainAudio.load();
     try{ await mainAudio.play(); setVisualState(true); return true; }catch(e){ return false; }
   };
-  if(track.id.startsWith('blob:')){ await tryPlay(track.id); return; }
-  if(track._directStream?.startsWith('http')){ if(await tryPlay(track._directStream)) return; }
-  const c=trackBlobCache.get(track.id);
-  if(c?.startsWith('blob:')){ if(await tryPlay(c)) return; }
-  const db=await cacheGet(track.id);
-  if(db?.url){ trackBlobCache.set(track.id,db.url); if(await tryPlay(db.url)) return; }
-  const streamUrl=await fetchDirectAudioStreamUrl(track.id,track);
-  if(streamUrl&&await tryPlay(streamUrl)) return;
-  showToast('⚠️ Playback failed'); setVisualState(false);
-  if(currentPlaylist.length>1) setTimeout(()=>playNext(),800);
+  if(track.id.startsWith('blob:')){ await tryPlay(track.id); }
+  else if(track._directStream?.startsWith('http')){ if(await tryPlay(track._directStream)){} }
+  else {
+    const c=trackBlobCache.get(track.id);
+    if(c?.startsWith('blob:')){ if(await tryPlay(c)){} }
+    else{
+      const db=await cacheGet(track.id);
+      if(db?.url){ trackBlobCache.set(track.id,db.url); if(await tryPlay(db.url)){} }
+      else{
+        const streamUrl=await fetchDirectAudioStreamUrl(track.id,track);
+        if(streamUrl && await tryPlay(streamUrl)){}
+        else { showToast('⚠️ Playback failed'); setVisualState(false); if(currentPlaylist.length>1) setTimeout(()=>playNext(),800); }
+      }
+    }
+  }
+  /* ✅ Instant prefetch next tracks */
+  setTimeout(prefetchUpcomingTracks, 100);
 }
 async function autoplayNext(){
   if(isRepeat){ playTrack(currentTrackIndex); return; }
@@ -1523,7 +1525,7 @@ else updateCertLiveDateTime();
 setInterval(updateCertLiveDateTime,1000);
 
 async function adminForcePublish(){ if(!isAdminDevice()) return showToast('❌ Admin only'); if(tgLibrary.length===0) return showToast('❌ Empty'); showToast('☁️ Publishing...'); const ok=await publishSharedLibrary(); showToast(ok?`✅ Published ${tgLibrary.length}`:'❌ Failed'); }
-function adminShowStats(){ const stats={isAdmin:isAdminDevice(),songs:tgLibrary.length,bots:TG_BOTS.length,lastScanned:parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0'),version:localStorage.getItem(SHARED_VERSION_KEY)||'0',activeChat:TG_ACTIVE_FORWARD_CHAT}; console.log('📊 Stats:',stats); return stats; }
+function adminShowStats(){ const stats={isAdmin:isAdminDevice(),songs:tgLibrary.length,bots:TG_BOTS.length,lastScanned:parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0'),version:localStorage.getItem(SHARED_VERSION_KEY)||'0',activeChat:TG_ACTIVE_FORWARD_CHAT}; return stats; }
 async function adminResetShared(){ if(!isAdminDevice()) return; if(!confirm('Reset shared library?')) return; try{ const oldSnap=await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get(); const batch=firestoreDB.batch(); oldSnap.forEach(d=>batch.delete(d.ref)); batch.delete(firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1])); await batch.commit(); localStorage.removeItem(SHARED_VERSION_KEY); showToast('✅ Reset'); }catch(e){ showToast('❌ Failed'); } }
 
 window.addEventListener('DOMContentLoaded',()=>{
@@ -1535,7 +1537,6 @@ window.addEventListener('DOMContentLoaded',()=>{
   
   setTimeout(async()=>{
     forceAdminMode();
-    console.log('👑 Admin check:', isAdminDevice());
     if(isAdminDevice()){
       continuousSyncLoop();
     } else {
@@ -1605,5 +1606,5 @@ Object.assign(window,{
   matchToSaavn, smartMatchTrack, matchToTgLibrary, scoreMatch, normalizeForMatch,
   openYtPlaylistModal, loadYtPlaylistPreview, renderYtPlaylistPreviewUI,
   playYtPlaylistNow, setSyncBtnState, showSyncHint, maybeShowSyncHint,
-  getChannelRealMaxId
+  getChannelRealMaxId, prefetchUpcomingTracks
 });
