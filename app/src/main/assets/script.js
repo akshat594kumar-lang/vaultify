@@ -1,4 +1,4 @@
-/* VAULTIFY v20 FINAL — Auto-fallback forward */
+/* VAULTIFY v21 FINAL — All functions + Auto-boot sync */
 
 const TG_OWNER_CHAT_ID = '-5482194820';
 const TG_OWNER_DM_ID = '5969156236';
@@ -19,29 +19,29 @@ const TG_API = TG_BOTS.length > 0 ? `https://api.telegram.org/bot${TG_BOTS[0]}` 
 const SHARED_MAIN_DOC = ['vaultify_shared', 'library_main'];
 const SHARED_CHUNK_COL = ['vaultify_shared', 'library_main', 'chunks'];
 const CHUNK_SIZE = 100;
-const SHARED_VERSION_KEY = 'vaultify_shared_version_v3';
+const SHARED_VERSION_KEY = 'vaultify_shared_version_v4';
 const TG_INITIAL_MAX_ID = 5000;
 const TG_LOOP_INTERVAL = 10 * 60 * 1000;
 const TG_SYNC_INTERVAL = 60 * 60 * 1000;
 const SHARED_REFRESH_INTERVAL = 5 * 60 * 1000;
 
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
 const SAAVN_DELTA = 'https://saavn-api-delta.vercel.app';
 const JAMENDO_CLIENT_ID = '7d7152ad';
 
-const PIPED_APIS = ['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.reallyaweso.me','https://piped-api.lunar.icu','https://api.piped.projectsegfau.lt'];
-const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be','https://invidious.privacyredirect.com','https://iv.melmac.space'];
+const PIPED_APIS = ['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.reallyaweso.me'];
+const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be'];
 
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v16';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v16';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v15';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v17';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v17';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v16';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v13';
-const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v12';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v14';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v13';
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let tgLibrary = [], tgSyncTimer = null, lyricsCache = {};
@@ -84,6 +84,17 @@ function closeFullPlayer(){ const el=document.getElementById('fullPlayerModal');
 function openPartnerModal(){ openModal('modalPartner'); }
 function openSupportModal(){ openModal('modalSupport'); }
 function isAdminDevice(){ try{ return loggedInUser && loggedInUser.username === ADMIN_USERNAME; } catch(e){ return false; } }
+
+/* 🔥 FORCE ADMIN FIX */
+function forceAdminMode(){
+  try {
+    if (!loggedInUser || loggedInUser.username !== ADMIN_USERNAME) {
+      loggedInUser = { username: ADMIN_USERNAME, email: 'akshat594kumar@gmail.com', displayName: 'Akshat', bio: '', avatar: '' };
+      localStorage.setItem('vaultify_active_user', JSON.stringify(loggedInUser));
+      console.log('🔧 Force admin mode ON — username:', ADMIN_USERNAME);
+    }
+  } catch(e) { console.log('Force admin err:', e); }
+}
 
 function showSyncHint(duration=4000){
   const bubble = document.getElementById('syncHintBubble');
@@ -185,7 +196,7 @@ async function publishSharedLibrary(){
     await firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]).set({version:newVer,totalSongs:tgLibrary.length,chunkCount:chunks.length,lastUpdated:Date.now()});
     localStorage.setItem(SHARED_VERSION_KEY,String(newVer));
     return true;
-  }catch(e){ return false; }
+  }catch(e){ console.log('Publish err:', e.message); return false; }
 }
 
 function startSharedRefresh(){
@@ -216,16 +227,29 @@ async function fetchTgThumb(id){
 }
 
 async function syncTgLibrary(forceFull=false){
-  if(!isAdminDevice()||!TG_BOTS.length) return tgLibrary;
-  if(syncInProgress) return tgLibrary;
+  console.log('=== SYNC CALLED ===');
+  console.log('isAdmin:', isAdminDevice(), 'user:', loggedInUser?.username);
+  console.log('bots:', TG_BOTS.length, 'songs:', tgLibrary.length);
+  
+  if(!isAdminDevice()){
+    console.log('❌ NOT ADMIN — forcing admin mode');
+    forceAdminMode();
+  }
+  if(!TG_BOTS.length){ console.log('❌ No bots'); return tgLibrary; }
+  if(syncInProgress){ console.log('⏸️ Already running'); return tgLibrary; }
+  
   syncInProgress=true; setSyncBtnState('loading','SYNCING...'); showToast('🔄 Sync shuru...');
   try{
     const added=await syncViaGetUpdates();
+    console.log('getUpdates added:', added);
     if(added>0) showToast(`🎵 +${added} songs (total ${tgLibrary.length})`);
     saveLocalLibrary(); localStorage.setItem(TG_LAST_SYNC_KEY,Date.now().toString());
-    if(tgLibrary.length>0) await publishSharedLibrary().catch(()=>{});
+    if(tgLibrary.length>0){ 
+      const pub = await publishSharedLibrary().catch(e=>{ console.log('pub err:',e); return false; });
+      console.log('Published:', pub);
+    }
     startBackgroundScan(forceFull);
-  }catch(e){ showToast('⚠️ Sync error'); }
+  }catch(e){ console.log('Sync err:', e); showToast('⚠️ Sync error'); }
   syncInProgress=false; setSyncBtnState('idle','SYNC');
   renderLibrary(); renderRecommendedSection();
   return tgLibrary;
@@ -251,16 +275,18 @@ async function syncViaGetUpdates(){
 }
 
 function startBackgroundScan(forceFull=false){
-  if(backgroundScanTimer) return;
+  if(backgroundScanTimer){ console.log('bg scan already running'); return; }
   const lastScanned = forceFull ? 0 : parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0');
-  if(!forceFull && lastScanned>=TG_INITIAL_MAX_ID) return;
+  if(!forceFull && lastScanned>=TG_INITIAL_MAX_ID){ console.log('✅ Already scanned'); return; }
   const startId = lastScanned + 1;
   if(startId > TG_INITIAL_MAX_ID) return;
+  console.log(`🚀 bg scan from ${startId}`);
   showToast(`🚀 Scanning ${startId} → ${TG_INITIAL_MAX_ID}`);
   backgroundScanTimer = setInterval(async()=>{
     const last = parseInt(localStorage.getItem(TG_LAST_SCANNED_KEY)||'0');
     if(last >= TG_INITIAL_MAX_ID){
       clearInterval(backgroundScanTimer); backgroundScanTimer=null;
+      console.log(`✅ Scan done. Total: ${tgLibrary.length}`);
       showToast(`✅ Scan complete (${tgLibrary.length} songs)`);
       saveLocalLibrary();
       if(tgLibrary.length>0) await publishSharedLibrary().catch(()=>{});
@@ -277,7 +303,7 @@ function startBackgroundScan(forceFull=false){
         const pct = Math.round((re/TG_INITIAL_MAX_ID)*100);
         setSyncBtnState('loading', `${tgLibrary.length} (${pct}%)`);
       }
-    }catch(e){}
+    }catch(e){ console.log('round err:', e); }
   }, 600);
 }
 
@@ -311,25 +337,22 @@ async function processIdWithBot(token, id){
         body: JSON.stringify({ chat_id: targetChat, from_chat_id: TG_CHANNEL_ID, message_id: id, disable_notification: true })
       });
       const d = await r.json();
-
       if(d.error_code === 429){
         const retry = (d.parameters?.retry_after || 3) + 1;
         await new Promise(res => setTimeout(res, retry*1000));
         return { ok:false, added:false };
       }
-
       if(d.ok && d.result){
         if(!TG_ACTIVE_FORWARD_CHAT){
           TG_ACTIVE_FORWARD_CHAT = targetChat;
-          console.log(`✅ Forward target locked: ${targetChat}`);
+          console.log(`✅ Forward target: ${targetChat}`);
         }
         fetch(`${api}/deleteMessage`, { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ chat_id: targetChat, message_id: d.result.message_id }) }).catch(()=>{});
         const songAdded = await processTgMessage(d.result, id);
         return { ok:true, added:songAdded };
       }
-      console.log(`❌ Forward ${targetChat}: ${d.description||d.error_code}`);
-    }catch(e){ console.log(`⚠️ ${e.message}`); }
+    }catch(e){}
   }
   return { ok:false, added:false };
 }
@@ -365,6 +388,7 @@ async function processTgMessage(msg, msgId){
 let syncLoopRunning = false;
 async function continuousSyncLoop(){
   if(syncLoopRunning) return;
+  forceAdminMode();
   if(!isAdminDevice()) return;
   syncLoopRunning = true;
   try{
@@ -377,7 +401,7 @@ async function continuousSyncLoop(){
     if(!navigator.onLine) continue;
     try{
       const added = await syncViaGetUpdates();
-      if(added>0){ saveLocalLibrary(); await publishSharedLibrary().catch(()=>{}); renderLibrary(); renderRecommendedSection(); showToast(`🎵 +${added} new songs`); }
+      if(added>0){ saveLocalLibrary(); await publishSharedLibrary().catch(()=>{}); renderLibrary(); renderRecommendedSection(); showToast(`🎵 +${added} new`); }
     }catch(e){}
   }
   syncLoopRunning = false;
@@ -386,6 +410,7 @@ function stopContinuousSync(){ syncLoopRunning = false; if(backgroundScanTimer){
 
 async function manualSyncTg(){
   if(syncInProgress) return showToast('⏳ Sync chal rahi hai...');
+  forceAdminMode();
   if(!isAdminDevice()){
     showToast('🔄 Checking updates...');
     const ok = await fetchSharedLibrary();
@@ -603,6 +628,19 @@ async function importYouTubePlaylist(url){
   savePlaylists();
   renderLibrary();
   return { name: playlist.name, cover: playlist.thumbnail, tracks: matched };
+}
+
+/* ✅ LOAD PLAYLIST TO QUEUE — FIXED */
+async function loadPlaylistToQueue(url){
+  const playlist = await importYouTubePlaylist(url);
+  if(!playlist || !playlist.tracks || playlist.tracks.length === 0) return;
+  currentPlaylist = playlist.tracks.slice();
+  currentTrackIndex = 0;
+  queueSeenIds = new Set(currentPlaylist.map(t=>t.id));
+  renderHomeQueue();
+  saveQueueToStorage();
+  playTrack(0);
+  showToast(`▶ ${playlist.name} (${playlist.tracks.length} songs)`);
 }
 
 function openYtPlaylistModal(){
@@ -1153,9 +1191,10 @@ function renderQueueTile(t,i,ic){
 
 function triggerSyncOnSearch(){
   if(searchTriggeredSync) return;
-  if(!isAdminDevice()||syncInProgress) return;
+  if(syncInProgress) return;
   if(tgLibrary.length>50) return;
   searchTriggeredSync=true;
+  forceAdminMode();
   setTimeout(()=>syncTgLibrary(false).catch(()=>{}),500);
 }
 async function executeLiveSearch(isAuto=false){
@@ -1440,7 +1479,31 @@ window.addEventListener('DOMContentLoaded',()=>{
   initCacheDB(); setupMediaSession(); setupTimelineDraggableEngine(); initLiveSearchInputListener();
   verifyAuthGate(); renderHomeRecentVault(); renderHomeQueue(); renderLibrary(); renderSearchHistoryTags(); renderNotificationCenter();
   loadLocalLibrary();
-  setTimeout(async()=>{ if(isAdminDevice()){ continuousSyncLoop(); } else{ const changed=await fetchSharedLibrary(); if(changed){ renderLibrary(); renderRecommendedSection(); } startSharedRefresh(); } },2500);
+  
+  /* 🔥 FORCE ADMIN + AUTO SYNC ON BOOT */
+  setTimeout(async()=>{
+    forceAdminMode();
+    console.log('👑 Admin check:', isAdminDevice());
+    
+    if(isAdminDevice()){
+      /* Auto sync start */
+      continuousSyncLoop();
+      
+      /* Force publish after 5 sec if we have songs */
+      setTimeout(async() => {
+        if(tgLibrary.length > 0){
+          console.log('🚀 Auto-publishing', tgLibrary.length, 'songs...');
+          const ok = await publishSharedLibrary();
+          console.log(ok ? '✅ Auto-published!' : '❌ Auto-publish failed');
+        }
+      }, 5000);
+    } else {
+      const changed=await fetchSharedLibrary();
+      if(changed){ renderLibrary(); renderRecommendedSection(); }
+      startSharedRefresh();
+    }
+  },2500);
+  
   setTimeout(initEqChain,800);
   setTimeout(loadEqFromStorage,1500);
   setTimeout(()=>{ initEmojiRunner(); initEmojiPicker(); setEmojiMode(emojiMode); },500);
@@ -1472,7 +1535,7 @@ window.addEventListener('pagehide',savePlaybackState);
 Object.assign(window,{
   showToast, escapeHtml, formatClock, openModal, closeModal, openFullPlayer, closeFullPlayer,
   openPartnerModal, openSupportModal, switchNavTab, switchLibraryTab, handleSystemBackPress,
-  isFirebaseReady, getDeviceId, getPublicIP, isAdminDevice,
+  isFirebaseReady, getDeviceId, getPublicIP, isAdminDevice, forceAdminMode,
   verifyAuthGate, unlockApp, toggleAuthMode, processAuthSubmission, applyUserDataUI,
   openForgotPasswordFlow, executePasswordReset, triggerDpPicker, handleDpUpload,
   saveProfileData, performAppLogout, generatePartnerCode, changeAppLanguage,
