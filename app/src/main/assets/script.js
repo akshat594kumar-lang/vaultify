@@ -1,4 +1,4 @@
-/* VAULTIFY v23 FINAL */
+/* VAULTIFY v24 FINAL — Sequential bots + Light prefetch */
 
 const TG_OWNER_CHAT_ID = '-5482194820';
 const TG_OWNER_DM_ID = '5969156236';
@@ -19,7 +19,7 @@ const TG_API = TG_BOTS.length > 0 ? `https://api.telegram.org/bot${TG_BOTS[0]}` 
 const SHARED_MAIN_DOC = ['vaultify_shared', 'library_main'];
 const SHARED_CHUNK_COL = ['vaultify_shared', 'library_main', 'chunks'];
 const CHUNK_SIZE = 100;
-const SHARED_VERSION_KEY = 'vaultify_shared_version_v6';
+const SHARED_VERSION_KEY = 'vaultify_shared_version_v7';
 const TG_LOOP_INTERVAL = 10 * 60 * 1000;
 const SHARED_REFRESH_INTERVAL = 5 * 60 * 1000;
 
@@ -32,13 +32,13 @@ const JAMENDO_CLIENT_ID = '7d7152ad';
 const PIPED_APIS = ['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.reallyaweso.me'];
 const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be'];
 
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v19';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v19';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v18';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v20';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v20';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v19';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v16';
-const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v15';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v17';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v16';
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let tgLibrary = [], tgSyncTimer = null, lyricsCache = {};
@@ -69,6 +69,7 @@ let sharedRefreshTimer = null, ytPlaylistPreview = null;
 let syncInProgress = false, backgroundScanTimer = null, searchTriggeredSync = false;
 let viewingPlaylistIndex = -1;
 let prefetchQueue = new Set();
+let prefetchTimer = null;
 
 const QUEUE_TARGET_MIN = 15, QUEUE_MAX_TOTAL = 200;
 
@@ -213,18 +214,25 @@ function getTgUrl(f){ try{ const c=JSON.parse(localStorage.getItem(TG_URL_CACHE_
 function saveTgThumb(k,u){ try{ const c=JSON.parse(localStorage.getItem(TG_THUMB_CACHE_KEY)||'{}'); c[k]={url:u,t:Date.now()}; localStorage.setItem(TG_THUMB_CACHE_KEY,JSON.stringify(c)); }catch(e){} }
 function getTgThumb(k){ try{ const c=JSON.parse(localStorage.getItem(TG_THUMB_CACHE_KEY)||'{}'); const e=c[k]; if(e&&(Date.now()-e.t)<TG_THUMB_CACHE_TTL) return e.url; }catch(e){} return null; }
 
+/* ✅ Thumbnail — sequential bots */
 async function fetchTgThumb(id){
   if(!id||!TG_BOTS.length) return '';
   const c=getTgThumb(id); if(c) return c;
-  /* Parallel — 5 bots race */
-  const promises = TG_BOTS.map(async (bot) => {
-    const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(id)}`);
-    if(!r.ok) throw new Error('http');
-    const d = await r.json();
-    if(!d.ok||!d.result?.file_path) throw new Error('tg');
-    return `https://api.telegram.org/file/bot${bot}/${d.result.file_path}`;
-  });
-  try{ const url = await Promise.any(promises); saveTgThumb(id,url); return url; }catch(e){ return ''; }
+  for(let i = 0; i < TG_BOTS.length; i++){
+    try{
+      const ctrl = new AbortController();
+      const tm = setTimeout(()=>ctrl.abort(), 3000);
+      const r = await fetch(`https://api.telegram.org/bot${TG_BOTS[i]}/getFile?file_id=${encodeURIComponent(id)}`, {signal: ctrl.signal});
+      clearTimeout(tm);
+      if(!r.ok) continue;
+      const d = await r.json();
+      if(!d.ok || !d.result?.file_path) continue;
+      const url = `https://api.telegram.org/file/bot${TG_BOTS[i]}/${d.result.file_path}`;
+      saveTgThumb(id, url);
+      return url;
+    }catch(e){ continue; }
+  }
+  return '';
 }
 
 async function syncTgLibrary(forceFull=false){
@@ -515,7 +523,7 @@ async function searchSaavnAndSC(query,limit=30){
 }
 async function workerSearch(query,limit=30){ return await searchSaavnAndSC(query,limit); }
 
-/* ✅ PARALLEL BOT FETCH — Fastest wins */
+/* ✅ SEQUENTIAL BOT FETCH — fast + no rate limit */
 async function workerStreamUrl(id){
   if(id.startsWith('saavn_')) return await saavnStreamUrl(id.replace('saavn_',''));
   if(id.startsWith('tg_')){
@@ -526,11 +534,14 @@ async function workerStreamUrl(id){
     const songMeta = tgLibrary.find(s => s.fileId === fileId);
     const storedBotIdx = songMeta?.botIdx ?? -1;
     
-    /* Stored bot first (fastest) */
+    /* FAST PATH: stored bot pehle */
     if(storedBotIdx >= 0){
       try{
         const bot = TG_BOTS[storedBotIdx];
-        const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(fileId)}`);
+        const ctrl = new AbortController();
+        const tm = setTimeout(()=>ctrl.abort(), 4000);
+        const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(fileId)}`, {signal: ctrl.signal});
+        clearTimeout(tm);
         if(r.ok){
           const d = await r.json();
           if(d.ok && d.result?.file_path){
@@ -542,21 +553,24 @@ async function workerStreamUrl(id){
       }catch(e){}
     }
     
-    /* ✅ Parallel fallback — saare 5 bots */
-    const promises = TG_BOTS.map(async (bot, idx) => {
-      if(idx === storedBotIdx) throw new Error('skip');
-      const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(fileId)}`);
-      if(!r.ok) throw new Error('http');
-      const d = await r.json();
-      if(!d.ok || !d.result?.file_path) throw new Error('tg');
-      return `https://api.telegram.org/file/bot${bot}/${d.result.file_path}`;
-    });
-    
-    try{
-      const url = await Promise.any(promises);
-      saveTgUrl(fileId, url);
-      return url;
-    }catch(e){ return null; }
+    /* FALLBACK: baaki bots sequential */
+    const order = TG_BOTS.map((_, i) => i).filter(i => i !== storedBotIdx);
+    for(const idx of order){
+      try{
+        const bot = TG_BOTS[idx];
+        const ctrl = new AbortController();
+        const tm = setTimeout(()=>ctrl.abort(), 3000);
+        const r = await fetch(`https://api.telegram.org/bot${bot}/getFile?file_id=${encodeURIComponent(fileId)}`, {signal: ctrl.signal});
+        clearTimeout(tm);
+        if(!r.ok) continue;
+        const d = await r.json();
+        if(!d.ok || !d.result?.file_path) continue;
+        const url = `https://api.telegram.org/file/bot${bot}/${d.result.file_path}`;
+        saveTgUrl(fileId, url);
+        return url;
+      }catch(e){ continue; }
+    }
+    return null;
   }
   return null;
 }
@@ -976,7 +990,7 @@ function setupMediaSession(){
       navigator.mediaSession.setActionHandler('seekto',d=>{ if(d.seekTime!==undefined) seekAudioTo(d.seekTime); });
     }catch(e){}
   }
-  mainAudio.addEventListener('error',()=>{ showToast('⚠️ Audio error'); setVisualState(false); if(currentPlaylist.length>1) setTimeout(()=>playNext(),800); });
+  mainAudio.addEventListener('error',()=>{ setVisualState(false); if(currentPlaylist.length>1) setTimeout(()=>playNext(),800); });
   mainAudio.addEventListener('timeupdate',()=>{
     if(!mainAudio.duration||isDraggingTimeline) return;
     const pos=mainAudio.currentTime, dur=mainAudio.duration;
@@ -1042,23 +1056,37 @@ async function fetchDirectAudioStreamUrl(input,track){
   return await workerStreamUrl(input);
 }
 
-/* ✅ PREFETCH — instant next */
+/* ✅ PREFETCH — Light (2 songs, delayed) */
 async function prefetchUpcomingTracks(){
-  if(currentPlaylist.length === 0) return;
-  const toPrefetch = [];
-  for(let i = 1; i <= 3; i++){
-    const idx = currentTrackIndex + i;
-    if(idx >= currentPlaylist.length) break;
-    toPrefetch.push(currentPlaylist[idx]);
-  }
-  for(const t of toPrefetch){
-    if(!t || t.id.startsWith('blob:')) continue;
-    if(t._fileId && getTgUrl(t._fileId)) continue;
-    if(prefetchQueue.has(t.id)) continue;
+  if(prefetchTimer) clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(async () => {
+    if(currentPlaylist.length === 0) return;
+    
+    const nextIdx = currentTrackIndex + 1;
+    if(nextIdx >= currentPlaylist.length) return;
+    const t = currentPlaylist[nextIdx];
+    if(!t || t.id.startsWith('blob:')) return;
+    if(t._fileId && getTgUrl(t._fileId)) return;
+    if(prefetchQueue.has(t.id)) return;
+    
     prefetchQueue.add(t.id);
-    try{ await workerStreamUrl(t.id); }catch(e){}
-    setTimeout(() => prefetchQueue.delete(t.id), 30000);
-  }
+    try { await workerStreamUrl(t.id); } catch(e) {}
+    setTimeout(()=>prefetchQueue.delete(t.id), 60000);
+    
+    setTimeout(async () => {
+      const nnIdx = currentTrackIndex + 2;
+      if(nnIdx >= currentPlaylist.length) return;
+      const tt = currentPlaylist[nnIdx];
+      if(!tt || tt.id.startsWith('blob:')) return;
+      if(tt._fileId && getTgUrl(tt._fileId)) return;
+      if(prefetchQueue.has(tt.id)) return;
+      
+      prefetchQueue.add(tt.id);
+      try { await workerStreamUrl(tt.id); } catch(e) {}
+      setTimeout(()=>prefetchQueue.delete(tt.id), 60000);
+    }, 3000);
+    
+  }, 2500);
 }
 
 async function playTrack(index){
@@ -1091,12 +1119,11 @@ async function playTrack(index){
       else{
         const streamUrl=await fetchDirectAudioStreamUrl(track.id,track);
         if(streamUrl && await tryPlay(streamUrl)){}
-        else { showToast('⚠️ Playback failed'); setVisualState(false); if(currentPlaylist.length>1) setTimeout(()=>playNext(),800); }
+        else { setVisualState(false); if(currentPlaylist.length>1) setTimeout(()=>playNext(),800); }
       }
     }
   }
-  /* ✅ Instant prefetch next tracks */
-  setTimeout(prefetchUpcomingTracks, 100);
+  setTimeout(prefetchUpcomingTracks, 2500);
 }
 async function autoplayNext(){
   if(isRepeat){ playTrack(currentTrackIndex); return; }
