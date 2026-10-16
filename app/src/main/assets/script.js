@@ -1,8 +1,9 @@
 /* ═══════════════════════════════════════════════════════════════ */
-/* VAULTIFY — v12 FINAL                                             */
-/* ✅ Multi-bot TG sync (5 bots)                                     */
+/* VAULTIFY — v13 FINAL                                             */
+/* ✅ Multi-bot TG sync (health check + 250 fail tolerance)         */
 /* ✅ Firestore shared library (admin/user auto)                    */
-/* ✅ YT playlist import + TG-first smart matching                  */
+/* ✅ YT playlist import with modal + preview                       */
+/* ✅ TG-first fuzzy matching                                       */
 /* ✅ Continuous loop + Admin helpers                               */
 /* ═══════════════════════════════════════════════════════════════ */
 
@@ -17,28 +18,24 @@ const TG_BOTS = [
   '8967394415:AAFGPhsxrQQBGhQN7S0RAiQH9CUQJYy-mCc',
 ].filter(t => t && t.length > 20 && !t.includes('PASTE_BOT'));
 
-/* 🔑 ADMIN — jis username se Akshat login karta hai */
 const ADMIN_USERNAME = 'akshat';
 
 const TG_CHANNEL_ID = '-1004487475420';
 const TG_OWNER_CHAT_ID = '5969156236';
 const TG_API = TG_BOTS.length > 0 ? `https://api.telegram.org/bot${TG_BOTS[0]}` : '';
 
-/* ☁️ FIRESTORE SHARED */
 const SHARED_MAIN_DOC = ['vaultify_shared', 'library_main'];
 const SHARED_CHUNK_COL = ['vaultify_shared', 'library_main', 'chunks'];
 const CHUNK_SIZE = 100;
 const SHARED_VERSION_KEY = 'vaultify_shared_version_v1';
 
-/* ⏱️ TIMINGS */
 const TG_INITIAL_MAX_ID = 5000;
 const TG_NEW_CHECK_RANGE = 200;
 const TG_LOOP_INTERVAL = 10 * 60 * 1000;
 const TG_SYNC_INTERVAL = 60 * 60 * 1000;
 const SHARED_REFRESH_INTERVAL = 5 * 60 * 1000;
 
-/* 🔧 CONFIG */
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 const CACHE_MAX_SIZE_MB = 500;
 const CACHE_MAX_SONGS = 150;
 const SC_CLIENT_ID = 'a3e059563d7fd3372b49b37f00a00bcf';
@@ -47,13 +44,13 @@ const JAMENDO_CLIENT_ID = '7d7152ad';
 const PIPED_APIS = ['https://pipedapi.kavin.rocks','https://pipedapi.adminforge.de','https://api.piped.yt','https://pipedapi.reallyaweso.me'];
 const INVIDIOUS_APIS = ['https://inv.nadeko.net','https://invidious.nerdvpn.de','https://yewtu.be','https://invidious.privacyredirect.com'];
 
-const TG_LIBRARY_KEY = 'vaultify_tg_library_v8';
-const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v8';
-const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v7';
+const TG_LIBRARY_KEY = 'vaultify_tg_library_v9';
+const TG_URL_CACHE_KEY = 'vaultify_tg_url_cache_v9';
+const TG_THUMB_CACHE_KEY = 'vaultify_tg_thumb_cache_v8';
 const TG_URL_CACHE_TTL = 50 * 60 * 1000;
 const TG_THUMB_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v5';
-const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v4';
+const TG_LAST_SYNC_KEY = 'vaultify_tg_last_sync_v6';
+const TG_LAST_SCANNED_KEY = 'vaultify_tg_last_scanned_id_v5';
 
 let firebaseApp = null, firestoreDB = null, firebaseAuth = null, firebaseReady = false;
 let workerReady = true;
@@ -113,6 +110,7 @@ let queueSeenIds = new Set();
 let libraryRenderPage = 0;
 const LIBRARY_PAGE_SIZE = 60;
 let sharedRefreshTimer = null;
+let ytPlaylistPreview = null;
 
 const QUEUE_TARGET_MIN = 15;
 const QUEUE_MAX_TOTAL = 200;
@@ -136,9 +134,7 @@ function openPartnerModal() { openModal('modalPartner'); }
 function openSupportModal() { openModal('modalSupport'); }
 
 function isAdminDevice() {
-  try {
-    if (loggedInUser && loggedInUser.username === ADMIN_USERNAME) return true;
-  } catch (e) {}
+  try { if (loggedInUser && loggedInUser.username === ADMIN_USERNAME) return true; } catch (e) {}
   return false;
 }
 
@@ -199,15 +195,12 @@ async function fetchSharedLibrary() {
     const main = mainDoc.data();
     const localVer = parseInt(localStorage.getItem(SHARED_VERSION_KEY) || '0');
     if (main.version <= localVer) { console.log(`☁️ Up-to-date (v${main.version})`); return false; }
-
     console.log(`☁️ Fetching v${main.version} (${main.totalSongs} songs)`);
     const chunksSnap = await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).orderBy('index').get();
     if (chunksSnap.empty) return false;
-
     const merged = [];
     chunksSnap.forEach(doc => { const data = doc.data(); if (Array.isArray(data.songs)) merged.push(...data.songs); });
     if (merged.length === 0) return false;
-
     const seen = new Set();
     tgLibrary = merged.filter(s => { if (!s.fileId || seen.has(s.fileId)) return false; seen.add(s.fileId); return true; });
     saveLocalLibrary();
@@ -226,21 +219,17 @@ async function publishSharedLibrary() {
     const chunks = [];
     for (let i = 0; i < tgLibrary.length; i += CHUNK_SIZE) chunks.push(tgLibrary.slice(i, i + CHUNK_SIZE));
     console.log(`☁️ Publishing v${newVer} (${tgLibrary.length} songs, ${chunks.length} chunks)`);
-
     const oldSnap = await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).get();
     const delBatch = firestoreDB.batch();
     oldSnap.forEach(d => delBatch.delete(d.ref));
     await delBatch.commit();
-
     for (let i = 0; i < chunks.length; i++) {
       await firestoreDB.collection(SHARED_CHUNK_COL[0]).doc(SHARED_CHUNK_COL[1]).collection(SHARED_CHUNK_COL[2]).doc('c' + i).set({ index: i, songs: chunks[i] });
     }
-
     await firestoreDB.collection(SHARED_MAIN_DOC[0]).doc(SHARED_MAIN_DOC[1]).set({
       version: newVer, totalSongs: tgLibrary.length, chunkCount: chunks.length,
       lastUpdated: Date.now(), updatedBy: loggedInUser?.username || 'admin'
     });
-
     localStorage.setItem(SHARED_VERSION_KEY, String(newVer));
     console.log(`✅ Published v${newVer}`);
     return true;
@@ -321,31 +310,57 @@ async function runForwardScanOnce(forceFull = false) {
   const startId = lastScanned + 1;
   const endId = lastScanned < TG_INITIAL_MAX_ID ? TG_INITIAL_MAX_ID : lastScanned + TG_NEW_CHECK_RANGE;
   if (startId > endId) return 0;
+  console.log(`📥 Forward scan: ${startId} → ${endId}`);
   const result = await parallelScanForward(startId, endId);
-  if (result.maxSuccessId >= endId) localStorage.setItem(TG_LAST_SCANNED_KEY, String(endId));
-  else if (result.maxSuccessId > lastScanned) localStorage.setItem(TG_LAST_SCANNED_KEY, String(result.maxSuccessId));
+  if (result.maxSuccessId > lastScanned) {
+    localStorage.setItem(TG_LAST_SCANNED_KEY, String(result.maxSuccessId));
+  }
   return result.added;
 }
 
+async function getHealthyBots() {
+  const healthy = [];
+  const results = await Promise.all(TG_BOTS.map(async (token, i) => {
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const d = await r.json();
+      return { token, index: i + 1, ok: d.ok === true, username: d.result?.username || '?' };
+    } catch (e) {
+      return { token, index: i + 1, ok: false, username: '?' };
+    }
+  }));
+  results.forEach(r => { if (r.ok) healthy.push(r); });
+  console.log(`🩺 Healthy bots: ${healthy.length}/${TG_BOTS.length}`, results.map(r => `${r.index}:${r.ok?'✅':'❌'}`).join(' '));
+  return healthy;
+}
+
 async function parallelScanForward(startId, endId) {
-  const bots = TG_BOTS.slice();
+  const healthy = await getHealthyBots();
+  const bots = healthy.length > 0 ? healthy : TG_BOTS.map((token, i) => ({ token, index: i + 1 }));
   if (!bots.length) return { added: 0, maxSuccessId: startId - 1 };
-  const chunkSize = Math.ceil((endId - startId + 1) / bots.length);
-  console.log(`🤖 Scan ${startId}-${endId} × ${bots.length} bots`);
-  const results = await Promise.all(bots.map((token, i) => {
+
+  const totalIds = endId - startId + 1;
+  const chunkSize = Math.ceil(totalIds / bots.length);
+  console.log(`🤖 Scan ${startId}-${endId} × ${bots.length} bots (chunk ~${chunkSize})`);
+
+  const results = await Promise.all(bots.map((bot, i) => {
     const cs = startId + i * chunkSize;
     const ce = Math.min(cs + chunkSize - 1, endId);
-    if (cs > endId) return Promise.resolve({ added: 0, maxId: 0 });
-    return scanChunkWithBot(token, cs, ce, i + 1);
+    if (cs > endId) return Promise.resolve({ added: 0, maxId: 0, botIdx: bot.index });
+    return scanChunkWithBot(bot.token, cs, ce, bot.index);
   }));
+
   let total = 0, maxId = startId - 1;
   results.forEach(r => { total += r.added; if (r.maxId > maxId) maxId = r.maxId; });
+  console.log(`🤖 Parallel done: +${total}, maxId=${maxId}`);
   return { added: total, maxSuccessId: maxId };
 }
 
 async function scanChunkWithBot(token, cs, ce, n) {
   const api = `https://api.telegram.org/bot${token}`;
-  let added = 0, maxId = cs - 1;
+  let added = 0, maxId = cs - 1, consecutiveFails = 0;
+  const MAX_CONSECUTIVE_FAILS = 250;
+
   for (let id = cs; id <= ce; id++) {
     try {
       const r = await fetch(`${api}/forwardMessage`, {
@@ -353,23 +368,41 @@ async function scanChunkWithBot(token, cs, ce, n) {
         body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, from_chat_id: TG_CHANNEL_ID, message_id: id, disable_notification: true })
       });
       const d = await r.json();
+
       if (d.error_code === 429) {
         const retry = (d.parameters?.retry_after || 5) + 1;
         console.log(`⏳ Bot${n} 429 at ${id}, wait ${retry}s`);
         await new Promise(r => setTimeout(r, retry * 1000));
         id--; continue;
       }
+
       if (d.ok && d.result) {
-        fetch(`${api}/deleteMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, message_id: d.result.message_id }) }).catch(() => {});
+        fetch(`${api}/deleteMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: TG_OWNER_CHAT_ID, message_id: d.result.message_id })
+        }).catch(() => {});
         if (await processTgMessage(d.result, id)) added++;
         maxId = id;
+        consecutiveFails = 0;
+        if (added % 25 === 0 && added > 0) {
+          saveLocalLibrary();
+          localStorage.setItem(TG_LAST_SCANNED_KEY, String(maxId));
+        }
+      } else {
+        consecutiveFails++;
+        if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
+          console.log(`🤖 Bot${n} chunk ${cs}-${ce}: 250 consecutive misses, stopping at ${id}`);
+          break;
+        }
       }
-      await new Promise(r => setTimeout(r, 80));
-    } catch (e) { await new Promise(r => setTimeout(r, 400)); }
+      await new Promise(r => setTimeout(r, 100));
+    } catch (e) {
+      consecutiveFails++;
+      await new Promise(r => setTimeout(r, 500));
+    }
   }
-  console.log(`🤖 Bot${n} done ${cs}-${ce}: +${added}`);
-  return { added, maxId };
+  console.log(`🤖 Bot${n} done ${cs}-${ce}: +${added}, maxId=${maxId}`);
+  return { added, maxId, botIdx: n };
 }
 
 async function processTgMessage(msg, msgId) {
@@ -708,19 +741,16 @@ async function matchToSaavn(track) {
 }
 
 async function smartMatchTrack(track) {
-  /* 1. TG library first */
   const tgMatch = matchToTgLibrary(track);
   if (tgMatch) {
     console.log(`🎯 TG match: "${track.title}" → "${tgMatch.title}" (${tgMatch._matchScore})`);
     return tgMatch;
   }
-  /* 2. Saavn */
   const saavnMatch = await matchToSaavn(track);
   if (saavnMatch) {
     console.log(`🎯 Saavn: "${track.title}" → "${saavnMatch.title}"`);
     return saavnMatch;
   }
-  /* 3. YT fallback */
   return { id: 'yt_' + track.ytId, title: track.title, artist: track.artist, cover: track.cover, duration: track.duration, source: 'youtube', _ytId: track.ytId };
 }
 
@@ -756,6 +786,117 @@ async function loadPlaylistToQueue(url) {
   saveQueueToStorage();
   playTrack(0);
   showToast(`▶ ${playlist.name} (${playlist.tracks.length} songs)`);
+}
+
+/* ═══════════════════════════════════════════════════════════════ */
+/* 🎬 YT PLAYLIST UI — MODAL + PREVIEW                              */
+/* ═══════════════════════════════════════════════════════════════ */
+function openYtPlaylistModal() {
+  ytPlaylistPreview = null;
+  const inputArea = document.getElementById('ytPlaylistInputArea');
+  const loadingArea = document.getElementById('ytPlaylistLoading');
+  const previewArea = document.getElementById('ytPlaylistPreview');
+  const input = document.getElementById('ytPlaylistUrlInput');
+  if (inputArea) inputArea.style.display = 'block';
+  if (loadingArea) loadingArea.style.display = 'none';
+  if (previewArea) { previewArea.style.display = 'none'; previewArea.innerHTML = ''; }
+  if (input) input.value = '';
+  openModal('modalYtPlaylist');
+}
+
+async function loadYtPlaylistPreview() {
+  const input = document.getElementById('ytPlaylistUrlInput');
+  const url = (input?.value || '').trim();
+  if (!url) return showToast('URL daalo');
+  const pid = extractPlaylistId(url);
+  if (!pid) return showToast('❌ Invalid YT URL');
+
+  const inputArea = document.getElementById('ytPlaylistInputArea');
+  const loadingArea = document.getElementById('ytPlaylistLoading');
+  const loadingText = document.getElementById('ytPlaylistLoadingText');
+
+  if (inputArea) inputArea.style.display = 'none';
+  if (loadingArea) loadingArea.style.display = 'block';
+  if (loadingText) loadingText.innerText = '🎬 Playlist fetch ho rahi hai...';
+
+  const playlist = await importYouTubePlaylist(url);
+
+  if (!playlist || !playlist.tracks || playlist.tracks.length === 0) {
+    if (loadingArea) loadingArea.style.display = 'none';
+    if (inputArea) inputArea.style.display = 'block';
+    return;
+  }
+
+  ytPlaylistPreview = playlist;
+  renderYtPlaylistPreviewUI();
+}
+
+function renderYtPlaylistPreviewUI() {
+  const p = ytPlaylistPreview;
+  if (!p) return;
+
+  const loadingArea = document.getElementById('ytPlaylistLoading');
+  const previewArea = document.getElementById('ytPlaylistPreview');
+  if (loadingArea) loadingArea.style.display = 'none';
+  if (!previewArea) return;
+  previewArea.style.display = 'block';
+
+  const tgCount = p.tracks.filter(t => t.source === 'telegram').length;
+  const saavnCount = p.tracks.filter(t => t.source === 'saavn').length;
+  const ytCount = p.tracks.filter(t => t.source === 'youtube').length;
+
+  let html = `<div style="background:linear-gradient(135deg,rgba(139,92,246,.15),rgba(168,85,247,.08));border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
+    <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</div>
+    <div style="font-size:11px;color:var(--text-sub);line-height:1.6">
+      <i class="fa-solid fa-music"></i> ${p.tracks.length} songs
+      · <span style="color:#229ED9">✈ ${tgCount} TG</span>
+      · <span style="color:var(--accent-neon)">♪ ${saavnCount} Saavn</span>
+      · <span style="color:#ef4444">▶ ${ytCount} YT</span>
+    </div>
+  </div>`;
+
+  html += `<div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="submit-btn" style="flex:1;font-size:12px;padding:10px" onclick="playYtPlaylistNow()"><i class="fa-solid fa-play"></i> Play All</button>
+    <button class="submit-btn" style="flex:1;font-size:12px;padding:10px;background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="saveYtPlaylistAsLocal()"><i class="fa-solid fa-bookmark"></i> Save</button>
+  </div>`;
+
+  html += `<div style="font-size:11px;color:var(--text-sub);margin-bottom:6px;padding-left:4px"><i class="fa-solid fa-list-ul"></i> Songs (${p.tracks.length})</div>`;
+  html += p.tracks.map((t, i) => {
+    const sId = encodeURIComponent(t.id);
+    const sT = encodeURIComponent(t.title || '');
+    const sA = encodeURIComponent(t.artist || '');
+    const sC = encodeURIComponent(t.cover || 'vaultify.png');
+    const sD = t._directStream ? encodeURIComponent(t._directStream) : '';
+    let srcBadge = '';
+    if (t.source === 'telegram') srcBadge = '<img src="vaultify.png" style="width:14px;height:14px;border-radius:50%;margin-left:6px;vertical-align:middle;border:1px solid #229ED9" onerror="this.style.display=\'none\'" />';
+    else if (t.source === 'youtube') srcBadge = '<i class="fa-brands fa-youtube" style="color:#ff0000;font-size:11px;margin-left:6px"></i>';
+    else if (t.source === 'saavn') srcBadge = '<i class="fa-solid fa-music" style="color:var(--accent-neon);font-size:10px;margin-left:6px"></i>';
+    return `<div class="song-tile" onclick="playSearchedTrackImmediately('${sId}','${sT}','${sA}','${sC}','${sD}',${t.duration || 0})"><div class="tile-left"><span style="font-size:10px;color:var(--text-sub);width:20px;flex-shrink:0">${i + 1}</span><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" loading="lazy" /><div class="tile-meta"><h4>${escapeHtml(t.title)}${srcBadge}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-play" style="color:var(--accent-neon);font-size:13px"></i></div>`;
+  }).join('');
+
+  previewArea.innerHTML = html;
+}
+
+function playYtPlaylistNow() {
+  if (!ytPlaylistPreview || !ytPlaylistPreview.tracks.length) return;
+  currentPlaylist = ytPlaylistPreview.tracks.slice();
+  currentTrackIndex = 0;
+  queueSeenIds = new Set(currentPlaylist.map(t => t.id));
+  renderHomeQueue();
+  saveQueueToStorage();
+  playTrack(0);
+  closeModal('modalYtPlaylist');
+  showToast(`▶ ${ytPlaylistPreview.name} (${ytPlaylistPreview.tracks.length})`);
+}
+
+function saveYtPlaylistAsLocal() {
+  if (!ytPlaylistPreview || !ytPlaylistPreview.tracks.length) return;
+  const name = ytPlaylistPreview.name || ('YT Playlist ' + new Date().toLocaleString());
+  playlists.push({ id: Date.now(), name, songs: ytPlaylistPreview.tracks.slice(), created: Date.now() });
+  savePlaylists();
+  closeModal('modalYtPlaylist');
+  if (currentLibraryTab === 'playlists') renderLibrary();
+  showToast(`✅ Saved: ${name}`);
 }
 
 /* ═══════════ AUTH ═══════════ */
@@ -1257,8 +1398,6 @@ function initLiveSearchInputListener() {
 
   f.addEventListener('input', () => {
     const val = f.value.trim();
-
-    /* 🎬 YT playlist URL detect */
     if (val.includes('youtube.com/playlist') || (val.includes('list=') && val.includes('youtu'))) {
       clearTimeout(liveSearchDebounceTimer);
       liveSearchDebounceTimer = setTimeout(() => {
@@ -1270,8 +1409,6 @@ function initLiveSearchInputListener() {
       }, 800);
       return;
     }
-
-    /* Normal search */
     clearTimeout(liveSearchDebounceTimer);
     const q = val;
     if (q.length >= 2) liveSearchDebounceTimer = setTimeout(() => { if (f.value.trim() === q) instantSearch(q); }, 400);
@@ -1343,7 +1480,22 @@ async function renderLibrary() {
     if (list.length === 0) { c.innerHTML = `<p style="font-size:13px;color:var(--text-sub);text-align:center;padding:18px 0">No liked songs.</p>`; return; }
     c.innerHTML = list.map(t => `<div class="song-tile" onclick="playSingleTrackObject('${encodeURIComponent(t.id)}','${encodeURIComponent(t.title || '')}','${encodeURIComponent(t.artist || '')}','${encodeURIComponent(t.cover || '')}')"><div class="tile-left"><img src="${t.cover || 'vaultify.png'}" class="tile-thumb" onerror="this.src='vaultify.png'" /><div class="tile-meta"><h4>${escapeHtml(t.title)}</h4><p>${escapeHtml(t.artist)}</p></div></div><i class="fa-solid fa-heart" style="color:var(--partner-pink);font-size:14px" onclick="event.stopPropagation();unlikeSong('${t.id.replace(/'/g, "\\'")}')"></i></div>`).join('');
   } else if (currentLibraryTab === 'playlists') {
-    let html = `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:10px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="openModal('modalAddToPlaylist')"><div style="width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;flex-shrink:0"><i class="fa-solid fa-plus"></i></div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Create New Playlist</div></div></div>`;
+    let html = '';
+
+    /* 🎬 YT Playlist Import Card */
+    html += `<div style="background:linear-gradient(135deg,rgba(255,0,0,.18),rgba(200,0,0,.08));border:1px solid rgba(255,0,0,.45);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;align-items:center;gap:12px;cursor:pointer;box-shadow:0 0 16px rgba(255,0,0,.15)" onclick="openYtPlaylistModal()">
+      <div style="width:56px;height:56px;border-radius:12px;background:linear-gradient(135deg,#ff0000,#b30000);display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;flex-shrink:0;box-shadow:0 4px 12px rgba(255,0,0,.4)"><i class="fa-brands fa-youtube"></i></div>
+      <div style="flex:1;overflow:hidden">
+        <div style="font-size:14px;font-weight:700;color:#fff">Import YT Playlist</div>
+        <div style="font-size:10.5px;color:var(--text-sub);margin-top:3px"><i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon)"></i> Auto-match with TG Vault</div>
+      </div>
+      <i class="fa-solid fa-chevron-right" style="color:#ff0000;font-size:16px"></i>
+    </div>`;
+
+    /* ➕ Create New Playlist Card */
+    html += `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:10px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="openModal('modalAddToPlaylist')"><div style="width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;flex-shrink:0"><i class="fa-solid fa-plus"></i></div><div style="flex:1"><div style="font-size:14px;font-weight:700;color:#fff">Create New Playlist</div></div></div>`;
+
+    /* Existing playlists */
     html += playlists.map((p, i) => `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:10px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="openPlaylist(${i})"><div style="width:56px;height:56px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-neon));display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;flex-shrink:0"><i class="fa-solid fa-list"></i></div><div style="flex:1;overflow:hidden"><div style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.name)}</div><div style="font-size:11px;color:var(--text-sub);margin-top:2px">${p.songs.length} songs</div></div><i class="fa-solid fa-trash" style="color:#ef4444;font-size:14px" onclick="event.stopPropagation();deletePlaylist(${i})"></i></div>`).join('');
     c.innerHTML = html;
   } else if (currentLibraryTab === 'cached') {
@@ -1517,7 +1669,7 @@ setTimeout(updateCertLiveDateTime, 100); setTimeout(updateCertLiveDateTime, 500)
 setInterval(updateCertLiveDateTime, 1000);
 
 /* ═══════════════════════════════════════════════════════════════ */
-/* 👑 ADMIN HELPER FUNCTIONS                                        */
+/* 👑 ADMIN HELPERS                                                 */
 /* ═══════════════════════════════════════════════════════════════ */
 async function adminForcePublish() {
   if (!isAdminDevice()) return showToast('❌ Admin only');
@@ -1654,5 +1806,7 @@ Object.assign(window, {
   fetchSharedLibrary, publishSharedLibrary, libraryLoadMore, libraryPageUp,
   adminForcePublish, adminShowStats, adminResetShared,
   extractPlaylistId, fetchYouTubePlaylist, importYouTubePlaylist,
-  loadPlaylistToQueue, matchToSaavn, smartMatchTrack, matchToTgLibrary, scoreMatch, normalizeForMatch
+  loadPlaylistToQueue, matchToSaavn, smartMatchTrack, matchToTgLibrary, scoreMatch, normalizeForMatch,
+  getHealthyBots, openYtPlaylistModal, loadYtPlaylistPreview, renderYtPlaylistPreviewUI,
+  playYtPlaylistNow, saveYtPlaylistAsLocal
 });
