@@ -134,24 +134,19 @@ window.onerror = function(msg, url, line) {
                 <div class="cert-badge"><i class="fa-solid fa-shield-halved"></i></div>
                 <div class="cert-verified-tag">VERIFIED</div>
               </div>
-
               <div class="cert-title">Vaultify Certified</div>
               <div class="cert-subtitle">CERTIFICATE OF OWNERSHIP</div>
-
               <div class="cert-owner-name">Akshat Kumar</div>
               <div class="cert-owner-handle">@akshat.kumar_148</div>
-
               <div class="cert-roles-row">
                 <span class="cert-role-chip"><i class="fa-solid fa-crown"></i> Founder</span>
                 <span class="cert-role-chip"><i class="fa-solid fa-paintbrush"></i> GFX Designer</span>
                 <span class="cert-role-chip"><i class="fa-solid fa-wand-magic-sparkles"></i> UI/UX</span>
               </div>
-
               <div class="cert-user-count">
                 <span>Total Active Users:</span>
                 <b id="certUserCount">1 User</b>
               </div>
-
               <div class="cert-signature-section">
                 <div class="cert-sig-label">SIGNATURE</div>
                 <div class="cert-signature-row">
@@ -164,26 +159,22 @@ window.onerror = function(msg, url, line) {
                   </div>
                 </div>
               </div>
-
               <div class="cert-live-datetime">
                 <i class="fa-regular fa-clock"></i>
                 <span id="certLiveDate">--/--/----</span>
                 <span class="cert-live-sep">•</span>
                 <span id="certLiveTime">--:--:--</span>
               </div>
-
               <div class="cert-footer">
                 <i class="fa-solid fa-certificate"></i>
                 <span>Authentic Certificate · Vaultify · vaultify.app</span>
               </div>
             </div>
           </div>
-
           <a href="https://instagram.com/akshat.kumar_148" target="_blank" class="cert-insta-btn">
             <i class="fa-brands fa-instagram"></i>
             <span>Follow @akshat.kumar_148</span>
           </a>
-
           <div class="cert-stats-box">
             <div class="cert-stats-title"><i class="fa-solid fa-chart-line"></i> LIVE STATS</div>
             <div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div>
@@ -338,6 +329,28 @@ window.onerror = function(msg, url, line) {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-size:15px">Add to Playlist</h3><i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalAddToPlaylist')"></i></div>
       <div id="playlistSelectList" style="max-height:200px;overflow-y:auto;margin-bottom:10px"></div>
       <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;gap:8px"><input type="text" id="newPlaylistName" class="form-input" style="margin-bottom:0;flex:1" placeholder="New playlist name" autocomplete="off" /><button class="submit-btn" style="width:auto;padding:0 14px" onclick="createPlaylistAndAdd()">Create</button></div>
+    </div>
+  </div>
+
+  <!-- 🎬 YT PLAYLIST IMPORT MODAL -->
+  <div class="modal-overlay" id="modalYtPlaylist">
+    <div class="card-popup" style="max-height:85vh;display:flex;flex-direction:column;max-width:420px;width:92%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-brands fa-youtube" style="color:#ff0000"></i> Import YT Playlist</h3>
+        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalYtPlaylist')"></i>
+      </div>
+      <div id="ytPlaylistInputArea">
+        <input type="text" id="ytPlaylistUrlInput" class="form-input" placeholder="https://youtube.com/playlist?list=..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+        <button class="submit-btn" onclick="loadYtPlaylistPreview()"><i class="fa-solid fa-download"></i> Load Playlist</button>
+        <div style="font-size:10.5px;color:var(--text-sub);text-align:center;margin-top:8px;line-height:1.5">
+          <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon)"></i> Songs pehle TG Vault me match honge, phir Saavn, phir YT
+        </div>
+      </div>
+      <div id="ytPlaylistLoading" style="display:none;text-align:center;padding:30px 10px">
+        <i class="fa-solid fa-spinner fa-spin" style="font-size:32px;color:var(--accent-neon);margin-bottom:12px"></i>
+        <div style="font-size:13px" id="ytPlaylistLoadingText">Loading...</div>
+      </div>
+      <div id="ytPlaylistPreview" style="display:none;overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch"></div>
     </div>
   </div>
 
