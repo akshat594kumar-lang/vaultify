@@ -12,61 +12,19 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <style>
-#homeSyncBtn {
-  background: linear-gradient(135deg, rgba(139,92,246,.10), rgba(88,28,135,.15)) !important;
-  border: 1.5px solid rgba(168,85,247,.7) !important;
-  box-shadow: 0 0 18px rgba(139,92,246,.45), 0 0 32px rgba(168,85,247,.2), inset 0 0 12px rgba(139,92,246,.12) !important;
-  color: #c4b5fd !important;
-  font-weight: 700 !important;
-  transition: box-shadow .3s ease, background .3s ease;
-  animation: syncGlow 2.5s ease-in-out infinite alternate;
-}
-#homeSyncBtn:disabled { opacity: 0.75; }
-#homeSyncBtn i { color: #a78bfa !important; }
-@keyframes syncGlow {
-  0% { box-shadow: 0 0 14px rgba(139,92,246,.35), 0 0 24px rgba(168,85,247,.15), inset 0 0 10px rgba(139,92,246,.10); }
-  100% { box-shadow: 0 0 24px rgba(139,92,246,.55), 0 0 40px rgba(168,85,247,.3), inset 0 0 14px rgba(139,92,246,.18); }
-}
-#syncHintBubble {
-  position: fixed;
-  bottom: 130px;
-  left: 50%;
-  transform: translateX(-50%) scale(0);
-  background: linear-gradient(135deg, #7c3aed, #a855f7);
-  color: #fff;
-  padding: 10px 18px;
-  border-radius: 14px;
-  font-size: 12.5px;
-  font-weight: 700;
-  box-shadow: 0 8px 28px rgba(139,92,246,.6), 0 0 40px rgba(168,85,247,.4);
-  z-index: 9998;
-  opacity: 0;
-  transition: all .4s cubic-bezier(.34,1.56,.64,1);
-  pointer-events: none;
-  white-space: nowrap;
-  border: 1.5px solid rgba(255,255,255,.2);
-}
-#syncHintBubble.show { opacity: 1; transform: translateX(-50%) scale(1); }
-#syncHintBubble::after {
-  content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
-  width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent;
-  border-top: 8px solid #a855f7;
-}
-#syncHintBubble i { animation: bounceDown 1.2s infinite; }
-@keyframes bounceDown {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(4px); }
-}
+#homeSyncBtn { background:linear-gradient(135deg,rgba(139,92,246,.10),rgba(88,28,135,.15)) !important; border:1.5px solid rgba(168,85,247,.7) !important; box-shadow:0 0 18px rgba(139,92,246,.45),0 0 32px rgba(168,85,247,.2),inset 0 0 12px rgba(139,92,246,.12) !important; color:#c4b5fd !important; font-weight:700 !important; animation:syncGlow 2.5s ease-in-out infinite alternate; }
+#homeSyncBtn:disabled { opacity:.75; }
+#homeSyncBtn i { color:#a78bfa !important; }
+@keyframes syncGlow { 0%{box-shadow:0 0 14px rgba(139,92,246,.35),0 0 24px rgba(168,85,247,.15),inset 0 0 10px rgba(139,92,246,.10);} 100%{box-shadow:0 0 24px rgba(139,92,246,.55),0 0 40px rgba(168,85,247,.3),inset 0 0 14px rgba(139,92,246,.18);} }
+#syncHintBubble { position:fixed; bottom:130px; left:50%; transform:translateX(-50%) scale(0); background:linear-gradient(135deg,#7c3aed,#a855f7); color:#fff; padding:10px 18px; border-radius:14px; font-size:12.5px; font-weight:700; box-shadow:0 8px 28px rgba(139,92,246,.6),0 0 40px rgba(168,85,247,.4); z-index:9998; opacity:0; transition:all .4s cubic-bezier(.34,1.56,.64,1); pointer-events:none; white-space:nowrap; border:1.5px solid rgba(255,255,255,.2); }
+#syncHintBubble.show { opacity:1; transform:translateX(-50%) scale(1); }
+#syncHintBubble::after { content:''; position:absolute; bottom:-8px; left:50%; transform:translateX(-50%); border-left:8px solid transparent; border-right:8px solid transparent; border-top:8px solid #a855f7; }
+#syncHintBubble i { animation:bounceDown 1.2s infinite; }
+@keyframes bounceDown { 0%,100%{transform:translateY(0);} 50%{transform:translateY(4px);} }
 </style>
 </head>
 <body>
-
-<script>
-window.onerror = function(msg, url, line) {
-  console.error('❌ ERROR:', msg, 'at', url, ':', line);
-  return false;
-};
-</script>
+<script>window.onerror=function(m,u,l){console.error('❌',m,u,l);return false;};</script>
 
 <div id="appIntroScreen">
   <div class="intro-logo-box">
@@ -112,10 +70,7 @@ window.onerror = function(msg, url, line) {
         <div class="logo-font">Vaultify</div>
       </div>
       <div class="top-icons">
-        <div class="notif-bell-wrap" onclick="openNotificationModal()">
-          <i class="fa-solid fa-bell"></i>
-          <span class="notif-badge-pill" id="notifBadgeCount" style="display:none">0</span>
-        </div>
+        <div class="notif-bell-wrap" onclick="openNotificationModal()"><i class="fa-solid fa-bell"></i><span class="notif-badge-pill" id="notifBadgeCount" style="display:none">0</span></div>
         <i class="fa-solid fa-list-check" onclick="openModal('modalQueueDrawer')" style="color:var(--accent-neon)"></i>
         <i class="fa-solid fa-sliders" onclick="openEqualizer()"></i>
         <i class="fa-solid fa-heart" onclick="openPartnerModal()" style="color:var(--partner-pink)"></i>
@@ -178,10 +133,7 @@ window.onerror = function(msg, url, line) {
           <div class="cert-bg-pattern"></div>
           <div class="cert-border-outer">
             <div class="cert-border-inner">
-              <div class="cert-top-row">
-                <div class="cert-badge"><i class="fa-solid fa-shield-halved"></i></div>
-                <div class="cert-verified-tag">VERIFIED</div>
-              </div>
+              <div class="cert-top-row"><div class="cert-badge"><i class="fa-solid fa-shield-halved"></i></div><div class="cert-verified-tag">VERIFIED</div></div>
               <div class="cert-title">Vaultify Certified</div>
               <div class="cert-subtitle">CERTIFICATE OF OWNERSHIP</div>
               <div class="cert-owner-name">Akshat Kumar</div>
@@ -191,42 +143,20 @@ window.onerror = function(msg, url, line) {
                 <span class="cert-role-chip"><i class="fa-solid fa-paintbrush"></i> GFX Designer</span>
                 <span class="cert-role-chip"><i class="fa-solid fa-wand-magic-sparkles"></i> UI/UX</span>
               </div>
-              <div class="cert-user-count">
-                <span>Total Active Users:</span>
-                <b id="certUserCount">1 User</b>
-              </div>
+              <div class="cert-user-count"><span>Total Active Users:</span><b id="certUserCount">1 User</b></div>
               <div class="cert-signature-section">
                 <div class="cert-sig-label">SIGNATURE</div>
                 <div class="cert-signature-row">
-                  <div class="cert-sig-img-wrap">
-                    <img src="./signature.png" alt="Signature" class="cert-signature-img" onerror="this.style.display='none'" />
-                  </div>
-                  <div class="cert-sig-meta">
-                    <div class="cert-sig-meta-line">Registry: <b>VK-2026-X99</b></div>
-                    <div class="cert-sig-meta-line">Seal: <b>Authentic</b></div>
-                  </div>
+                  <div class="cert-sig-img-wrap"><img src="./signature.png" alt="Signature" class="cert-signature-img" onerror="this.style.display='none'" /></div>
+                  <div class="cert-sig-meta"><div class="cert-sig-meta-line">Registry: <b>VK-2026-X99</b></div><div class="cert-sig-meta-line">Seal: <b>Authentic</b></div></div>
                 </div>
               </div>
-              <div class="cert-live-datetime">
-                <i class="fa-regular fa-clock"></i>
-                <span id="certLiveDate">--/--/----</span>
-                <span class="cert-live-sep">•</span>
-                <span id="certLiveTime">--:--:--</span>
-              </div>
-              <div class="cert-footer">
-                <i class="fa-solid fa-certificate"></i>
-                <span>Authentic Certificate · Vaultify · vaultify.app</span>
-              </div>
+              <div class="cert-live-datetime"><i class="fa-regular fa-clock"></i><span id="certLiveDate">--/--/----</span><span class="cert-live-sep">•</span><span id="certLiveTime">--:--:--</span></div>
+              <div class="cert-footer"><i class="fa-solid fa-certificate"></i><span>Authentic Certificate · Vaultify · vaultify.app</span></div>
             </div>
           </div>
-          <a href="https://instagram.com/akshat.kumar_148" target="_blank" class="cert-insta-btn">
-            <i class="fa-brands fa-instagram"></i>
-            <span>Follow @akshat.kumar_148</span>
-          </a>
-          <div class="cert-stats-box">
-            <div class="cert-stats-title"><i class="fa-solid fa-chart-line"></i> LIVE STATS</div>
-            <div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div>
-          </div>
+          <a href="https://instagram.com/akshat.kumar_148" target="_blank" class="cert-insta-btn"><i class="fa-brands fa-instagram"></i><span>Follow @akshat.kumar_148</span></a>
+          <div class="cert-stats-box"><div class="cert-stats-title"><i class="fa-solid fa-chart-line"></i> LIVE STATS</div><div id="ipStatsDisplay"><div style="font-size:11px;color:var(--text-sub)">Loading...</div></div></div>
         </div>
       </div>
 
@@ -246,7 +176,6 @@ window.onerror = function(msg, url, line) {
           <textarea id="editBio" class="form-input" style="margin-top:4px;min-height:60px" placeholder="Tell others about you..." maxlength="150"></textarea>
           <button class="submit-btn" onclick="saveProfileData()">Save Changes</button>
         </div>
-
         <div class="card-popup" style="margin-bottom:12px">
           <div style="font-size:13px;font-weight:700;margin-bottom:10px">Permissions</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
@@ -259,7 +188,6 @@ window.onerror = function(msg, url, line) {
           </div>
           <button class="submit-btn" style="background:rgba(255,255,255,.08);color:var(--text-sub)" onclick="openAppSettingsNative()"><i class="fa-solid fa-gear"></i> Open App Settings</button>
         </div>
-
         <div class="card-popup" style="margin-bottom:12px">
           <div style="font-size:13px;font-weight:700;margin-bottom:10px">Customization</div>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.06)">
@@ -296,7 +224,6 @@ window.onerror = function(msg, url, line) {
             </div>
           </div>
         </div>
-
         <button class="submit-btn" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444;margin-bottom:20px" onclick="performAppLogout()"><i class="fa-solid fa-arrow-right-from-bracket"></i> Log Out</button>
       </div>
     </div>
@@ -330,9 +257,7 @@ window.onerror = function(msg, url, line) {
     <div style="display:flex;justify-content:space-between;align-items:center;color:var(--text-sub)">
       <i class="fa-solid fa-chevron-down" style="font-size:24px;cursor:pointer" onclick="closeFullPlayer()"></i>
       <div style="font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase">Now Playing</div>
-      <div style="display:flex;gap:16px;align-items:center">
-        <i class="fa-solid fa-layer-group" style="font-size:18px;cursor:pointer;color:var(--accent-neon)" onclick="openModal('modalQueueDrawer')"></i>
-      </div>
+      <div style="display:flex;gap:16px;align-items:center"><i class="fa-solid fa-layer-group" style="font-size:18px;cursor:pointer;color:var(--accent-neon)" onclick="openModal('modalQueueDrawer')"></i></div>
     </div>
     <div class="full-art-box"><img src="vaultify.png" id="fullArtImg" alt="" onerror="this.src='vaultify.png'" /></div>
     <div>
@@ -380,6 +305,21 @@ window.onerror = function(msg, url, line) {
     </div>
   </div>
 
+  <!-- ✅ NEW: Playlist View Modal -->
+  <div class="modal-overlay" id="modalPlaylistView">
+    <div class="card-popup" style="max-height:88vh;display:flex;flex-direction:column;max-width:440px;width:94%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-list" style="color:var(--accent-neon)"></i> <span id="playlistViewTitle">Playlist</span></h3>
+        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalPlaylistView')"></i>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="submit-btn" style="flex:1;font-size:12px;padding:10px" onclick="playCurrentViewPlaylist()"><i class="fa-solid fa-play"></i> Play All</button>
+        <button class="submit-btn" style="flex:1;font-size:12px;padding:10px;background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444" onclick="deleteCurrentViewPlaylist()"><i class="fa-solid fa-trash"></i> Delete</button>
+      </div>
+      <div id="playlistViewSongs" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="modalYtPlaylist">
     <div class="card-popup" style="max-height:85vh;display:flex;flex-direction:column;max-width:420px;width:92%">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -390,7 +330,7 @@ window.onerror = function(msg, url, line) {
         <input type="text" id="ytPlaylistUrlInput" class="form-input" placeholder="https://youtube.com/playlist?list=..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
         <button class="submit-btn" onclick="loadYtPlaylistPreview()"><i class="fa-solid fa-download"></i> Load Playlist</button>
         <div style="font-size:10.5px;color:var(--text-sub);text-align:center;margin-top:8px;line-height:1.5">
-          <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon)"></i> Songs pehle TG Vault me match honge, phir Saavn, phir YT
+          <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-neon)"></i> Auto-save to Playlists after load
         </div>
       </div>
       <div id="ytPlaylistLoading" style="display:none;text-align:center;padding:30px 10px">
@@ -411,31 +351,23 @@ window.onerror = function(msg, url, line) {
 
   <div class="modal-overlay" id="modalPartner">
     <div class="card-popup">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="font-size:16px;color:var(--partner-pink)"><i class="fa-solid fa-heart"></i> Partner Mode</h3>
-        <i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalPartner')"></i>
-      </div>
-      <div style="padding:16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px;text-align:center;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-size:16px;color:var(--partner-pink)"><i class="fa-solid fa-heart"></i> Partner Mode</h3><i class="fa-solid fa-xmark" style="cursor:pointer;font-size:18px" onclick="closeModal('modalPartner')"></i></div>
+      <div style="padding:16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px;text-align:center">
         <i class="fa-solid fa-rocket" style="font-size:36px;color:#fbbf24;margin-bottom:10px"></i>
         <div style="font-size:16px;font-weight:800;color:#fbbf24;margin-bottom:6px">Coming Soon</div>
-        <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5;margin-bottom:12px">Partner Mode alag phones pe gaana sync karega.</div>
+        <div style="font-size:11.5px;color:var(--text-sub);line-height:1.5">Partner Mode alag phones pe gaana sync karega.</div>
       </div>
     </div>
   </div>
 
   <div class="modal-overlay" id="modalSupport">
     <div class="card-popup" style="text-align:center">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-headset" style="color:var(--accent-neon)"></i> Help & Support</h3>
-        <i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalSupport')"></i>
-      </div>
-      <div style="padding:24px 16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-size:16px;display:flex;align-items:center;gap:8px"><i class="fa-solid fa-headset" style="color:var(--accent-neon)"></i> Help & Support</h3><i class="fa-solid fa-xmark" style="cursor:pointer" onclick="closeModal('modalSupport')"></i></div>
+      <div style="padding:24px 16px;background:linear-gradient(135deg,rgba(251,191,36,.15),rgba(168,85,247,.15));border:1px solid #fbbf24;border-radius:14px">
         <i class="fa-solid fa-headset" style="font-size:44px;color:#fbbf24;margin-bottom:12px"></i>
         <div style="font-size:20px;font-weight:800;color:#fbbf24;margin-bottom:8px">Coming Soon</div>
-        <div style="font-size:12px;color:var(--text-sub);line-height:1.6">Support system abhi ban raha hai. Jaldi hi live hoga!<br/>Tab tak kisi bhi problem ke liye Instagram pe message karo.</div>
-        <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:inline-flex;align-items:center;gap:8px;margin-top:14px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:600;padding:8px 16px;border-radius:12px;text-decoration:none">
-          <i class="fa-brands fa-instagram"></i> @akshat.kumar_148
-        </a>
+        <div style="font-size:12px;color:var(--text-sub);line-height:1.6">Support system abhi ban raha hai.<br/>Tab tak Instagram pe message karo.</div>
+        <a href="https://instagram.com/akshat.kumar_148" target="_blank" style="display:inline-flex;align-items:center;gap:8px;margin-top:14px;background:linear-gradient(45deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:#fff;font-size:12px;font-weight:600;padding:8px 16px;border-radius:12px;text-decoration:none"><i class="fa-brands fa-instagram"></i> @akshat.kumar_148</a>
       </div>
     </div>
   </div>
@@ -470,7 +402,6 @@ window.onerror = function(msg, url, line) {
   <div class="toast-pill" id="toastPill">Message</div>
   <div id="syncHintBubble">👆 <span>Tap SYNC to load songs</span> <i class="fa-solid fa-arrow-down"></i></div>
 </div>
-
 <script src="./script.js"></script>
 </body>
 </html>
