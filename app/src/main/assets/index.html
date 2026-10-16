@@ -11,6 +11,53 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<style>
+#homeSyncBtn {
+  background: linear-gradient(135deg, rgba(139,92,246,.10), rgba(88,28,135,.15)) !important;
+  border: 1.5px solid rgba(168,85,247,.7) !important;
+  box-shadow: 0 0 18px rgba(139,92,246,.45), 0 0 32px rgba(168,85,247,.2), inset 0 0 12px rgba(139,92,246,.12) !important;
+  color: #c4b5fd !important;
+  font-weight: 700 !important;
+  transition: box-shadow .3s ease, background .3s ease;
+  animation: syncGlow 2.5s ease-in-out infinite alternate;
+}
+#homeSyncBtn:disabled { opacity: 0.75; }
+#homeSyncBtn i { color: #a78bfa !important; }
+@keyframes syncGlow {
+  0% { box-shadow: 0 0 14px rgba(139,92,246,.35), 0 0 24px rgba(168,85,247,.15), inset 0 0 10px rgba(139,92,246,.10); }
+  100% { box-shadow: 0 0 24px rgba(139,92,246,.55), 0 0 40px rgba(168,85,247,.3), inset 0 0 14px rgba(139,92,246,.18); }
+}
+#syncHintBubble {
+  position: fixed;
+  bottom: 130px;
+  left: 50%;
+  transform: translateX(-50%) scale(0);
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  box-shadow: 0 8px 28px rgba(139,92,246,.6), 0 0 40px rgba(168,85,247,.4);
+  z-index: 9998;
+  opacity: 0;
+  transition: all .4s cubic-bezier(.34,1.56,.64,1);
+  pointer-events: none;
+  white-space: nowrap;
+  border: 1.5px solid rgba(255,255,255,.2);
+}
+#syncHintBubble.show { opacity: 1; transform: translateX(-50%) scale(1); }
+#syncHintBubble::after {
+  content: ''; position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+  width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent;
+  border-top: 8px solid #a855f7;
+}
+#syncHintBubble i { animation: bounceDown 1.2s infinite; }
+@keyframes bounceDown {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(4px); }
+}
+</style>
 </head>
 <body>
 
@@ -94,8 +141,8 @@ window.onerror = function(msg, url, line) {
           </div>
           <i class="fa-solid fa-chevron-right" style="color:var(--text-sub);font-size:14px"></i>
         </div>
-        <button class="support-card" onclick="openSupportModal()"><i class="fa-solid fa-headset"></i> Help & Support</button>
-        <button class="support-card" id="homeSyncBtn" onclick="manualSyncTg()" style="margin-top:10px;background:linear-gradient(135deg,rgba(139,92,246,.2),rgba(168,85,247,.1));border:1px solid var(--accent-neon);box-shadow:0 0 14px var(--accent-glow)"><i class="fa-solid fa-rotate" id="homeSyncIcon"></i> <span id="homeSyncBtnText">SYNC</span></button>
+        <button class="support-card" onclick="openSupportModal();showSyncHint(4000);"><i class="fa-solid fa-headset"></i> Help & Support</button>
+        <button class="support-card" id="homeSyncBtn" onclick="manualSyncTg()"><i class="fa-solid fa-rotate" id="homeSyncIcon"></i> <span id="homeSyncBtnText">SYNC</span></button>
       </div>
 
       <div class="view-screen" id="tabSearch">
@@ -421,6 +468,7 @@ window.onerror = function(msg, url, line) {
   </div>
 
   <div class="toast-pill" id="toastPill">Message</div>
+  <div id="syncHintBubble">👆 <span>Tap SYNC to load songs</span> <i class="fa-solid fa-arrow-down"></i></div>
 </div>
 
 <script src="./script.js"></script>
